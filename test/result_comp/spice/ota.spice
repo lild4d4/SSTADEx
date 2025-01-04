@@ -1,0 +1,15 @@
+** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/result_comp/xschem/ota.sch
+**.subckt ota
+Rdif_2 net1 vs 1000 m=1
+Gdif_2 net1 vs vneg vs 10
+Rdif_1 vout vs 1000 m=1
+Gdif_1 vout vs vpos vs 10
+I2 vs vss 1
+V1 vdd vss 1.8
+V_n vneg vss 0.9
+V_p vpos vss 0.9
+Raload_1 vdd vout 1000 m=1
+Raload_2 vdd net1 1000 m=1
+Gaload vout vdd net1 vdd 0.0002236
+**.ends
+.end

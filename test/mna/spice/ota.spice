@@ -1,0 +1,14 @@
+** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/mna/xschem/ota.sch
+**.subckt ota
+Rdif_2 net1 vs {rdiff} m=1
+Gdif_2 net1 vs vneg vs {gdif}
+Rdif_1 vout vs {rdiff} m=1
+Gdif_1 vout vs vpos vs {gdif}
+I2 vs vss 1
+V1 vdd vss 1.8
+V_n vneg vss 0.9
+V_p vpos vss 0.9
+Raload_1 vdd vout {rload} m=1
+Raload_2 vdd net1 {rload} m=1
+**.ends
+.end
