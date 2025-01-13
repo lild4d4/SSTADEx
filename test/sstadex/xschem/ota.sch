@@ -154,3 +154,4 @@ value=1000
 footprint=1206
 device=resistor
 m=1}
+C {devices/vccs.sym} 360 -150 2 1 {name=Gaload value=0.0002236}
