@@ -1,0 +1,12 @@
+** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/sstadex/xschem/ldo.sch
+**.subckt ldo
+Ro_pt net1 vout 473596.7 m=1
+Gm_pt vout net1 net2 net1 2.7200000000000004e-05
+R2 vout vfb 100000 m=1
+R3 vfb vss 300000 m=1
+Gma vss net2 vfb net3 10
+Ra vss net2 50 m=1
+V1 net1 vss 3
+V2 net3 vss 3
+**.ends
+.end

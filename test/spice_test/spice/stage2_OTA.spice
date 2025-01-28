@@ -1,0 +1,15 @@
+** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/sstadex/xschem/stage2_OTA.sch
+**.subckt stage2_OTA
+Ro_pt net1 vout 473596.7 m=1
+Gm_pt vout net1 net2 net1 2.7200000000000004e-05
+Gma vss net2 V_p V_n 10
+Ra vss net2 50 m=1
+V1 net1 vss 3
+V3 V_n vss 3
+I2 vout vss 40e-6
+V2 V_p vss 3
+CL vout vss 1e-12 m=1
+C2 net2 vout 1e-12 m=1
+IL vout vss 40e-6
+**.ends
+.end

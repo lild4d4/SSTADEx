@@ -1,0 +1,11 @@
+** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/sstadex/xschem/diffpair.sch
+**.subckt diffpair
+Rdif_2 out_neg vs 1000 m=1
+Gdif_2 out_neg vs vneg vs 10
+Rdif_1 out_pos vs 1000 m=1
+Gdif_1 out_pos vs vpos vs 10
+I2 vs vss 1
+V_p vpos vss 0.9
+V_n vneg vss 0.9
+**.ends
+.end
