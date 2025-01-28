@@ -112,17 +112,17 @@ lab=#net1}
 N 30 -120 30 -90 {
 lab=#net1}
 C {devices/res.sym} -100 30 0 0 {name=Rdif_2
-value=588235
+value=1747537
 footprint=1206
 device=resistor
 m=1}
-C {devices/vccs.sym} -230 30 0 0 {name=Gdif_2 value=0.0002793}
+C {devices/vccs.sym} -230 30 0 0 {name=Gdif_2 value=0.000084}
 C {devices/res.sym} 260 30 0 0 {name=Rdif_1
-value=588235
+value=1747537
 footprint=1206
 device=resistor
 m=1}
-C {devices/vccs.sym} 130 30 0 0 {name=Gdif_1 value=0.0002793}
+C {devices/vccs.sym} 130 30 0 0 {name=Gdif_1 value=0.000084}
 C {devices/isource.sym} 20 220 0 0 {name=I2 value=40e-6}
 C {devices/lab_pin.sym} 20 140 1 0 {name=p1 sig_type=std_logic lab=vs}
 C {devices/lab_pin.sym} 400 -40 2 0 {name=p4 sig_type=std_logic lab=vout}
@@ -147,13 +147,13 @@ plot vdb(vout)
 
 "}
 C {devices/res.sym} 200 -140 2 0 {name=Raload_3
-value=945644
+value=100000
 footprint=1206
 device=resistor
 m=1}
 C {devices/res.sym} -160 -140 2 0 {name=Raload_1
-value=4472.2
+value=100000
 footprint=1206
 device=resistor
 m=1}
-C {devices/vccs.sym} 70 -140 2 1 {name=Gdif_3 value=0.0002236}
+C {devices/vccs.sym} 70 -140 2 1 {name=Gdif_3 value=0.001}
