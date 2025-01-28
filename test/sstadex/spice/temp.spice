@@ -1,0 +1,27 @@
+** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/sstadex/xschem/ota_tb.sch
+**.subckt ota_tb
+I2 vs vss 40e-6
+XM1 vout vp1 vs vs sky130_fd_pr__nfet_01v8_lvt L=6.3999999999999995 W=20.430739539051302 nf=1 ad='int((nf+1)/2) * W/nf * 0.29' as='int((nf+2)/2) * W/nf * 0.29' pd='2*int((nf+1)/2) * (W/nf + 0.29)' 
++ ps='2*int((nf+2)/2) * (W/nf + 0.29)' nrd='0.29 / W' nrs='0.29 / W' sa=0 sb=0 sd=0 mult=10 m=10 
+XM2 net1 vn vs vs sky130_fd_pr__nfet_01v8_lvt L=6.3999999999999995 W=20.430739539051302 nf=1 ad='int((nf+1)/2) * W/nf * 0.29' as='int((nf+2)/2) * W/nf * 0.29' pd='2*int((nf+1)/2) * (W/nf + 0.29)' 
++ ps='2*int((nf+2)/2) * (W/nf + 0.29)' nrd='0.29 / W' nrs='0.29 / W' sa=0 sb=0 sd=0 mult=10 m=10 
+XM3 vout net1 vdd vdd sky130_fd_pr__pfet_01v8_lvt L=6.3999999999999995 W=27.288429229105862 nf=1 ad='int((nf+1)/2) * W/nf * 0.29' as='int((nf+2)/2) * W/nf * 0.29' 
++ pd='2*int((nf+1)/2) * (W/nf + 0.29)' ps='2*int((nf+2)/2) * (W/nf + 0.29)' nrd='0.29 / W' nrs='0.29 / W' sa=0 sb=0 sd=0 mult=10 m=10 
+XM4 net1 net1 vdd vdd sky130_fd_pr__pfet_01v8_lvt L=6.3999999999999995 W=27.288429229105862 nf=1 ad='int((nf+1)/2) * W/nf * 0.29' as='int((nf+2)/2) * W/nf * 0.29' 
++ pd='2*int((nf+1)/2) * (W/nf + 0.29)' ps='2*int((nf+2)/2) * (W/nf + 0.29)' nrd='0.29 / W' nrs='0.29 / W' sa=0 sb=0 sd=0 mult=10 m=10 
+**** begin user architecture code
+
+
+
+.lib /opt/pdks/sky130A/libs.tech/ngspice/sky130.lib.spice tt
+
+Vref vn 0 0.9
+Vdd vdd 0 1.8
+Vpos vp1 0 0.9 ac 1
+Vss vss 0 0
+
+.control
+ac dec 10 1 1G
+wrdata temp.csv vdb(vout) phase(vout)
+.endc
+.end
