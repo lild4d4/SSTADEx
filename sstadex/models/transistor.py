@@ -34,17 +34,22 @@ class Transistor:
         print(mode)
 
         if mode == 0:
-            self.jd, self.gmid, self.gds, self.cgg = self.get_parameters(self.lengths)
+            self.jd, self.gmid, self.gds, self.cgg, self.cgd, self.cgs = (
+                self.get_parameters(self.lengths)
+            )
         elif mode == 1:
             self.jd = []
             self.gmid = []
             self.gds = []
             self.cgg = []
+            self.cgd = []
+            self.cgs = []
             for idx, length in enumerate(lengths):
                 parameters = self.get_parameters(length)
                 diagonals = [np.diag(x) for x in parameters]
                 for param, diag in zip(
-                    [self.jd, self.gmid, self.gds, self.cgg], diagonals
+                    [self.jd, self.gmid, self.gds, self.cgg, self.cgd, self.cgs],
+                    diagonals,
                 ):
                     param.append(diag)
 
@@ -52,6 +57,8 @@ class Transistor:
             self.gmid = np.asarray(self.gmid)
             self.gds = np.asarray(self.gds)
             self.cgg = np.asarray(self.cgg)
+            self.cgd = np.asarray(self.cgd)
+            self.cgs = np.asarray(self.cgs)
 
     def get_parameters(self, lengths_m):
         self.pt_lutable = LoadMosfet(
@@ -98,4 +105,20 @@ class Transistor:
             z_expression=self.pt_lutable.cgg_expression,
         )
 
-        return jd, gmid, gds, cgg
+        cgd = self.pt_lutable.interpolate(
+            x_expression=expressions[self.eof[0]],
+            x_value=self.dof_values[0],
+            y_expression=expressions[self.eof[1]],
+            y_value=self.dof_values[1],
+            z_expression=self.pt_lutable.cgd_expression,
+        )
+
+        cgs = self.pt_lutable.interpolate(
+            x_expression=expressions[self.eof[0]],
+            x_value=self.dof_values[0],
+            y_expression=expressions[self.eof[1]],
+            y_value=self.dof_values[1],
+            z_expression=self.pt_lutable.cgs_expression,
+        )
+
+        return jd, gmid, gds, cgg, cgd, cgs

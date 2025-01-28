@@ -18,6 +18,7 @@ class Macromodel:
         transistors={},
         tfs_sol=[],
         its_final=False,
+        output=[],
     ):
         self.name = name
         self.netlist = netlist
@@ -34,6 +35,7 @@ class Macromodel:
         self.transistors = transistors
         self.tfs_sol = tfs_sol
         self.its_final = its_final
+        self.output = output
 
     def hasPrimitive(self):
         if len(self.primitives) == 0:
