@@ -18,7 +18,7 @@ class Macromodel:
         transistors={},
         tfs_sol=[],
         its_final=False,
-        output=[],
+        outputs=[],
     ):
         self.name = name
         self.netlist = netlist
@@ -35,7 +35,7 @@ class Macromodel:
         self.transistors = transistors
         self.tfs_sol = tfs_sol
         self.its_final = its_final
-        self.output = output
+        self.outputs = outputs
 
     def hasPrimitive(self):
         if len(self.primitives) == 0:
@@ -45,3 +45,9 @@ class Macromodel:
 
     def addSubmacromodels(self, submacromodel):
         self.submacromodels.append(submacromodel)
+
+    def update(self, macro_results):
+        results = macro_results[0]
+
+        for idx, parameter in enumerate(self.macromodel_parameters.keys()):
+            self.macromodel_parameters[parameter] = results[idx]
