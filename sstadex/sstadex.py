@@ -23,20 +23,27 @@ def bfs(macromodel):
     return result
 
 
-def dfs(macromodel):
-    print("Macro results of: ", macromodel.name)
-    if macromodel.name == "activeLoad" or macromodel.name == "currentSource":
-        return 0
+def dfs(macromodel, debug=False):
+    print("############################################")
+    print("Starting the exploration of: ", macromodel.name)
 
     macro_results, exploration_axes, primmods_output = build(macromodel)
-    # print(macro_results)
+    if debug:
+        print("Macro_results: ", macro_results)
+
+    if macromodel.num_level_exp == 1:
+        print("End of the exploration of: ", macromodel.name)
+        return macro_results, exploration_axes, primmods_output
 
     for submacromodel in macromodel.submacromodels:
+        print("Going into the Macromodel: ", submacromodel.name)
         submacro_results = dfs(submacromodel)
         # submacro_results.update(submacro_results)
-        print("Update Macromodel: ", macromodel.name)
+        submacromodel.update(submacro_results)
         repeat = False
         macro_results, exploration_axes, primmods_output = build(macromodel, repeat)
+        if debug:
+            print("Macro_results: ", macro_results)
 
     # print(macro_results)
     if macromodel.name == "ota":
@@ -94,12 +101,14 @@ def explore(macromodel, flatten_params, exp, debug=False):
             values_list.append(list(i.values()))
         else:
             Y = list(i.values())
+            print("Y: ", Y)
             primvalues_list.append(Y)
             primmods_list.append(mod)
 
+    primmods_outputs_aux = []
     primmods_outputs = []
-    # for prim in primmods_list:
-    #    primmods_outputs.append([prim.output[out] for out in macromodel.output])
+    for prim in primmods_list:
+        primmods_outputs_aux.append([prim.outputs[out] for out in macromodel.outputs])
 
     Y_2 = [[]]
     if len(primvalues_list) != 0:
@@ -148,6 +157,9 @@ def explore(macromodel, flatten_params, exp, debug=False):
             result.append(temp)
 
             results_axes.append([*X[:, idx], *Y_2])
+
+            for primmods in primmods_outputs_aux:
+                primmods_outputs.append(np.tile(primmods, len(X[0])))
             # if macromodel.name == "ota":
             #    results_2.append(
             #        (X[:, idx][0] * X[:, idx][3]) / (X[:, idx][0] + X[:, idx][3])
@@ -185,6 +197,8 @@ def build(macromodel, repeat=True, debug=False):
         XSCHEM_RCFILE, XSCHEM_DIR, SPICE_DIR, OUTPUT_DIR, macromodel
     )
 
+    print(nodes)
+
     sol = mna_solve(macromodel)
     tfs = mna_tf(macromodel)
 
@@ -194,6 +208,16 @@ def build(macromodel, repeat=True, debug=False):
     print(df)
 
     flattened_params = params_flatten(macromodel)
+
+    print(flattened_params)
+
+    specifications = macromodel.specifications
+
+    if len(specifications) == 0:
+        result, exploration_axes, primmods_output = explore(
+            macromodel, flattened_params, tfs[0], debug
+        )
+
     # exploration_results, exploration_axes, primmods_output = explore(
     #    macromodel, flattened_params, tfs[0], debug
     # )
@@ -206,14 +230,13 @@ def build(macromodel, repeat=True, debug=False):
     #        exploration_results[0].flatten() / exploration_results[1].flatten()
     #    )
 
-    especificaciones = macromodel.especificaciones
-
     result = []
     for idx, exp in enumerate(tfs):
-        proc = especificaciones[idx].out_def
-        exp = exp.subs(especificaciones[idx].parametros)
+        proc = specifications[idx].out_def
+        exp = exp.subs(specifications[idx].parametros)
 
         if list(proc.keys())[0] == "eval":
+            print("in eval")
             exp = sym.lambdify(
                 tuple([j for i in flattened_params.values() for j in i.keys()]), exp
             )
@@ -222,7 +245,8 @@ def build(macromodel, repeat=True, debug=False):
             )
             result.append(eval)
         elif list(proc.keys())[0] == "diff":
-            variables = especificaciones[idx].variables
+            print("in diff")
+            variables = specifications[idx].variables
             variable = list(variables.keys())[0]
             print(variables)
             print(variable)
@@ -234,8 +258,13 @@ def build(macromodel, repeat=True, debug=False):
                 print(exp_new)
                 exps.append(exp_new)
 
-            exp = np.lamb(exps[0] - exps[1], especificaciones[idx], macromodel)
+            # exp = np.lamb(exps[0] - exps[1], specifications[idx], macromodel)
+            exp = sym.lambdify(
+                tuple([j for i in flattened_params.values() for j in i.keys()]),
+                (exps[0] - exps[1]) / exps[0],
+            )
             eval = explore(macromodel, flattened_params, exp, debug)
+            print(eval)
             result.append(eval)
 
     return result, exploration_axes, primmods_output
