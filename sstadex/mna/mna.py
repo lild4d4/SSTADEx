@@ -51,7 +51,9 @@ def mna_solve(macromodel):
 def mna_tf(macromodel):
     sol = macromodel.eq_solutions
     nodes = macromodel.nodes
-    req_tfs = macromodel.req_tfs
+    # req_tfs = macromodel.req_tfs
+    req_tfs = [i.tf for i in macromodel.specifications]
+    print(req_tfs)
 
     tfs = []
     for idx, req_tf in enumerate(req_tfs):
