@@ -8,7 +8,7 @@ E {}
 N 180 -140 180 -120 {
 lab=vdd}
 N 180 -60 180 -40 {
-lab=#net1}
+lab=vout}
 N 310 -140 310 -130 {
 lab=vdd}
 N 180 -140 310 -140 {
@@ -16,29 +16,29 @@ lab=vdd}
 N 310 -130 310 -120 {
 lab=vdd}
 N 310 -60 310 -40 {
-lab=#net1}
+lab=vout}
 N 180 -40 310 -40 {
-lab=#net1}
+lab=vout}
 N 150 -140 180 -140 {
 lab=vdd}
 N 140 -140 150 -140 {
 lab=vdd}
 N 60 -140 60 -110 {
-lab=#net2}
-N 180 -40 180 10 {
 lab=#net1}
+N 180 -40 180 10 {
+lab=vout}
 N 180 90 180 110 {
 lab=vss}
 N 180 -270 180 -140 {
 lab=vdd}
 N -60 -140 40 -140 {
-lab=#net2}
+lab=#net1}
 N -220 -140 -170 -140 {
-lab=#net2}
+lab=#net1}
 N -170 -140 -140 -140 {
-lab=#net2}
+lab=#net1}
 N -140 -140 -110 -140 {
-lab=#net2}
+lab=#net1}
 N -220 -70 -220 -60 {
 lab=vss}
 N -220 -60 -220 -40 {
@@ -48,23 +48,23 @@ lab=vss}
 N -100 -70 -100 -60 {
 lab=vss}
 N -100 -140 -100 -130 {
-lab=#net2}
+lab=#net1}
 N 180 -10 350 -10 {
-lab=#net1}
+lab=vout}
 N -220 -140 -220 -130 {
-lab=#net2}
-N -110 -140 -60 -140 {
-lab=#net2}
-N 350 -10 360 -10 {
 lab=#net1}
+N -110 -140 -60 -140 {
+lab=#net1}
+N 350 -10 360 -10 {
+lab=vout}
 N 60 -70 140 -70 {
-lab=#net2}
+lab=#net1}
 N 60 -110 60 -70 {
-lab=#net2}
+lab=#net1}
 N 140 -140 140 -110 {
 lab=vdd}
 N 40 -140 60 -140 {
-lab=#net2}
+lab=#net1}
 N 280 -300 280 -270 {
 lab=vdd}
 N 180 -300 280 -300 {
@@ -82,30 +82,30 @@ lab=vn}
 N -180 -120 -140 -120 {
 lab=vn}
 N 180 10 180 20 {
-lab=#net1}
+lab=vout}
 N 180 80 180 90 {
 lab=vss}
 N -140 -80 -140 -40 {
 lab=vn}
 N -20 -140 -20 -130 {
-lab=#net2}
+lab=#net1}
 N -20 -130 -20 -120 {
-lab=#net2}
+lab=#net1}
 N -70 -60 -20 -60 {
 lab=vss}
 N -100 -60 -70 -60 {
 lab=vss}
 N 90 -10 180 -10 {
-lab=#net1}
+lab=vout}
 C {devices/res.sym} 310 -90 0 0 {name=Ro_pt
-value=965620
+value=163905
 footprint=1206
 device=resistor
 m=1}
-C {devices/vccs.sym} 180 -90 2 1 {name=Gm_pt value=0.0002197}
-C {devices/vccs.sym} -220 -100 2 0 {name=Gma value=0.0004627}
+C {devices/vccs.sym} 180 -90 2 1 {name=Gm_pt value=0.00040699}
+C {devices/vccs.sym} -220 -100 2 0 {name=Gma value=0.02575}
 C {devices/res.sym} -100 -100 2 0 {name=Ra
-value=55104
+value=25075
 footprint=1206
 device=resistor
 m=1}
@@ -142,3 +142,4 @@ m=1
 value=1.48908e-12
 footprint=1206
 device="ceramic capacitor"}
+C {devices/lab_pin.sym} 360 -10 2 0 {name=p2 sig_type=std_logic lab=vout}

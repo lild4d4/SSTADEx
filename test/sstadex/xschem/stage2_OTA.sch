@@ -24,7 +24,7 @@ lab=#net1}
 N 30 -120 40 -120 {
 lab=#net1}
 N -50 -120 -50 -90 {
-lab=#net2}
+lab=Vaout}
 N 70 -20 70 30 {
 lab=vout}
 N 70 110 70 130 {
@@ -32,13 +32,13 @@ lab=vss}
 N 70 -250 70 -120 {
 lab=#net1}
 N -170 -120 -70 -120 {
-lab=#net2}
+lab=Vaout}
 N -330 -120 -280 -120 {
-lab=#net2}
+lab=Vaout}
 N -280 -120 -250 -120 {
-lab=#net2}
+lab=Vaout}
 N -250 -120 -220 -120 {
-lab=#net2}
+lab=Vaout}
 N -330 -50 -330 -40 {
 lab=vss}
 N -330 -40 -330 -20 {
@@ -48,23 +48,23 @@ lab=vss}
 N -210 -50 -210 -40 {
 lab=vss}
 N -210 -120 -210 -110 {
-lab=#net2}
+lab=Vaout}
 N 70 10 240 10 {
 lab=vout}
 N -330 -120 -330 -110 {
-lab=#net2}
+lab=Vaout}
 N -220 -120 -170 -120 {
-lab=#net2}
+lab=Vaout}
 N 240 10 250 10 {
 lab=vout}
 N -50 -50 30 -50 {
-lab=#net2}
+lab=Vaout}
 N -50 -90 -50 -50 {
-lab=#net2}
+lab=Vaout}
 N 30 -120 30 -90 {
 lab=#net1}
 N -70 -120 -50 -120 {
-lab=#net2}
+lab=Vaout}
 N 170 -280 170 -250 {
 lab=#net1}
 N 70 -280 170 -280 {
@@ -93,30 +93,26 @@ N -290 -60 -290 40 {
 lab=V_p}
 N -20 10 70 10 {
 lab=vout}
-N 230 10 230 60 {
-lab=vout}
-N 230 140 230 160 {
-lab=vss}
-N 230 60 230 70 {
-lab=vout}
-N 230 130 230 140 {
-lab=vss}
 N 160 10 160 70 {
 lab=vout}
 N 160 140 160 160 {
 lab=vss}
-N 160 160 230 160 {
-lab=vss}
 N 160 130 160 140 {
 lab=vss}
-C {devices/res.sym} 200 -70 0 0 {name=Ro_pt
+N -120 -120 -120 -110 {
+lab=Vaout}
+N -120 -50 -120 -40 {
+lab=vss}
+N -210 -40 -120 -40 {
+lab=vss}
+C {devices/res.sym} 200 -70 0 0 {name=Ro_stage2
 value=473596.7
 footprint=1206
 device=resistor
 m=1}
-C {devices/vccs.sym} 70 -70 2 1 {name=Gm_pt value=2.7200000000000004e-05}
-C {devices/vccs.sym} -330 -80 2 0 {name=Gma value=10}
-C {devices/res.sym} -210 -80 2 0 {name=Ra
+C {devices/vccs.sym} 70 -70 2 1 {name=Gm_stage2 value=2.7200000000000004e-05}
+C {devices/vccs.sym} -330 -80 2 0 {name=Gma_1stage value=10}
+C {devices/res.sym} -210 -80 2 0 {name=Ra_1stage
 value=50
 footprint=1206
 device=resistor
@@ -144,5 +140,10 @@ m=1
 value=1e-12
 footprint=1206
 device="ceramic capacitor"}
-C {devices/lab_pin.sym} 230 160 3 0 {name=p9 sig_type=std_logic lab=vss}
-C {devices/isource.sym} 230 100 0 0 {name=IL value=40e-6}
+C {devices/lab_pin.sym} 160 160 3 0 {name=p9 sig_type=std_logic lab=vss}
+C {devices/lab_pin.sym} -50 -120 0 1 {name=p10 sig_type=std_logic lab=Vaout}
+C {capa.sym} -120 -80 0 0 {name=Ca_1stage
+m=1
+value=1e-12
+footprint=1206
+device="ceramic capacitor"}
