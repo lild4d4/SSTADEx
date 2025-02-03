@@ -1,5 +1,6 @@
 from collections import deque
 from sstadex import mna, mna_solve, mna_tf, Macromodel, Primitive
+from .opt import filter_conditions, get_new_conditions
 import sympy as sym
 import numpy as np
 import matplotlib.pyplot as plt
@@ -28,12 +29,24 @@ def dfs(macromodel, debug=False):
     print("Starting the exploration of: ", macromodel.name)
 
     macro_results, exploration_axes, primmods_output = build(macromodel)
+    mask = filter_conditions(macromodel, macro_results)
+    if debug:
+        print("Masks: ", mask)
+
+    final_df, new_conditions = get_new_conditions(
+        macromodel, mask, macro_results, exploration_axes, params_flatten(macromodel)
+    )
+
+    for idx, mac in enumerate(macro_results):
+        macro_results[idx] = macro_results[idx][mask]
+        print(macro_results[idx])
+
     if debug:
         print("Macro_results: ", macro_results)
 
     if macromodel.num_level_exp == 1:
         print("End of the exploration of: ", macromodel.name)
-        return macro_results, exploration_axes, primmods_output
+        return macro_results, exploration_axes, primmods_output, final_df
 
     for submacromodel in macromodel.submacromodels:
         print("Going into the Macromodel: ", submacromodel.name)
@@ -66,8 +79,6 @@ def params_flatten(macrmomodel):
 
     for primitive in macrmomodel.primitives:
         global_params[primitive] = primitive.parameters
-
-    print(global_params.keys())
 
     return global_params
 
@@ -145,6 +156,8 @@ def explore(macromodel, flatten_params, exp, debug=False):
     X = [[]]
     if len(values_list) != 0:
         X = np.meshgrid(*values_list)
+        print("lengths of values list: ", [len(x) for x in values_list])
+        print("mult: ", np.prod([len(x) for x in values_list]))
         X = np.reshape(X, (len(values_list), np.prod([len(x) for x in values_list])))
 
     result = []
@@ -155,8 +168,9 @@ def explore(macromodel, flatten_params, exp, debug=False):
             temp = exp(*X[:, idx], *Y_2)
             # db = 20 * np.log10(np.abs(temp))
             result.append(temp)
-
-            results_axes.append([*X[:, idx], *Y_2])
+            results_axes.append(
+                [*np.repeat(X[:, idx], len(Y_2[0])).reshape(len(X[:, idx]), -1), *Y_2]
+            )
 
             for primmods in primmods_outputs_aux:
                 primmods_outputs.append(np.tile(primmods, len(X[0])))
@@ -184,7 +198,7 @@ def explore(macromodel, flatten_params, exp, debug=False):
     #    )
     # else:
     #    return np.asarray(result), results_axes, primmods_outputs
-    return np.asarray(result), results_axes, primmods_outputs
+    return np.asarray(result).flatten(), np.hstack(results_axes), primmods_outputs
 
 
 def build(macromodel, repeat=True, debug=False):
@@ -193,19 +207,24 @@ def build(macromodel, repeat=True, debug=False):
     OUTPUT_DIR = "./output/"
     XSCHEM_DIR = "./xschem/"
 
-    report, df, df2, A, X, Z, nodes = mna(
-        XSCHEM_RCFILE, XSCHEM_DIR, SPICE_DIR, OUTPUT_DIR, macromodel
-    )
+    tfs = []
+    for spec in macromodel.specifications:
+        macromodel.name = spec.netlist
+        print("Netlist: ", macromodel.name)
 
-    print(nodes)
+        report, df, df2, A, X, Z, nodes = mna(
+            XSCHEM_RCFILE, XSCHEM_DIR, SPICE_DIR, OUTPUT_DIR, macromodel
+        )
 
-    sol = mna_solve(macromodel)
-    tfs = mna_tf(macromodel)
+        print(nodes)
 
-    print("A: ", A)
-    print(X)
-    print(sol)
-    print(df)
+        sol = mna_solve(macromodel)
+        tfs.append(*mna_tf(macromodel, spec))
+
+        # print("A: ", A)
+        # print(X)
+        # print(sol)
+        # print(df)
 
     flattened_params = params_flatten(macromodel)
 
@@ -266,5 +285,38 @@ def build(macromodel, repeat=True, debug=False):
             eval = explore(macromodel, flattened_params, exp, debug)
             print(eval)
             result.append(eval)
+
+        elif list(proc.keys())[0] == "frec":
+            print("in frec")
+            exp = sym.lambdify(
+                tuple([j for i in flattened_params.values() for j in i.keys()]), exp
+            )
+            eval, exploration_axes, primmods_output = explore(
+                macromodel, flattened_params, exp, debug
+            )
+
+            frec = sym.Symbol("frec")
+
+            gbw_j = []
+
+            for i in eval.flatten():
+                temp = i.subs({sym.Symbol("s"): frec * 2j * np.pi})
+                gbw_j.append(temp)
+
+            f = np.logspace(1, 9, 200)
+            gbw_final = []
+            phase_final = []
+
+            for i in gbw_j:
+                gbw_lamb = sym.lambdify(frec, i)
+                raw = gbw_lamb(f)
+                abs_values = np.abs(20 * np.log10(np.abs(raw)))
+                abs_values = abs_values - (abs_values[0] - 3)
+                cross = np.argmin(np.abs(abs_values))
+                gbw_final.append(f[cross])
+                phase_final.append(np.angle(raw[cross]) * 180 / (np.pi))
+
+            gbw_final = np.asarray(gbw_final)
+            result.append(gbw_final)
 
     return result, exploration_axes, primmods_output
