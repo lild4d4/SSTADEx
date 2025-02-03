@@ -48,11 +48,12 @@ def mna_solve(macromodel):
     return sol
 
 
-def mna_tf(macromodel):
+def mna_tf(macromodel, spec):
     sol = macromodel.eq_solutions
     nodes = macromodel.nodes
     # req_tfs = macromodel.req_tfs
-    req_tfs = [i.tf for i in macromodel.specifications]
+    # req_tfs = [i.tf for i in macromodel.specifications]
+    req_tfs = [spec.tf]
     print(req_tfs)
 
     tfs = []
