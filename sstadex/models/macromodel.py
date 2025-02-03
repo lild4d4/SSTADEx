@@ -49,5 +49,6 @@ class Macromodel:
     def update(self, macro_results):
         results = macro_results[0]
 
-        for idx, parameter in enumerate(self.macromodel_parameters.keys()):
-            self.macromodel_parameters[parameter] = results[idx]
+        for idx, spec in enumerate(self.specifications):
+            parameters = list(self.macromodel_parameters.keys())[idx]
+            self.macromodel_parameters[parameters] = results[idx]
