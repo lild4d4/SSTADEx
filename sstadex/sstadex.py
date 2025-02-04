@@ -1,6 +1,6 @@
 from collections import deque
 from sstadex import mna, mna_solve, mna_tf, Macromodel, Primitive
-from .opt import filter_conditions, get_new_conditions
+from .opt import filter_conditions, get_new_conditions, run_pareto
 import sympy as sym
 import numpy as np
 import matplotlib.pyplot as plt
@@ -24,17 +24,22 @@ def bfs(macromodel):
     return result
 
 
-def dfs(macromodel, debug=False):
+def dfs(macromodel, debug=False, going_up=0):
     print("############################################")
     print("Starting the exploration of: ", macromodel.name)
 
     macro_results, exploration_axes, primmods_output = build(macromodel)
-    mask = filter_conditions(macromodel, macro_results)
+    mask = filter_conditions(macromodel, macro_results, primmods_output)
     if debug:
         print("Masks: ", mask)
 
     final_df, new_conditions = get_new_conditions(
-        macromodel, mask, macro_results, exploration_axes, params_flatten(macromodel)
+        macromodel,
+        mask,
+        macro_results,
+        exploration_axes,
+        params_flatten(macromodel),
+        primmods_output,
     )
 
     for idx, mac in enumerate(macro_results):
@@ -46,22 +51,32 @@ def dfs(macromodel, debug=False):
 
     if macromodel.num_level_exp == 1:
         print("End of the exploration of: ", macromodel.name)
+        final_df = run_pareto(macromodel, final_df)
+        return macro_results, exploration_axes, primmods_output, final_df
+
+    if going_up == 1:
+        print("End of the exploration of: ", macromodel.name)
         return macro_results, exploration_axes, primmods_output, final_df
 
     for submacromodel in macromodel.submacromodels:
         print("Going into the Macromodel: ", submacromodel.name)
-        submacro_results = dfs(submacromodel)
-        # submacro_results.update(submacro_results)
+        submacro_results = dfs(submacromodel, debug)
+        macro_results = submacro_results[0]
+        exploration_axes = submacro_results[1]
+        primmods_output = submacro_results[2]
+        final_df = submacro_results[3]
+        final_df.to_csv(submacromodel.name + ".csv")
         submacromodel.update(submacro_results)
-        repeat = False
-        macro_results, exploration_axes, primmods_output = build(macromodel, repeat)
+        macro_results, exploration_axes, primmods_output, final_df = dfs(
+            macromodel, going_up=1
+        )
         if debug:
             print("Macro_results: ", macro_results)
 
     # print(macro_results)
     if macromodel.name == "ota":
         macromodel.its_final = True
-    return macro_results, exploration_axes, primmods_output
+    return macro_results, exploration_axes, primmods_output, final_df
 
 
 def topdown_prim_lookup(macromodel):
@@ -112,14 +127,19 @@ def explore(macromodel, flatten_params, exp, debug=False):
             values_list.append(list(i.values()))
         else:
             Y = list(i.values())
-            print("Y: ", Y)
+            if debug:
+                print("Y: ", Y)
             primvalues_list.append(Y)
             primmods_list.append(mod)
 
     primmods_outputs_aux = []
     primmods_outputs = []
     for prim in primmods_list:
-        primmods_outputs_aux.append([prim.outputs[out] for out in macromodel.outputs])
+        for out in macromodel.outputs:
+            if out in prim.outputs:
+                primmods_outputs_aux.append(prim.outputs[out])
+
+    print("primmods_output_aux: ", primmods_outputs_aux)
 
     Y_2 = [[]]
     if len(primvalues_list) != 0:
@@ -141,6 +161,19 @@ def explore(macromodel, flatten_params, exp, debug=False):
             # Y_2 = Y_2.reshape(len(primvalues_list_aux), -1)
             Y_2 = [*Y_2_aux, *Y_2_aux_2]
 
+            primmods_outputs.append(
+                np.tile(primmods_outputs_aux[0], len(primmods_outputs_aux[2]))
+            )
+            primmods_outputs.append(
+                np.tile(primmods_outputs_aux[1], len(primmods_outputs_aux[2]))
+            )
+            primmods_outputs.append(
+                np.repeat(primmods_outputs_aux[2], len(primmods_outputs_aux[0]))
+            )
+            primmods_outputs.append(
+                np.repeat(primmods_outputs_aux[3], len(primmods_outputs_aux[0]))
+            )
+
         else:
             Y_2 = Y_2.reshape(len(primvalues_list_aux), -1)
         # print(np.asarray(Y_2).shape)
@@ -156,13 +189,15 @@ def explore(macromodel, flatten_params, exp, debug=False):
     X = [[]]
     if len(values_list) != 0:
         X = np.meshgrid(*values_list)
-        print("lengths of values list: ", [len(x) for x in values_list])
-        print("mult: ", np.prod([len(x) for x in values_list]))
+        if debug:
+            print("lengths of values list: ", [len(x) for x in values_list])
+            print("mult: ", np.prod([len(x) for x in values_list]))
         X = np.reshape(X, (len(values_list), np.prod([len(x) for x in values_list])))
 
     result = []
     results_axes = []
     results_2 = []
+    primmods_outputs_aux_2 = []
     if len(X[0]) != 0:
         for idx in range(len(X[0])):
             temp = exp(*X[:, idx], *Y_2)
@@ -173,11 +208,13 @@ def explore(macromodel, flatten_params, exp, debug=False):
             )
 
             for primmods in primmods_outputs_aux:
-                primmods_outputs.append(np.tile(primmods, len(X[0])))
+                primmods_outputs_aux_2.append(np.asarray(primmods).flatten())
             # if macromodel.name == "ota":
             #    results_2.append(
             #        (X[:, idx][0] * X[:, idx][3]) / (X[:, idx][0] + X[:, idx][3])
             #    )
+
+        primmods_outputs.append(np.asarray(primmods_outputs_aux_2).flatten())
     else:
         for idx in range(1):
             temp = exp(*Y_2)
@@ -198,7 +235,11 @@ def explore(macromodel, flatten_params, exp, debug=False):
     #    )
     # else:
     #    return np.asarray(result), results_axes, primmods_outputs
-    return np.asarray(result).flatten(), np.hstack(results_axes), primmods_outputs
+    return (
+        np.asarray(result).flatten(),
+        np.hstack(results_axes),
+        np.asarray(primmods_outputs),
+    )
 
 
 def build(macromodel, repeat=True, debug=False):
@@ -252,7 +293,30 @@ def build(macromodel, repeat=True, debug=False):
     result = []
     for idx, exp in enumerate(tfs):
         proc = specifications[idx].out_def
-        exp = exp.subs(specifications[idx].parametros)
+        if len(specifications[idx].parametros) != 0:
+            exp = exp.subs(specifications[idx].parametros)
+
+        if specifications[idx].composed == 1:
+            if list(proc.keys())[0] == "divide":
+                numerator = proc["divide"][0]
+                denominator = proc["divide"][1]
+                if debug:
+                    print("numerator name: ", numerator.name)
+                    print("denominator name: ", denominator.name)
+
+                num_index = 0
+                den_index = 0
+                for jdx, spec in enumerate(specifications):
+                    if debug:
+                        print("Spec name: ", spec.name)
+                    if spec.name == numerator.name:
+                        print("found numerator with index: ", jdx)
+                        num_index = jdx
+                    elif spec.name == denominator.name:
+                        print("found denominator with index: ", jdx)
+                        den_index = jdx
+
+                result.append(result[num_index] / result[den_index])
 
         if list(proc.keys())[0] == "eval":
             print("in eval")
@@ -262,6 +326,8 @@ def build(macromodel, repeat=True, debug=False):
             eval, exploration_axes, primmods_output = explore(
                 macromodel, flattened_params, exp, debug
             )
+            if specifications[idx].lamd != None:
+                eval = specifications[idx].lamd(eval)
             result.append(eval)
         elif list(proc.keys())[0] == "diff":
             print("in diff")
