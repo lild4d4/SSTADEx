@@ -196,17 +196,17 @@ lab=vs}
 N -460 -30 -360 -30 {
 lab=vs}
 C {devices/res.sym} -120 -80 0 0 {name=Rdif_2
-value=481556.4
+value=6.43889e5
 footprint=1206
 device=resistor
 m=1}
-C {devices/vccs.sym} -250 -80 0 0 {name=Gdif_2 value=0.000405}
+C {devices/vccs.sym} -250 -80 0 0 {name=Gdif_2 value=0.000323}
 C {devices/res.sym} 240 -80 0 0 {name=Rdif_1
-value=481556.4
+value=6.43889e5
 footprint=1206
 device=resistor
 m=1}
-C {devices/vccs.sym} 110 -80 0 0 {name=Gdif_1 value=0.000405}
+C {devices/vccs.sym} 110 -80 0 0 {name=Gdif_1 value=0.000323}
 C {devices/isource.sym} 0 110 0 0 {name=I2 value=0}
 C {devices/lab_pin.sym} 0 30 1 0 {name=p1 sig_type=std_logic lab=vs}
 C {devices/lab_pin.sym} -370 -130 0 0 {name=p2 sig_type=std_logic lab=vn}
@@ -215,16 +215,16 @@ C {devices/lab_pin.sym} 380 -150 2 0 {name=p4 sig_type=std_logic lab=vout}
 C {devices/lab_pin.sym} -10 -310 1 0 {name=p5 sig_type=std_logic lab=vdd}
 C {devices/lab_pin.sym} 0 170 3 0 {name=p9 sig_type=std_logic lab=vss}
 C {devices/res.sym} 280 -230 0 0 {name=Raload_1
-value=1851851
+value=1.553e5
 footprint=1206
 device=resistor
 m=1}
 C {devices/res.sym} -80 -230 0 0 {name=Raload_2
-value=4476
+value=12367.5
 footprint=1206
 device=resistor
 m=1}
-C {devices/vccs.sym} 180 -230 2 1 {name=Gaload value=0.0002234}
+C {devices/vccs.sym} 180 -230 2 1 {name=Gaload value=0.000081}
 C {devices/code_shown.sym} -410 270 0 0 {name=s1 only_toplevel=false value="
 
 .lib /opt/pdks/sky130A/libs.tech/ngspice/sky130.lib.spice tt

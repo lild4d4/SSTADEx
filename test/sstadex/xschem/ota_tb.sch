@@ -121,10 +121,10 @@ print vout vs
 
 "}
 C {sky130_fd_pr/nfet_01v8_lvt.sym} 230 -60 0 1 {name=M1
-W=40
-L=6.4
+W=20.9
+L=1.6
 nf=1
-mult=1
+mult=10
 ad="'int((nf+1)/2) * W/nf * 0.29'" 
 pd="'2*int((nf+1)/2) * (W/nf + 0.29)'"
 as="'int((nf+2)/2) * W/nf * 0.29'" 
@@ -134,10 +134,10 @@ sa=0 sb=0 sd=0
 model=nfet_01v8_lvt
 spiceprefix=X}
 C {sky130_fd_pr/nfet_01v8_lvt.sym} -170 -60 0 0 {name=M2
-W=40
-L=6.4
+W=20.9
+L=1.6
 nf=1
-mult=1
+mult=10
 ad="'int((nf+1)/2) * W/nf * 0.29'" 
 pd="'2*int((nf+1)/2) * (W/nf + 0.29)'"
 as="'int((nf+2)/2) * W/nf * 0.29'" 
@@ -148,8 +148,8 @@ model=nfet_01v8_lvt
 spiceprefix=X
 }
 C {sky130_fd_pr/pfet_01v8_lvt.sym} 190 -220 0 0 {name=M3
-W=8
-L=1.6
+W=1.1
+L=0.4
 nf=1
 mult=1
 ad="'int((nf+1)/2) * W/nf * 0.29'" 
@@ -162,8 +162,8 @@ model=pfet_01v8_lvt
 spiceprefix=X
 }
 C {sky130_fd_pr/pfet_01v8_lvt.sym} -130 -220 0 1 {name=M4
-W=8
-L=1.6
+W=1.1
+L=0.4
 nf=1
 mult=1
 ad="'int((nf+1)/2) * W/nf * 0.29'" 
