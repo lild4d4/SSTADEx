@@ -3,35 +3,51 @@ import pandas as pd
 from sstadex import Macromodel
 
 
-def filter_conditions(macromodel, macro_results):
+def filter_conditions(macromodel, macro_results, sizing):
+    area_mask = np.full(sizing[0].shape, True)
+
+    for idx, prim_size in enumerate(sizing):
+        print("prim size: ", prim_size)
+        size_cond = macromodel.area_conditions[idx]
+        for jdx, size in enumerate(
+            prim_size
+        ):  ## when the L area is added then should be sizing[idx]
+            if size < size_cond:
+                area_mask[jdx] = True
+            else:
+                area_mask[jdx] = False
+
     masks = []
 
     for idx, spec in enumerate(macromodel.specifications):
         mask = np.full(macro_results[idx].shape, True)
-        for idx, res in enumerate(macro_results[idx].flatten()):
+        for jdx, res in enumerate(macro_results[idx].flatten()):
+            res = np.abs(res)
             if "max" in spec.conditions.keys():
                 for cond in spec.conditions["max"]:
                     if res < cond:
-                        mask[idx] = True
+                        mask[jdx] = True
                     else:
-                        mask[idx] = False
+                        mask[jdx] = False
             elif "min" in spec.conditions.keys():
                 for cond in spec.conditions["min"]:
                     if res > cond:
-                        mask[idx] = True
+                        mask[jdx] = True
                     else:
-                        mask[idx] = False
+                        mask[jdx] = False
         masks.append(mask)
 
+    masks.append(area_mask)
     mask = np.full(macro_results[0].shape, True)
     for m in masks:
+        # print("partial mask: ", m)
         mask = mask & m
 
     return mask
 
 
 def get_new_conditions(
-    macromodel, mask, macro_results, exploration_axes, flattened_params
+    macromodel, mask, macro_results, exploration_axes, flattened_params, sizing
 ):
     flattened_submacro_params = []
 
@@ -52,10 +68,17 @@ def get_new_conditions(
     spec_names = []
     for idx, result in enumerate(macro_results):
         spec_names.append(macromodel.specifications[idx].name)
-        final_dict[macromodel.specifications[idx].name] = result[mask]
+        final_dict[macromodel.specifications[idx].name] = np.abs(result[mask])
+
+    area = np.full(sizing[0][mask].shape, 0)
+    for idx, output in enumerate(macromodel.outputs):
+        final_dict[output] = sizing[idx][mask]
+        area = area + sizing[idx][mask]
+
+    final_dict["area"] = area
 
     df = pd.DataFrame.from_dict(final_dict)
 
     df.sort_values(by=flattened_submacro_params)
 
-    return df, df.iloc[0]
+    return df, 0
