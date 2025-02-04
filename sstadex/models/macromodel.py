@@ -1,3 +1,6 @@
+import numpy as np
+
+
 class Macromodel:
     def __init__(
         self,
@@ -19,6 +22,7 @@ class Macromodel:
         tfs_sol=[],
         its_final=False,
         outputs=[],
+        is_primitive=False,
     ):
         self.name = name
         self.netlist = netlist
@@ -36,6 +40,7 @@ class Macromodel:
         self.tfs_sol = tfs_sol
         self.its_final = its_final
         self.outputs = outputs
+        self.is_primitive = is_primitive
 
     def hasPrimitive(self):
         if len(self.primitives) == 0:
@@ -47,8 +52,30 @@ class Macromodel:
         self.submacromodels.append(submacromodel)
 
     def update(self, macro_results):
-        results = macro_results[0]
+        results_df = macro_results[3]
 
-        for idx, spec in enumerate(self.specifications):
-            parameters = list(self.macromodel_parameters.keys())[idx]
-            self.macromodel_parameters[parameters] = results[idx]
+        for param in self.macromodel_parameters:
+            for spec in self.specifications:
+                print("param: ", param)
+                print(spec.target_param)
+                if param == spec.target_param:
+                    self.macromodel_parameters[param] = results_df[spec.name].values
+                elif spec.target_param != "":
+                    shape = np.asarray(results_df["area"].values).shape
+                    print(shape)
+                    if shape[0] > self.macromodel_parameters[param].shape[0]:
+                        self.macromodel_parameters[param] = np.resize(
+                            np.asarray(self.macromodel_parameters[param]), shape
+                        )
+                    else:
+                        self.macromodel_parameters[param] = self.macromodel_parameters[
+                            param
+                        ][: len(results_df["area"])]
+
+        self.output_results = {}
+        for output in self.outputs:
+            self.output_results[output] = results_df[output].values
+
+        self.is_primitive = True
+        print("outputs results: ", self.output_results)
+        print("macromodel parameters updated: ", self.macromodel_parameters)
