@@ -1,6 +1,13 @@
-from .macromodel import Macromodel
+from .macromodel import Macromodel, Test
 from .transistor import Transistor
-from .primitives import Primitive, simplediffpair, cs_pmos, cm_pmos
+from .primitives import (
+    Primitive,
+    simplediffpair,
+    cs_pmos,
+    cm_pmos,
+    diffpair_cc,
+    current_mirror_cc,
+)
 
 __all__ = [
     "Macromodel",
@@ -9,4 +16,7 @@ __all__ = [
     "simplediffpair",
     "cs_pmos",
     "cm_pmos",
+    "diffpair_cc",
+    "Test",
+    "current_mirror_cc",
 ]

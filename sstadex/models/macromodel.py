@@ -23,6 +23,7 @@ class Macromodel:
         its_final=False,
         outputs=[],
         is_primitive=False,
+        ext_mask=None,
     ):
         self.name = name
         self.netlist = netlist
@@ -41,6 +42,7 @@ class Macromodel:
         self.its_final = its_final
         self.outputs = outputs
         self.is_primitive = is_primitive
+        self.ext_mask = ext_mask
 
     def hasPrimitive(self):
         if len(self.primitives) == 0:
@@ -79,3 +81,14 @@ class Macromodel:
         self.is_primitive = True
         print("outputs results: ", self.output_results)
         print("macromodel parameters updated: ", self.macromodel_parameters)
+
+
+class Test:
+    def __init__(self, composed=0, parametros={}, lamb=None, target_param=""):
+        self.composed = composed
+        self.parametros = parametros
+        self.lamd = lamb
+        self.target_param = target_param
+
+    def eval(funct):
+        return {"eval": funct}
