@@ -6,23 +6,49 @@ from sstadex import Macromodel
 def filter_conditions(macromodel, macro_results, sizing):
     area_mask = np.full(sizing[0].shape, True)
 
+    size_cond = 1
     for idx, prim_size in enumerate(sizing):
-        print("prim size: ", prim_size)
-        size_cond = macromodel.area_conditions[idx]
-        for jdx, size in enumerate(
-            prim_size
-        ):  ## when the L area is added then should be sizing[idx]
-            if size < size_cond:
-                area_mask[jdx] = True
-            else:
-                area_mask[jdx] = False
+        # print("prim size: ", prim_size)
+
+        if "max" in macromodel.area_conditions:
+            size_cond = macromodel.area_conditions["max"][idx]
+            # print("size cond max: ", size_cond)
+            for jdx, size in enumerate(prim_size):
+                if size < size_cond:
+                    area_mask[jdx] = area_mask[jdx] & True
+                else:
+                    area_mask[jdx] = area_mask[jdx] & False
+        if "min" in macromodel.area_conditions:
+            size_cond = macromodel.area_conditions["min"][idx]
+            # print("size cond min: ", size_cond)
+            for jdx, size in enumerate(prim_size):
+                if size > size_cond:
+                    area_mask[jdx] = area_mask[jdx] & True
+                else:
+                    area_mask[jdx] = area_mask[jdx] & False
+
+        # if idx < 1:
+        #    size_cond = macromodel.area_conditions[idx]
+        # else:
+        #    size_cond = 1
+        # print("size cond: ", size_cond)
+        # for jdx, size in enumerate(
+        #    prim_size
+        # ):  ## when the L area is added then should be sizing[idx]
+        #    if size < size_cond:
+        #        area_mask[jdx] = area_mask[jdx] & True
+        #    else:
+        #        area_mask[jdx] = area_mask[jdx] & False
 
     masks = []
 
     for idx, spec in enumerate(macromodel.specifications):
         mask = np.full(macro_results[idx].shape, True)
         for jdx, res in enumerate(macro_results[idx].flatten()):
-            res = np.abs(res)
+            if res == None:
+                res = 0
+            else:
+                res = np.abs(res)
             if "max" in spec.conditions.keys():
                 for cond in spec.conditions["max"]:
                     if res < cond:
@@ -59,8 +85,6 @@ def get_new_conditions(
             for i in model.parameters.keys():
                 flattened_submacro_params.append(i)
 
-    print("flattened submacro params: ", flattened_submacro_params)
-
     final_dict = {}
     for idx, axe in enumerate(exploration_axes):
         final_dict[flattened_submacro_params[idx]] = axe[mask]
@@ -72,6 +96,7 @@ def get_new_conditions(
 
     area = np.full(sizing[0][mask].shape, 0)
     for idx, output in enumerate(macromodel.outputs):
+        # print("output name: ", output)
         final_dict[output] = sizing[idx][mask]
         area = area + sizing[idx][mask]
 
@@ -79,6 +104,6 @@ def get_new_conditions(
 
     df = pd.DataFrame.from_dict(final_dict)
 
-    df.sort_values(by=flattened_submacro_params)
+    # df.sort_values(by=flattened_submacro_params)
 
     return df, 0

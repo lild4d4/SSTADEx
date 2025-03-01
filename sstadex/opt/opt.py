@@ -12,4 +12,4 @@ def run_pareto(macromodel, final_df):
         opt_goal.append(opt)
     mask = pareto.paretoset(new_df, opt_goal)
 
-    return final_df[mask]
+    return final_df[mask], mask
