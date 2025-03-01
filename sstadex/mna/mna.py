@@ -11,19 +11,19 @@ def mna(XSCHEM_RCFILE, XSCHEM_DIR, SPICE_DIR, OUTPUT_DIR, macromodel):
 
     design_name = macromodel.name
     # Generation of the .spice from the schematic.
-    subprocess.run(
-        [
-            "xschem",
-            "--netlist",
-            "--no_x",
-            "--quit",
-            "--rcfile",
-            XSCHEM_RCFILE,
-            "-o",
-            SPICE_DIR,
-            XSCHEM_DIR + design_name + ".sch",
-        ]
-    )
+    # subprocess.run(
+    #    [
+    #        "xschem",
+    #        "--netlist",
+    #        "--no_x",
+    #        "--quit",
+    #        "--rcfile",
+    #        XSCHEM_RCFILE,
+    #        "-o",
+    #        SPICE_DIR,
+    #        XSCHEM_DIR + design_name + ".sch",
+    #    ]
+    # )
 
     # the input netlist of the mna must be plain netlist and not spice, here the convertion is made.
     nodes = spice2ptxt(SPICE_DIR, OUTPUT_DIR, design_name)
