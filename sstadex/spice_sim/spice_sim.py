@@ -61,8 +61,8 @@ def spice_sim(project, dict):
                 except ValueError:
                     index = -1
                 if index != -1:
-                    words[6] = "L=" + str(dict[words[0]][1][i])
-                    words[7] = "W=" + str(dict[words[0]][0][i])
+                    words[6] = "L=" + str(dict[words[0]][1][i]) + "u"
+                    words[7] = "W=" + str(dict[words[0]][0][i]) + "u"
                     # if words[0][0] == "R" or words[0][0] == "C":
                     #    words[3] = str(dict[words[0]][i])
                     # elif words[0][0] == "G":
@@ -85,6 +85,35 @@ def spice_sim(project, dict):
                     words[21] = "m=" + str(dict[lines[idx - 1].split()[0]][2][i])
                 words.append("\n")
                 line = " ".join(words)
+                print(line)
+                new_file.write(line)
+            elif words[0][0] == "I":
+                words[3] = str(dict[words[0]][i])
+                print(words)
+                words.append("\n")
+                line = " ".join(words)
+                print(line)
+                new_file.write(line)
+            elif words[0][0] == "V":
+                try:
+                    index = list(dict_keys).index(words[0])
+                    words[3] = str(dict[words[0]][i])
+                    print(words)
+                    words.append("\n")
+                    line = " ".join(words)
+                except ValueError:
+                    index = -1
+                print(line)
+                new_file.write(line)
+            elif words[0][0] == "R":
+                try:
+                    index = list(dict_keys).index(words[0])
+                    words[3] = str(dict[words[0]][i])
+                    print(words)
+                    words.append("\n")
+                    line = " ".join(words)
+                except ValueError:
+                    index = -1
                 print(line)
                 new_file.write(line)
             else:
