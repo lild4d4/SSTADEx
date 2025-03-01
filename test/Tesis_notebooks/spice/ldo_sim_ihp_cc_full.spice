@@ -1,0 +1,43 @@
+** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/Tesis_notebooks/xschem/ldo_sim_ihp_cc_full.sch
+**.subckt ldo_sim_ihp_cc_full
+R1 vout vfb 100000 m=1
+R2 vfb vss 300000 m=1
+Cl vout vss 1e-12 m=1
+R3 vout vss 18 m=1
+XM7 net1 vbias_cm net3 net3 sg13_hv_pmos w=5.18u l=0.8u ng=1 m=1
+I2 vs vss 20e-6
+XM1 vcp vn vs vs sg13_hv_nmos w=5.39u l=0.4u ng=1 m=1
+XM2 net2 vfb vs vs sg13_hv_nmos w=5.39u l=0.4u ng=1 m=1
+XM3 vmid vbias_dp vcp vcp sg13_hv_nmos w=5.8u l=0.8u ng=1 m=1
+XM4 net1 vbias_dp net2 net2 sg13_hv_nmos w=5.8u l=0.8u ng=1 m=1
+XM5 net3 net1 vdd_1 vdd_1 sg13_hv_pmos w=5.5u l=6.4u ng=1 m=1
+XM6 vcp_cm net1 vdd_1 vdd_1 sg13_hv_pmos w=5.5u l=6.4u ng=1 m=1
+XM8 vmid vbias_cm vcp_cm vcp_cm sg13_hv_pmos w=5.18u l=0.8u ng=1 m=1
+XM9 vout vmid vdd vdd sg13_hv_pmos w=2487u l=0.4u ng=1 m=1
+**** begin user architecture code
+
+
+
+.lib /opt/pdks/ihp-sg13g2/libs.tech/ngspice/models/cornerMOShv.lib mos_tt
+
+Vref vn 0 1.35
+Vdd_1 vdd_1 0 3.3
+Vdd vdd 0 3.3 ac 1
+Vss vss 0 0
+Vbias_dp vbias_dp 0 2.2
+Vbias_cm vbias_cm vdd_1 -2.1
+
+.control
+pre_osdi /opt/pdks/ihp-sg13g2/libs.tech/ngspice/openvaf/psp103_nqs.osdi
+ac dec 10 1 10G
+meas ac gain find vdb(vout) at=1
+let low_gain = gain+3
+meas ac fc WHEN vdb(vout)=low_gain
+wrdata temp.csv vdb(vout) phase(vout) fc
+.endc
+
+
+
+**** end user architecture code
+**.ends
+.end

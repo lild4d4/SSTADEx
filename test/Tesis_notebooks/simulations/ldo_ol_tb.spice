@@ -1,0 +1,72 @@
+** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/Tesis_notebooks/xschem/ldo_ol_tb.sch
+**.subckt ldo_ol_tb
+I_amp1 vs vss 40e-6
+I_amp2 vmid vss 40e-6
+R1 vout vfb 22500 m=1
+R2 vfb vss 67500 m=1
+Cl vout vss 1e-12 m=1
+XM1 vout_s1 vol vs vs sg13_hv_nmos w=5.33u l=0.8u ng=1 m=1
+XM2 net1 vn vs vs sg13_hv_nmos w=5.33u l=0.8u ng=1 m=1
+XM3 vout_s1 net1 vdd_1 vdd_1 sg13_hv_pmos w=9.02u l=6.4u ng=1 m=1
+XM4 net1 net1 vdd_1 vdd_1 sg13_hv_pmos w=9.02u l=6.4u ng=1 m=1
+XM5 vmid vout_s1 vdd_1 vdd_1 sg13_hv_pmos w=8.8u l=3.2u ng=1 m=1
+XM6 vout vmid vdd vdd sg13_hv_pmos w=2488u l=0.4u ng=1 m=1
+R4 vpos vfb 10000000000 m=1
+C2 vpos vss 10 m=1
+V1 vol vpos dc 0 ac 1
+R3 vout vss 18 m=1
+R5 vout_s1 net2 500 m=1
+C1 vmid net2 3e-12 m=1
+**** begin user architecture code
+
+
+
+.lib /opt/pdks/ihp-sg13g2/libs.tech/ngspice/models/cornerMOShv.lib mos_tt
+
+Vref vn 0 1.35
+Vdd vdd 0 3.3
+Vdd_1 vdd_1 0 3.3
+Vss vss 0 0
+
+.control
+ac dec 10 1 100G
+plot vdb(vout)
+plot phase(vout)
+op
+print vout vmid vout_s1 vs
+
+let gm_m1 = @n.xm1.nsg13_hv_nmos[gm]
+let gm_m2 = @n.xm2.nsg13_hv_nmos[gm]
+let gm_m3 = @n.xm3.nsg13_hv_pmos[gm]
+let gm_m4 = @n.xm4.nsg13_hv_pmos[gm]
+let gm_m5 = @n.xm5.nsg13_hv_pmos[gm]
+let gm_m6 = @n.xm6.nsg13_hv_pmos[gm]
+
+let gds_m1 = @n.xm1.nsg13_hv_nmos[gds]
+let gds_m2 = @n.xm2.nsg13_hv_nmos[gds]
+let gds_m3 = @n.xm3.nsg13_hv_pmos[gds]
+let gds_m4 = @n.xm4.nsg13_hv_pmos[gds]
+let gds_m5 = @n.xm5.nsg13_hv_pmos[gds]
+let gds_m6 = @n.xm6.nsg13_hv_pmos[gds]
+
+print gm_m1
+print gm_m2
+print gm_m3
+print gm_m4
+print gm_m5
+print gm_m6
+
+print 1/gds_m1
+print 1/gds_m2
+print 1/gds_m3
+print 1/gds_m4
+print 1/gds_m5
+print 1/gds_m6
+
+.endc
+
+
+
+**** end user architecture code
+**.ends
+.end

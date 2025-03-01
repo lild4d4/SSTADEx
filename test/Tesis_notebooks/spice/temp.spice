@@ -1,0 +1,36 @@
+** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/Tesis_notebooks/xschem/ldo_tb.sch
+**.subckt ldo_tb
+I_amp1 vs vss 4e-05 
+I_amp2 vmid vss 4e-05 
+R1 vout vfb 22500 m=1 
+R2 vfb vss 67500 m=1 
+Cl vout vss 1e-6 m=1
+R3 vout vss 100000000000000 m=1 
+XM1 vout_s1 vfb vs vs sg13_hv_nmos L=6.3999999999999995u W=7048.8971413927475u ng=1 m=1 
+XM2 net1 vn vs vs sg13_hv_nmos L=6.3999999999999995u W=7048.8971413927475u ng=1 m=1 
+XM3 vout_s1 net1 vdd_1 vdd_1 sg13_hv_pmos L=6.3999999999999995u W=9.019167828725301u ng=1 m=1 
+XM4 net1 net1 vdd_1 vdd_1 sg13_hv_pmos L=6.3999999999999995u W=9.019167828725301u ng=1 m=1 
+XM5 vmid vout_s1 vdd_1 vdd_1 sg13_hv_pmos L=6.3999999999999995u W=18.04253341681678u ng=1 m=1 
+XM6 vout vmid vdd vdd sg13_hv_pmos L=6.3999999999999995u W=54887.22502881546u ng=1 m=1 
+**** begin user architecture code
+
+
+
+.lib /opt/pdks/ihp-sg13g2/libs.tech/ngspice/models/cornerMOShv.lib mos_tt
+
+Vref vn 0 1.35
+Vdd vdd 0 3.3 ac 1
+Vdd_1 vdd_1 0 3.3
+Vss vss 0 0
+
+.control
+pre_osdi /opt/pdks/ihp-sg13g2/libs.tech/ngspice/openvaf/psp103_nqs.osdi
+ac dec 10 1 1G
+wrdata temp.csv vdb(vout) phase(vout)
+.endc
+
+
+
+**** end user architecture code
+**.ends
+.end

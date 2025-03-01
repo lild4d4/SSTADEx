@@ -1,0 +1,30 @@
+** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/Tesis_notebooks/xschem/ldo_ol_cap.sch
+**.subckt ldo_ol_cap
+Gdif_2 net1 vs net3 vs 0.0001414
+Gdif_m1_1 net2 vs vss vs 0.0001414
+I1 vs vss 0
+Raload_m1_1 vss net4 6.5283e4 m=1
+Raload_2 vss net1 53069669 m=1
+Gaload_m1_1 net4 vss net1 vss 1.47e-5
+Gaload_2 net1 vss net1 vss 1.47e-5
+Rdif_m2_1 net5 net2 1050237 m=1
+Gdif_m2_1 net5 net2 vss net2 6.97e-5
+Ccpdif vss net2 9e-14 m=1
+Raload_m2_1 net4 net5 3.328e6 m=1
+Gaload_m2_1 net5 net4 vss net4 2.5e-4
+Ccpaload_m1 net1 net4 5.74e-14 m=1
+Ccpaload_m2 net4 vss 3.2e-12 m=1
+R1 vout vfb 5000 m=1
+R2 vfb vss 15000 m=1
+Ro_pt vss vout 202 m=1
+Gm_pt vout vss net5 vss 0.1860
+Cgg_pt net5 vss 1.59e-12 m=1
+Cgd_pt net5 vout 8.6e-15 m=1
+R4 vpos vfb 10000000000 m=1
+C2 vpos vss 10 m=1
+V1 net3 vpos 1
+Cl vout vss 1e-12 m=1
+R3 vout vss 18 m=1
+Ca net5 vss 7.37e-16 m=1
+**.ends
+.end

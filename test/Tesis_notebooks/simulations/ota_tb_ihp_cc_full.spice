@@ -1,0 +1,139 @@
+** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/Tesis_notebooks/xschem/ota_tb_ihp_cc_full.sch
+**.subckt ota_tb_ihp_cc_full
+I2 vs vss 20e-6
+XM1 vcp vp1 vs vs sg13_hv_nmos w=31.17u l=1.6u ng=1 m=1
+XM2 vcp_2 vn vs vs sg13_hv_nmos w=31.17u l=1.6u ng=1 m=1
+XM3 vout_2 vbias_dp vcp_2 vcp_2 sg13_hv_nmos w=9.76u l=3.2u ng=1 m=1
+XM4 vout vbias_dp vcp vcp sg13_hv_nmos w=9.76u l=3.2u ng=1 m=1
+XM5 vcp_cm_2 vout_2 vdd vdd sg13_hv_pmos w=6.657u l=6.4u ng=1 m=1
+XM6 vcp_cm vout_2 vdd vdd sg13_hv_pmos w=6.657u l=6.4u ng=1 m=1
+R1 vfb vout 10000000000 m=1
+C2 vfb vss 10 m=1
+R2 vfb vss 38571428571 m=1
+V1 vp1 vfb dc 0 ac 1
+XM7 vout_2 vbias_cm vcp_cm_2 vcp_cm_2 sg13_hv_pmos w=2636u l=0.8u ng=1 m=1
+XM8 vout vbias_cm vcp_cm vcp_cm sg13_hv_pmos w=2636u l=0.8u ng=1 m=1
+Cds_m5 vout vss 1e-12 m=1
+**** begin user architecture code
+
+
+
+.lib /opt/pdks/ihp-sg13g2/libs.tech/ngspice/models/cornerMOShv.lib mos_tt
+
+Vref vn 0 1.35
+Vdd vdd 0 3.3
+Vbias_dp vbias_dp 0 2.2
+Vbias_cm vbias_cm vdd -0.88
+Vss vss 0 0
+
+.control
+ac dec 10 1 1G
+
+
+
+plot vdb(vout)
+plot ph(vout)*180/PI
+meas ac gain find vdb(vout) at=1
+let low_gain = gain-3
+meas ac fc WHEN vdb(vout)=low_gain
+
+let phas = ph(vout)*180/PI
+
+meas ac fu WHEN vdb(vout)=0
+meas ac pmar find phas at=fu
+
+op
+
+let gm_m1 = @n.xm1.nsg13_hv_nmos[gm]
+let gm_m2 = @n.xm2.nsg13_hv_nmos[gm]
+let gm_m3 = @n.xm3.nsg13_hv_nmos[gm]
+let gm_m4 = @n.xm4.nsg13_hv_nmos[gm]
+let gm_m5 = @n.xm5.nsg13_hv_pmos[gm]
+let gm_m6 = @n.xm6.nsg13_hv_pmos[gm]
+let gm_m7 = @n.xm7.nsg13_hv_pmos[gm]
+let gm_m8 = @n.xm8.nsg13_hv_pmos[gm]
+
+let gds_m1 = @n.xm1.nsg13_hv_nmos[gds]
+let gds_m2 = @n.xm2.nsg13_hv_nmos[gds]
+let gds_m3 = @n.xm3.nsg13_hv_nmos[gds]
+let gds_m4 = @n.xm4.nsg13_hv_nmos[gds]
+let gds_m5 = @n.xm5.nsg13_hv_pmos[gds]
+let gds_m6 = @n.xm6.nsg13_hv_pmos[gds]
+let gds_m7 = @n.xm7.nsg13_hv_pmos[gds]
+let gds_m8 = @n.xm8.nsg13_hv_pmos[gds]
+
+let cds_m1 = abs(@n.xm1.nsg13_hv_nmos[cds])+abs(@n.xm1.nsg13_hv_nmos[cdb])
+let cds_m4 = abs(@n.xm4.nsg13_hv_nmos[cds])+abs(@n.xm4.nsg13_hv_nmos[cdb])
+let cds_m6 = abs(@n.xm6.nsg13_hv_pmos[cds])+abs(@n.xm6.nsg13_hv_pmos[cdb])
+let cds_m8 = abs(@n.xm8.nsg13_hv_pmos[cds])+abs(@n.xm8.nsg13_hv_pmos[cdb])
+
+let cgd_m1 = @n.xm1.nsg13_hv_nmos[cgd]
+let cgd_m4 = @n.xm4.nsg13_hv_nmos[cgd]
+let cgd_m6 = @n.xm6.nsg13_hv_pmos[cgd]
+let cgd_m8 = @n.xm8.nsg13_hv_pmos[cgd]
+
+let cgs_m1 = @n.xm1.nsg13_hv_nmos[cgg]
+let cgs_m4 = @n.xm4.nsg13_hv_nmos[cgg]
+let cgs_m6 = @n.xm6.nsg13_hv_pmos[cgg]
+let cgs_m8 = @n.xm8.nsg13_hv_pmos[cgg]
+
+let gain_cc1 = (gm_m3/gds_m3)
+let gain_cc2 = (gm_m4/gds_m4)
+
+let gain_cc3 = gm_m8/gds_m8
+let gain_cc4 = gm_m7/gds_m7
+
+let rout_diff1 = gain_cc1/gds_m1
+let rout_diff2 = gain_cc2/gds_m2
+
+let rout_cm1 = gain_cc3/gds_m6
+let rout_cm2 = gain_cc4/gds_m5
+
+print vout vs vcp vcp_2 vcp_cm vcp_cm_2 vout_2
+
+print gm_m1
+print gm_m2
+print gm_m3
+print gm_m4
+print gm_m5
+print gm_m6
+print gm_m7
+print gm_m8
+
+print 1/gds_m1
+print 1/gds_m2
+print 1/gds_m3
+print 1/gds_m4
+print 1/gds_m5
+print 1/gds_m6
+print 1/gds_m7
+print 1/gds_m8
+
+print rout_diff1
+print rout_diff2
+
+print rout_cm1
+print rout_cm2
+
+print cds_m1
+print cds_m4
+print cds_m6
+print cds_m8
+
+print cgd_m1
+print cgd_m4
+print cgd_m6
+print cgd_m8
+
+print cgs_m1
+print cgs_m4
+print cgs_m6
+print cgs_m8
+
+.endc
+
+
+
+**** end user architecture code
+**.ends
+.end

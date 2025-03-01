@@ -1,0 +1,17 @@
+** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/Tesis_notebooks/xschem/ldo.sch
+**.subckt ldo
+Ro_pt vdd vout 1 m=1
+Gm_pt vout vdd net1 vdd 1
+R1 vout vfb 1 m=1
+R2 vfb vss 1 m=1
+Gma net1 vss net2 vfb 1
+Ra vss net1 1 m=1
+V1 vdd vss 1
+Rl vout vss 1 m=1
+Cgg_pt net1 vdd 1 m=1
+Cgd_pt net1 vout 1 m=1
+Ca net1 vss 1 m=1
+Cl vout vss 1 m=1
+V2 net2 vss 1
+**.ends
+.end

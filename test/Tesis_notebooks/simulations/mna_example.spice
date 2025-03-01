@@ -1,0 +1,12 @@
+** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/Tesis_notebooks/xschem/mna_example.sch
+**.subckt mna_example
+R1 vout vss 1 m=1
+G1 vout vss vin vss 1e-6
+C1 vout vss 1 m=1
+I0 vdd vout 1
+C2 vin vss 1 m=1
+C3 vin vout 1 m=1
+V1 vin vss 3
+V2 vdd vss 1.8
+**.ends
+.end

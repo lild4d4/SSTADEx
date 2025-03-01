@@ -1,0 +1,16 @@
+** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/Tesis_notebooks/xschem/ota_1stage.sch
+**.subckt ota_1stage
+Rdif_2 net1 vs 1 m=1
+Gdif_2 net1 vs vneg vs 1
+Rdif_1 vout vs 1 m=1
+Gdif_1 vout vs vpos vs 1
+I2 vs vss 1
+V1 vdd vss 1.8
+V_n vneg vss 1
+V_p vpos vss 1
+Raload_1 vdd vout 1 m=1
+Gaload_1 vout vdd net1 vdd 1
+Gaload_2 net1 vdd net1 vdd 1
+Raload_2 vdd net1 1 m=1
+**.ends
+.end

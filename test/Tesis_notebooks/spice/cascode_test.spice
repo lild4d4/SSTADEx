@@ -1,0 +1,15 @@
+** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/sstadex/xschem/cascode_test.sch
+**.subckt cascode_test
+Ro_m2 vout vcp 4.91151e10 m=1
+Gm_m2 vout vcp vss vcp 3.3e-7
+*Cgd_m2 vss vout 1e-12 m=1
+Cgs_m2 vss vcp 1e-12 m=1
+*Cds_m2 vout vcp 1e-12 m=1
+Ro_m1 vcp vss 4.91151e10 m=1
+Gm_m1 vcp vss vin vss 3.3e-7
+*Cgd_m1 vin vcp 1e-12 m=1
+Cds_m1 vcp vss 1e-12 m=1
+I2 vss vout 0
+V1 vin vss 3
+**.ends
+.end

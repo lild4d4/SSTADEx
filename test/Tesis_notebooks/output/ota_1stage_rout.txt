@@ -1,0 +1,14 @@
+Rdiff_2 1 2 1
+Gdiff_2 1 2 3 2 1
+Rdiff_1 4 2 1
+Gdiff_1 4 2 5 2 1
+I2 2 0 1
+V1 6 0 1.8
+V_n 3 0 1
+V_p 5 0 1
+Raload_1 6 4 1
+Gaload_1 4 6 1 6 1
+Gaload_2 1 6 1 6 1
+Raload_2 6 1 1
+Vr 7 0 0.9
+Rr 4 7 1000

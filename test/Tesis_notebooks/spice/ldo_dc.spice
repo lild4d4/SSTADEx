@@ -1,0 +1,13 @@
+** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/Tesis_notebooks/xschem/ldo_psrr.sch
+**.subckt ldo_psrr
+Ro_pt vdd vout 473596.7 m=1
+Gm_pt vout vdd net1 vdd 2.7200000000000004e-05
+R1 vout vfb 100000 m=1
+R2 vfb vss 300000 m=1
+Gma net1 vss vpos vfb 10
+Ra vss net1 50 m=1
+V1 vdd vss 3
+V2 vpos vss 3
+Rl vout vss 100000 m=1
+**.ends
+.end

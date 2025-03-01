@@ -1,0 +1,72 @@
+** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/Tesis_notebooks/xschem/ldo_ol_sim_ihp_cc_full.sch
+**.subckt ldo_ol_sim_ihp_cc_full
+R1 vout vfb 5000 m=1
+R2 vfb vss 15000 m=1
+Cl vout vss 1e-12 m=1
+XM7 net2 vbias_cm net4 net4 sg13_hv_pmos w=2636u l=0.8u ng=1 m=1
+I2 vs vss 20e-6
+XM1 vcp vn vs vs sg13_hv_nmos w=31.17u l=1.6u ng=1 m=1
+XM2 net3 net1 vs vs sg13_hv_nmos w=31.17u l=1.6u ng=1 m=1
+XM3 vmid vbias_dp vcp vcp sg13_hv_nmos w=9.76u l=3.2u ng=1 m=1
+XM4 net2 vbias_dp net3 net3 sg13_hv_nmos w=9.76u l=3.2u ng=1 m=1
+XM5 net4 net2 vdd vdd sg13_hv_pmos w=6.657u l=6.4u ng=1 m=1
+XM6 vcp_cm net2 vdd vdd sg13_hv_pmos w=6.657u l=6.4u ng=1 m=1
+XM8 vmid vbias_cm vcp_cm vcp_cm sg13_hv_pmos w=2636u l=0.8u ng=1 m=1
+XM9 vout vmid vdd vdd sg13_hv_pmos w=2489u l=0.4u ng=1 m=1
+R4 vpos vfb 10000000000 m=1
+C2 vpos vss 10 m=1
+V1 net1 vpos dc 0 ac 1
+**** begin user architecture code
+
+
+
+.lib /opt/pdks/ihp-sg13g2/libs.tech/ngspice/models/cornerMOShv.lib mos_tt
+
+Vref vn 0 1.35
+Vdd vdd 0 3.3
+Vss vss 0 0
+Vbias_dp vbias_dp 0 2.2
+Vbias_cm vbias_cm vdd -0.88
+
+.control
+ac dec 10 1 10G
+plot vdb(vout)
+plot phase(vout)*180/PI
+op
+print vout vmid vcp vfb vs
+
+let gm_m1 = @n.xm1.nsg13_hv_nmos[gm]
+let gm_m3 = @n.xm3.nsg13_hv_nmos[gm]
+let gm_m6 = @n.xm6.nsg13_hv_pmos[gm]
+let gm_m8 = @n.xm8.nsg13_hv_pmos[gm]
+let gm_m9 = @n.xm9.nsg13_hv_pmos[gm]
+
+let gds_m1 = @n.xm1.nsg13_hv_nmos[gds]
+let gds_m3 = @n.xm3.nsg13_hv_nmos[gds]
+let gds_m6 = @n.xm6.nsg13_hv_pmos[gds]
+let gds_m8 = @n.xm8.nsg13_hv_pmos[gds]
+
+print gm_m1
+print gm_m3
+print gm_m6
+print gm_m8
+print gm_m9
+
+print 1/gds_m1
+print 1/gds_m3
+print 1/gds_m6
+print 1/gds_m8
+
+let ro_dp = gm_m3/(gds_m3*gds_m1)
+let ro_cm = gm_m8/(gds_m8*gds_m6)
+print ro_dp
+print ro_cm
+
+print ro_dp*ro_cm/(ro_dp+ro_cm)
+.endc
+
+
+
+**** end user architecture code
+**.ends
+.end

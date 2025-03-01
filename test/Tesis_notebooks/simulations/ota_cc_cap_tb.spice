@@ -1,0 +1,53 @@
+** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/sstadex/xschem/ota_cc_cap_tb.sch
+**.subckt ota_cc_cap_tb
+Rdif_m1_2 net1 vs 1121489 m=1
+Gdif_m1_2 net1 vs vss vs 0.0001414
+Rdif_m1_1 net2 vs 1121489 m=1
+Gdif_m1_1 net2 vs vpos vs 0.0001414
+I2 vs vss 0
+Raload_1 vss net3 6.5283e4 m=1
+Raload_2 vss net5 6.5283e4 m=1
+Gaload net3 vss net4 vss 1.47e-5
+Gaload_2 net5 vss net4 vss 1.47e-5
+Rdif_m2_1 vout net2 1050237 m=1
+Gdif_m2_1 vout net2 vss net2 6.97e-5
+Rdif_m2_2 net4 net1 1050237 m=1
+Gdif_m2_2 net4 net1 vss net1 6.97e-5
+Cgs_m2 vss net2 9e-14 m=1
+Cgd_m2 vout vss 7.37e-16 m=1
+Raload_3 net3 vout 3.328e6 m=1
+Raload_4 net5 net4 3.328e6 m=1
+Gaload1 vout net3 vss net3 2.5e-4
+Gaload_1 net4 net5 vss net5 2.5e-4
+Cgd_m1 net4 net3 5.74e-14 m=1
+Cgd_m3 vss vout 3e-15 m=1
+Cgs_m1 net3 vss 3.2e-12 m=1
+Cds_m5 vout vss 1e-12 m=1
+**** begin user architecture code
+
+
+
+Vdd vdd 0 0
+Vpos vpos 0 0 ac 1
+Vbias vbias 0 0
+Vss vss 0 0
+
+.control
+ac dec 10 1 1G
+plot vdb(vout)
+plot phase(vout)*180/PI
+meas ac gain find vdb(vout) at=1
+let low_gain = gain-3
+meas ac fc WHEN vdb(vout)=low_gain
+
+let phas = ph(vout)*180/PI
+
+meas ac fu WHEN vdb(vout)=0
+meas ac pmar find phas at=fu
+.endc
+
+
+
+**** end user architecture code
+**.ends
+.end

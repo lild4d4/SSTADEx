@@ -1,0 +1,26 @@
+** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/Tesis_notebooks/xschem/ota_1stage_tb.sch
+**.subckt ota_1stage_tb
+I2 vs vss 40e-6
+XM1 vs vp1 vout vs sg13_hv_nmos w=1.0u l=0.45u ng=1 m=1
+XM2 vs vn net1 vs sg13_hv_nmos w=1.0u l=0.45u ng=1 m=1
+XM3 vout net1 vdd vdd sg13_hv_pmos w=1.0u l=0.45u ng=1 m=1
+XM4 net1 net1 vdd vdd sg13_hv_pmos w=1.0u l=0.45u ng=1 m=1
+R1 vfb vout 10000000000 m=1
+C2 vfb vss 10 m=1
+R2 vfb vss 54000000000 m=1
+**** begin user architecture code
+
+
+
+.lib /opt/pdks/ihp-sg13g2/libs.tech/ngspice/models/cornerMOShv.lib mos_tt
+
+Vref vn 0 1.35
+Vdd vdd 0 3.3
+Vpos vp1 0 1.35 ac 1
+Vss vss 0 0
+
+.control
+pre_osdi /opt/pdks/ihp-sg13g2/libs.tech/ngspice/openvaf/psp103_nqs.osdi
+ac dec 10 1 1G
+wrdata temp.csv vdb(vout) phase(vout)
+.endc
