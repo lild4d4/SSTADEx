@@ -1,0 +1,27 @@
+** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/sstadex/xschem/ota_cc_cap_r.sch
+**.subckt ota_cc_cap_r
+Rdif_m1_2 net1 vs 1000 m=1
+Gdif_m1_2 net1 vs vneg vs 10
+Rdif_m1_1 net2 vs 1000 m=1
+Gdif_m1_1 net2 vs vpos vs 10
+I2 vs vss 1
+V1 vdd vss 1.8
+V_n vneg vss 0.9
+V_p vpos vss 0.9
+Raload_1 vdd vout 1000 m=1
+Raload_2 vdd net3 1000 m=1
+Gaload vout vdd net3 vdd 0.0002236
+Gaload_2 net3 vdd net3 vdd 0.0002236
+Rdif_m2_1 vout net2 1000 m=1
+Gdif_m2_1 vout net2 vss net2 10
+Rdif_m2_2 net3 net1 1000 m=1
+Gdif_m2_2 net3 net1 vss net1 10
+*V_b vbias vss 0.9
+*Cds_m1 net2 vs 1 m=1
+*Cds_m2 vout net2 1 m=1
+*Cgs_m2 vss net2 1 m=1
+*Cgd_m2 vout vss 1 m=1
+Vr vr vss 0.9
+Rr vout vr 1000 m=1
+**.ends
+.end

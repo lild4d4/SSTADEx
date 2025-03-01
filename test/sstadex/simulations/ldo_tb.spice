@@ -1,0 +1,29 @@
+** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/sstadex/xschem/ldo_tb.sch
+**.subckt ldo_tb
+Ro_pt vdd vout 202 m=1
+Gm_pt vout vdd net1 vdd 0.1844
+R1 vout vfb 100000 m=1
+R2 vfb vss 300000 m=1
+R3 vout vss 18 m=1
+Gma vdd net1 vfb vss 0.01
+Ra vdd net1 20385188 m=1
+Cl vout vss 1e-6 m=1
+**** begin user architecture code
+
+
+
+.lib /opt/pdks/sky130A/libs.tech/ngspice/sky130.lib.spice tt
+
+Vdd vdd 0 0 ac 1
+Vss vss 0 0
+
+.control
+ac dec 10 1 10G
+plot vdb(vout)
+.endc
+
+
+
+**** end user architecture code
+**.ends
+.end

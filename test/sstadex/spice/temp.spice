@@ -1,27 +1,40 @@
-** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/sstadex/xschem/ota_tb.sch
-**.subckt ota_tb
-I2 vs vss 40e-6
-XM1 vout vp1 vs vs sky130_fd_pr__nfet_01v8_lvt L=6.3999999999999995 W=20.430739539051302 nf=1 ad='int((nf+1)/2) * W/nf * 0.29' as='int((nf+2)/2) * W/nf * 0.29' pd='2*int((nf+1)/2) * (W/nf + 0.29)' 
-+ ps='2*int((nf+2)/2) * (W/nf + 0.29)' nrd='0.29 / W' nrs='0.29 / W' sa=0 sb=0 sd=0 mult=10 m=10 
-XM2 net1 vn vs vs sky130_fd_pr__nfet_01v8_lvt L=6.3999999999999995 W=20.430739539051302 nf=1 ad='int((nf+1)/2) * W/nf * 0.29' as='int((nf+2)/2) * W/nf * 0.29' pd='2*int((nf+1)/2) * (W/nf + 0.29)' 
-+ ps='2*int((nf+2)/2) * (W/nf + 0.29)' nrd='0.29 / W' nrs='0.29 / W' sa=0 sb=0 sd=0 mult=10 m=10 
-XM3 vout net1 vdd vdd sky130_fd_pr__pfet_01v8_lvt L=6.3999999999999995 W=27.288429229105862 nf=1 ad='int((nf+1)/2) * W/nf * 0.29' as='int((nf+2)/2) * W/nf * 0.29' 
-+ pd='2*int((nf+1)/2) * (W/nf + 0.29)' ps='2*int((nf+2)/2) * (W/nf + 0.29)' nrd='0.29 / W' nrs='0.29 / W' sa=0 sb=0 sd=0 mult=10 m=10 
-XM4 net1 net1 vdd vdd sky130_fd_pr__pfet_01v8_lvt L=6.3999999999999995 W=27.288429229105862 nf=1 ad='int((nf+1)/2) * W/nf * 0.29' as='int((nf+2)/2) * W/nf * 0.29' 
-+ pd='2*int((nf+1)/2) * (W/nf + 0.29)' ps='2*int((nf+2)/2) * (W/nf + 0.29)' nrd='0.29 / W' nrs='0.29 / W' sa=0 sb=0 sd=0 mult=10 m=10 
+** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/sstadex/xschem/ota_tb_ihp_cc.sch
+**.subckt ota_tb_ihp_cc
+I2 vs vss 4e-05 
+XM1 vcp vp1 vs vs sg13_hv_nmos L=0.7999999999999999u W=47.42861225809707u ng=1 m=1 
+XM2 net2 vn vs vs sg13_hv_nmos L=0.7999999999999999u W=47.42861225809707u ng=1 m=1 
+XM3 vout vbias vcp vcp sg13_hv_nmos L=6.3999999999999995u W=135978.2985680424u ng=1 m=1 
+XM4 net1 vbias net2 net2 sg13_hv_nmos L=6.3999999999999995u W=135978.2985680424u ng=1 m=1 
+XM5 net1 net1 vdd vdd sg13_hv_pmos L=6.3999999999999995u W=11.273959785906625u ng=1 m=1 
+XM6 vout net1 vdd vdd sg13_hv_pmos L=6.3999999999999995u W=11.273959785906625u ng=1 m=1 
+R1 vfb vout 100000000 m=1
+C2 vfb vss 10 m=1
+R2 vfb vss 540000000 m=1
+V1 vp1 vfb dc 0 ac 1
 **** begin user architecture code
 
 
 
-.lib /opt/pdks/sky130A/libs.tech/ngspice/sky130.lib.spice tt
+.lib /opt/pdks/ihp-sg13g2/libs.tech/ngspice/models/cornerMOShv.lib mos_tt
 
-Vref vn 0 0.9
-Vdd vdd 0 1.8
-Vpos vp1 0 0.9 ac 1
+Vref vn 0 1.35
+Vdd vdd 0 3.3
+Vbias vbias 0 1.725 
 Vss vss 0 0
 
 .control
-ac dec 10 1 1G
+pre_osdi /opt/pdks/ihp-sg13g2/libs.tech/ngspice/openvaf/psp103_nqs.osdi
+ac dec 10 1 10G
+*plot vdb(vout)
+*plot phase(vout)*180/PI
+*meas ac gain find vdb(vout) at=1
+*let low_gain = gain-3
+*meas ac fc WHEN vdb(vout)=low_gain
 wrdata temp.csv vdb(vout) phase(vout)
 .endc
+
+
+
+**** end user architecture code
+**.ends
 .end

@@ -40,13 +40,13 @@ lab=#net1}
 N -140 -140 -110 -140 {
 lab=#net1}
 N -220 -70 -220 -60 {
-lab=vss}
+lab=vdd}
 N -220 -60 -220 -40 {
-lab=vss}
+lab=vdd}
 N -220 -60 -100 -60 {
-lab=vss}
+lab=vdd}
 N -100 -70 -100 -60 {
-lab=vss}
+lab=vdd}
 N -100 -140 -100 -130 {
 lab=#net1}
 N 180 -10 350 -10 {
@@ -77,49 +77,50 @@ N 280 -260 280 -250 {
 lab=vdd}
 N 280 -270 280 -260 {
 lab=vdd}
-N -140 -120 -140 -80 {
-lab=vn}
 N -180 -120 -140 -120 {
-lab=vn}
+lab=vdd}
 N 180 10 180 20 {
 lab=vout}
 N 180 80 180 90 {
 lab=vss}
-N -140 -80 -140 -40 {
-lab=vn}
 N -20 -140 -20 -130 {
 lab=#net1}
 N -20 -130 -20 -120 {
 lab=#net1}
 N -70 -60 -20 -60 {
-lab=vss}
+lab=vdd}
 N -100 -60 -70 -60 {
-lab=vss}
+lab=vdd}
 N 90 -10 180 -10 {
 lab=vout}
+N -340 -60 -220 -60 {
+lab=vdd}
+N -340 -200 -340 -60 {
+lab=vdd}
+N -340 -200 180 -200 {
+lab=vdd}
+N -140 -120 -140 -60 {
+lab=vdd}
 C {devices/res.sym} 310 -90 0 0 {name=Ro_pt
-value=163905
+value=765253
 footprint=1206
 device=resistor
 m=1}
-C {devices/vccs.sym} 180 -90 2 1 {name=Gm_pt value=0.00040699}
-C {devices/vccs.sym} -220 -100 2 0 {name=Gma value=0.02575}
+C {devices/vccs.sym} 180 -90 2 1 {name=Gm_pt value=0.0001244}
+C {devices/vccs.sym} -220 -100 2 0 {name=Gma value=0.0003086}
 C {devices/res.sym} -100 -100 2 0 {name=Ra
-value=25075
+value=139196
 footprint=1206
 device=resistor
 m=1}
 C {devices/lab_pin.sym} -180 -80 2 0 {name=p4 sig_type=std_logic lab=vp}
-C {devices/lab_pin.sym} -220 -40 3 0 {name=p8 sig_type=std_logic lab=vss
-value=vref}
 C {devices/lab_pin.sym} 180 110 3 0 {name=p6 sig_type=std_logic lab=vss}
-C {devices/isource.sym} 180 50 0 0 {name=I2 value=40e-6}
-C {devices/lab_pin.sym} -140 -40 2 0 {name=p7 sig_type=std_logic lab=vn}
+C {devices/isource.sym} 180 50 0 0 {name=I2 value=20e-6}
 C {devices/code_shown.sym} -330 270 0 0 {name=s1 only_toplevel=false value="
 
 Vref vn 0 0
 Vdd vdd 0 0
-Vpos vp 0 1 ac 1
+Vpos vp 0 0 ac 1
 Vss vss 0 0
 
 .control
@@ -132,11 +133,6 @@ plot vdb(vout)
 
 "}
 C {devices/lab_pin.sym} 280 -250 3 0 {name=p1 sig_type=std_logic lab=vdd}
-C {capa.sym} -20 -90 0 0 {name=C1
-m=1
-value=1e-12
-footprint=1206
-device="ceramic capacitor"}
 C {capa.sym} 90 -40 0 0 {name=C2
 m=1
 value=1.48908e-12

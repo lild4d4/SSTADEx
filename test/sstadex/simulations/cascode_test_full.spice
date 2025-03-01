@@ -1,0 +1,64 @@
+** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/sstadex/xschem/cascode_test_full.sch
+**.subckt cascode_test_full
+XM1 vcp net2 vss vss sg13_hv_nmos w=5.87u l=6.4u ng=1 m=1
+XM2 vout vbias vcp vcp sg13_hv_nmos w=5.11u l=0.4u ng=1 m=1
+B1 net1 vss V = vcc/2*(1+tanh(10000*(v(vfb)-v(vref))))
+V1 net2 net1 dc 0 ac 1
+R1 vfb vout 10000000000 m=1
+C2 vfb vss 100 m=1
+I1 vdd vout 20e-6
+**** begin user architecture code
+
+
+
+.lib /opt/pdks/ihp-sg13g2/libs.tech/ngspice/models/cornerMOShv.lib mos_tt
+.lib /opt/pdks/ihp-sg13g2/libs.tech/ngspice/models/cornerMOSlv.lib mos_tt
+
+Vdd vdd 0 3.3
+Vss vss 0 0
+Vref vref 0 1.6
+Vbias vbias 0 2.1
+
+.param vcc=3.3
+
+.control
+ac dec 10 1 1G
+plot vdb(vout)
+plot phase(vout)*180/PI
+
+meas ac gain find vdb(vout) at=1
+let low_gain = gain-3
+
+meas ac fc WHEN vdb(vout)=low_gain
+op
+print vout
+print vfb
+print vg1
+print vg2
+let gm_diff = @n.xm1.nsg13_hv_nmos[gm]
+let id_diff = @n.xm1.nsg13_hv_nmos[ids]
+let gds_diff = @n.xm1.nsg13_hv_nmos[gds]
+let cgg_diff = @n.xm1.nsg13_hv_nmos[cgg]
+
+let gm_m2 = @n.xm2.nsg13_hv_nmos[gm]
+let gds_m2 = @n.xm2.nsg13_hv_nmos[gds]
+print gm_diff
+print gds_diff
+print id_diff
+print cgg_diff
+print gm_diff/id_diff
+
+print gm_m2
+print gds_m2
+
+print gm_m2/gds_m2
+
+print (gm_diff/gds_diff)*(gm_m2/gds_m2)
+
+.endc
+
+
+
+**** end user architecture code
+**.ends
+.end

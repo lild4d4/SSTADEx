@@ -148,11 +148,11 @@ lab=vs}
 N 290 150 290 230 {
 lab=vss}
 N 290 40 290 90 {
-lab=#net2}
+lab=vr}
 N 290 -40 290 -30 {
 lab=vout}
 N 290 30 290 40 {
-lab=#net2}
+lab=vr}
 C {devices/res.sym} -200 -10 0 0 {name=Rdif_2
 value=1000
 footprint=1206
@@ -206,3 +206,4 @@ footprint=1206
 device=resistor
 m=1}
 C {devices/lab_pin.sym} 290 60 2 0 {name=p10 sig_type=std_logic lab=vr}
+C {devices/vccs.sym} -260 -160 2 1 {name=Gaload_2 value=0.0002236}

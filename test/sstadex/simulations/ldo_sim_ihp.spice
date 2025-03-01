@@ -1,0 +1,38 @@
+** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/sstadex/xschem/ldo_sim_ihp.sch
+**.subckt ldo_sim_ihp
+I2 vs vss 40e-6
+I1 vmid vss 20e-6
+C8 vout_s1 vmid 3e-12 m=1
+R1 vout vfb 100000 m=1
+R2 vfb vss 300000 m=1
+Cl vout vss 1e-6 m=1
+R3 vout vss 18 m=1
+XM1 vout_s1 vfb vs vs sg13_hv_nmos w=10.24u l=3.2u ng=1 m=1
+XM2 net1 vn vs vs sg13_hv_nmos w=10.24u l=3.2u ng=1 m=1
+XM3 vout_s1 net1 vdd vdd sg13_hv_pmos w=9.02u l=6.4u ng=1 m=1
+XM4 net1 net1 vdd vdd sg13_hv_pmos w=9.02u l=6.4u ng=1 m=1
+XM5 vmid vout_s1 vdd vdd sg13_hv_pmos w=9.02u l=6.4u ng=1 m=1
+XM6 vout vmid vdd vdd sg13_hv_pmos w=2487u l=0.4u ng=1 m=1
+**** begin user architecture code
+
+
+
+.lib /opt/pdks/ihp-sg13g2/libs.tech/ngspice/models/cornerMOShv.lib mos_tt
+
+Vref vn 0 1.35
+Vdd vdd 0 3.3 ac 1
+Vss vss 0 0
+
+.control
+ac dec 10 1 100G
+plot vdb(vout)
+plot phase(vout)
+op
+print vout vmid vout_s1 vs
+.endc
+
+
+
+**** end user architecture code
+**.ends
+.end

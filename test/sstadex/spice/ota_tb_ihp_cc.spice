@@ -1,0 +1,40 @@
+** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/sstadex/xschem/ota_tb_ihp_cc.sch
+**.subckt ota_tb_ihp_cc
+I2 vs vss 40e-6
+XM1 vcp vp1 vs vs sg13_hv_nmos w=62.3u l=1.6u ng=1 m=1
+XM2 net2 vn vs vs sg13_hv_nmos w=62.3u l=1.6u ng=1 m=1
+XM3 vout vbias vcp vcp sg13_hv_nmos w=44.5u l=3.2u ng=1 m=1
+XM4 net1 vbias net2 net2 sg13_hv_nmos w=44.5u l=3.2u ng=1 m=1
+XM5 net1 net1 vdd vdd sg13_hv_pmos w=11.27u l=6.4u ng=1 m=1
+XM6 vout net1 vdd vdd sg13_hv_pmos w=11.27u l=6.4u ng=1 m=1
+R1 vfb vout 100000000 m=1
+C2 vfb vss 10 m=1
+R2 vfb vss 540000000 m=1
+V1 vp1 vfb dc 0 ac 1
+**** begin user architecture code
+
+
+
+.lib /opt/pdks/ihp-sg13g2/libs.tech/ngspice/models/cornerMOShv.lib mos_tt
+
+Vref vn 0 1.35
+Vdd vdd 0 3.3
+Vbias vbias 0 2.1
+Vss vss 0 0
+
+.control
+pre_osdi /opt/pdks/ihp-sg13g2/libs.tech/ngspice/openvaf/psp103_nqs.osdi
+ac dec 10 1 10G
+*plot vdb(vout)
+*plot phase(vout)*180/PI
+*meas ac gain find vdb(vout) at=1
+*let low_gain = gain-3
+*meas ac fc WHEN vdb(vout)=low_gain
+wrdata temp.csv vdb(vout) phase(vout)
+.endc
+
+
+
+**** end user architecture code
+**.ends
+.end

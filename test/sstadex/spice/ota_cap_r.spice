@@ -11,9 +11,10 @@ V_p vpos vss 0.9
 Raload_1 vdd vout 1000 m=1
 Raload_2 vdd net1 1000 m=1
 Gaload vout vdd net1 vdd 0.0002236
-Cgd vpos vout 1 m=1
-Cgs vpos vs 1 m=1
+*Cgd vpos vout 1 m=1
+*Cgs vpos vs 1 m=1
 Vr vr vss 0.9
 Rr vout vr 1000 m=1
+Gaload_2 net1 vdd net1 vdd 0.0002236
 **.ends
 .end

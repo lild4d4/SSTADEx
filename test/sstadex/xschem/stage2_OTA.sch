@@ -40,13 +40,13 @@ lab=Vaout}
 N -250 -120 -220 -120 {
 lab=Vaout}
 N -330 -50 -330 -40 {
-lab=vss}
+lab=#net1}
 N -330 -40 -330 -20 {
-lab=vss}
+lab=#net1}
 N -330 -40 -210 -40 {
-lab=vss}
+lab=#net1}
 N -210 -50 -210 -40 {
-lab=vss}
+lab=#net1}
 N -210 -120 -210 -110 {
 lab=Vaout}
 N 70 10 240 10 {
@@ -102,9 +102,15 @@ lab=vss}
 N -120 -120 -120 -110 {
 lab=Vaout}
 N -120 -50 -120 -40 {
-lab=vss}
+lab=#net1}
 N -210 -40 -120 -40 {
-lab=vss}
+lab=#net1}
+N -450 -20 -330 -20 {
+lab=#net1}
+N -450 -160 -450 -20 {
+lab=#net1}
+N -450 -160 70 -160 {
+lab=#net1}
 C {devices/res.sym} 200 -70 0 0 {name=Ro_stage2
 value=473596.7
 footprint=1206
@@ -118,8 +124,6 @@ footprint=1206
 device=resistor
 m=1}
 C {devices/lab_pin.sym} -290 -60 2 0 {name=p4 sig_type=std_logic lab=V_p}
-C {devices/lab_pin.sym} -330 -20 3 0 {name=p8 sig_type=std_logic lab=vss
-value=vref}
 C {devices/vsource.sym} 170 -200 0 0 {name=V1 value=3 savecurrent=false}
 C {devices/lab_pin.sym} 170 -170 3 0 {name=p1 sig_type=std_logic lab=vss}
 C {devices/vsource.sym} -250 20 0 0 {name=V3 value=3 savecurrent=false}

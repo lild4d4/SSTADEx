@@ -1,0 +1,32 @@
+** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/sstadex/untitled-3.sch
+**.subckt untitled-3
+Ro_m2 vout vcp 71761.75 m=1
+Gm_m2 vout vcp vss vcp 0.000224742
+Cgs_m2 vcp vss 4.44e-15 m=1
+Ro_m1 vcp vss 1495752.06 m=1
+Gm_m1 vcp vss vin vss 0.000110133
+Cds_m1 vcp vss 1.28e-14 m=1
+I2 vss vout 0
+**** begin user architecture code
+
+
+
+Vin vin 0 1 ac 1
+Vss vss 0 0
+
+.control
+ac dec 10 1 1G
+plot vdb(vout)
+plot phase(vout)*180/PI
+meas ac gain find vdb(vout) at=1
+let low_gain = gain-3
+
+meas ac fc WHEN vdb(vout)=low_gain
+print fc/(2*PI)
+.endc
+
+
+
+**** end user architecture code
+**.ends
+.end

@@ -445,8 +445,8 @@ C {devices/lab_pin.sym} -350 70 3 0 {name=p7 sig_type=std_logic lab=vn}
 C {devices/lab_pin.sym} 200 50 3 0 {name=p8 sig_type=std_logic lab=vp1}
 C {devices/lab_pin.sym} -40 280 3 0 {name=p9 sig_type=std_logic lab=vss}
 C {sky130_fd_pr/nfet_01v8_lvt.sym} 160 -40 0 1 {name=M1
-W=40
-L=6.4
+W=1.94
+L=0.8
 nf=1
 mult=1
 ad="'int((nf+1)/2) * W/nf * 0.29'" 
@@ -458,8 +458,8 @@ sa=0 sb=0 sd=0
 model=nfet_01v8_lvt
 spiceprefix=X}
 C {sky130_fd_pr/nfet_01v8_lvt.sym} -240 -40 0 0 {name=M2
-W=40
-L=6.4
+W=1.94
+L=0.8
 nf=1
 mult=1
 ad="'int((nf+1)/2) * W/nf * 0.29'" 
@@ -472,7 +472,7 @@ model=nfet_01v8_lvt
 spiceprefix=X
 }
 C {sky130_fd_pr/pfet_01v8_lvt.sym} 120 -200 0 0 {name=M3
-W=8
+W=8.02
 L=1.6
 nf=1
 mult=1
@@ -486,7 +486,7 @@ model=pfet_01v8_lvt
 spiceprefix=X
 }
 C {sky130_fd_pr/pfet_01v8_lvt.sym} -200 -200 0 1 {name=M4
-W=8
+W=8.02
 L=1.6
 nf=1
 mult=1
@@ -634,3 +634,8 @@ value=3e-12
 footprint=1206
 device="ceramic capacitor"}
 C {devices/lab_pin.sym} 230 -100 1 0 {name=p21 sig_type=std_logic lab=vout_s1}
+C {capa.sym} 510 60 2 0 {name=C1
+m=1
+value=1e-12
+footprint=1206
+device="ceramic capacitor"}

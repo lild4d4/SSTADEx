@@ -61,7 +61,7 @@ N 240 -110 340 -110 {
 lab=vout}
 N 240 -240 340 -240 {
 lab=vdd}
-N 240 -80 440 -80 {
+N 430 -80 440 -80 {
 lab=vout}
 N -320 -30 -320 0 {
 lab=vneg}
@@ -81,9 +81,9 @@ N 30 40 30 60 {
 lab=vss}
 N 30 -30 30 -20 {
 lab=vpos}
-N 60 210 60 240 {
+N 60 230 60 240 {
 lab=vss}
-N 30 -30 130 -30 {
+N 80 -30 130 -30 {
 lab=vpos}
 N -160 -240 -160 -180 {
 lab=vdd}
@@ -147,6 +147,12 @@ N 360 20 360 40 {
 lab=vs}
 N 300 40 360 40 {
 lab=vs}
+N 30 -30 80 -30 {
+lab=vpos}
+N 240 -80 430 -80 {
+lab=vout}
+N 60 210 60 230 {
+lab=vss}
 C {devices/res.sym} -60 -10 0 0 {name=Rdif_2
 value=1000
 footprint=1206
@@ -193,3 +199,4 @@ m=1
 value=1
 footprint=1206
 device="ceramic capacitor"}
+C {devices/vccs.sym} -120 -160 2 1 {name=Gaload_2 value=0.0002236}

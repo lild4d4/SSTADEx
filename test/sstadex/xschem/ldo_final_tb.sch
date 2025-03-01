@@ -17,12 +17,6 @@ N -10 -300 -10 -250 {
 lab=#net1}
 N 350 -270 550 -270 {
 lab=vout_s1}
-N -140 -210 -140 -180 {
-lab=vn}
-N -140 -120 -140 -100 {
-lab=vn}
-N -140 -210 -50 -210 {
-lab=vn}
 N 410 -140 410 -120 {
 lab=vfb}
 N 410 -210 410 -200 {
@@ -37,8 +31,6 @@ N 350 -300 350 -270 {
 lab=vout_s1}
 N 90 -430 310 -430 {
 lab=vdd}
-N -140 -180 -140 -120 {
-lab=vn}
 N 410 -200 410 -140 {
 lab=vfb}
 N 350 -330 350 -300 {
@@ -153,11 +145,11 @@ C {devices/isource.sym} 170 -10 0 0 {name=I2 value=40e-6}
 C {devices/lab_pin.sym} 170 -90 1 0 {name=p1 sig_type=std_logic lab=vs}
 C {devices/lab_pin.sym} 1110 -150 2 0 {name=p4 sig_type=std_logic lab=vout}
 C {devices/lab_pin.sym} 150 -430 1 0 {name=p6 sig_type=std_logic lab=vdd}
-C {devices/lab_pin.sym} -140 -100 3 0 {name=p7 sig_type=std_logic lab=vn}
+C {devices/lab_pin.sym} -50 -210 0 0 {name=p7 sig_type=std_logic lab=vn}
 C {devices/lab_pin.sym} 170 110 3 0 {name=p9 sig_type=std_logic lab=vss}
 C {sky130_fd_pr/nfet_01v8_lvt.sym} 370 -210 0 1 {name=M1
-W=40
-L=6.4
+W=5.51
+L=0.4
 nf=1
 mult=1
 ad="'int((nf+1)/2) * W/nf * 0.29'" 
@@ -169,8 +161,8 @@ sa=0 sb=0 sd=0
 model=nfet_01v8_lvt
 spiceprefix=X}
 C {sky130_fd_pr/nfet_01v8_lvt.sym} -30 -210 0 0 {name=M2
-W=40
-L=6.4
+W=5.51
+L=0.4
 nf=1
 mult=1
 ad="'int((nf+1)/2) * W/nf * 0.29'" 
@@ -183,8 +175,8 @@ model=nfet_01v8_lvt
 spiceprefix=X
 }
 C {sky130_fd_pr/pfet_01v8_lvt.sym} 330 -370 0 0 {name=M3
-W=8
-L=1.6
+W=4.63
+L=0.8
 nf=1
 mult=1
 ad="'int((nf+1)/2) * W/nf * 0.29'" 
@@ -197,8 +189,8 @@ model=pfet_01v8_lvt
 spiceprefix=X
 }
 C {sky130_fd_pr/pfet_01v8_lvt.sym} 10 -370 0 1 {name=M4
-W=8
-L=1.6
+W=4.63
+L=0.8
 nf=1
 mult=1
 ad="'int((nf+1)/2) * W/nf * 0.29'" 
@@ -211,7 +203,7 @@ model=pfet_01v8_lvt
 spiceprefix=X
 }
 C {sky130_fd_pr/pfet_01v8_lvt.sym} 570 -270 0 0 {name=M5
-W=8.07
+W=10.85
 L=1.6
 nf=1
 mult=1
@@ -229,7 +221,7 @@ C {devices/code_shown.sym} -890 -450 0 0 {name=s1 only_toplevel=false value="
 
 .lib /opt/pdks/sky130A/libs.tech/ngspice/sky130.lib.spice tt
 
-Vref vn 0 0.9
+Vref vn 0 dc 0.9
 Vdd vdd 0 1.8 ac 1
 Vss vss 0 0
 
@@ -254,8 +246,8 @@ value=3e-12
 footprint=1206
 device="ceramic capacitor"}
 C {sky130_fd_pr/pfet_01v8_lvt.sym} 790 -210 0 0 {name=M6
-W=32.745
-L=0.8
+W=12.565
+L=0.4
 nf=1
 mult=1000
 ad="'int((nf+1)/2) * W/nf * 0.29'" 

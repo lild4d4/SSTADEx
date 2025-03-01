@@ -1,0 +1,44 @@
+** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/sstadex/xschem/ota_cc_cap_tb.sch
+**.subckt ota_cc_cap_tb
+Rdif_m1_2 net1 vs 7479431.5 m=1
+Gdif_m1_2 net1 vs vss vs 6.252e-5
+Rdif_m1_1 net2 vs 7479431.5 m=1
+Gdif_m1_1 net2 vs vpos vs 6.252e-5
+I2 vs vss 0
+Raload_1 vss vout 21654395 m=1
+Raload_2 vss net3 21654395 m=1
+Gaload vout vss net3 vss 4.203e-5
+Gaload_2 net3 vss net3 vss 4.203e-5
+Rdif_m2_1 vout net2 71808.1 m=1
+Gdif_m2_1 vout net2 vss net2 0.0002247
+Rdif_m2_2 net3 net1 71808.1 m=1
+Gdif_m2_2 net3 net1 vss net1 0.0002247
+Cds_m1 net2 vs 5.42e-14 m=1
+Cds_m2 vout net2 1.82e-15 m=1
+Cgs_m2 vss net2 4.4e-15 m=1
+Cgd_m2 vout vss 3.62e-17 m=1
+Cgd_m1 vout net3 3.41e-15 m=1
+**** begin user architecture code
+
+
+
+Vdd vdd 0 3.3
+Vpos vpos 0 1.35 ac 1
+Vbias vbias 0 0
+Vss vss 0 0
+
+.control
+ac dec 10 1 1G
+plot vdb(vout)
+plot phase(vout)*180/PI
+meas ac gain find vdb(vout) at=1
+let low_gain = gain-3
+meas ac fc WHEN vdb(vout)=low_gain
+print fc/(2*PI)
+.endc
+
+
+
+**** end user architecture code
+**.ends
+.end

@@ -1,0 +1,54 @@
+** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/sstadex/xschem/ihp_test.sch
+**.subckt ihp_test
+XM1 vout vg vs vs sg13_hv_nmos w=39.375u l=0.8u ng=1 m=1
+C1 vout vss 1p m=1
+XM2 vout net1 vdd vdd sg13_hv_pmos w=2.416u l=0.8u ng=1 m=1
+XM3 net1 vref vs vs sg13_hv_nmos w=39.375u l=0.8u ng=1 m=1
+XM4 net1 net1 vdd vdd sg13_hv_pmos w=2.416u l=0.8u ng=1 m=1
+XM5 vs net2 vss vss sg13_hv_nmos w=5.18u l=0.4u ng=1 m=1
+XM6 net2 net2 vss vss sg13_hv_nmos w=5.18u l=0.4u ng=1 m=1
+I0 vdd net2 40e-6
+**** begin user architecture code
+
+
+
+.lib /opt/pdks/ihp-sg13g2/libs.tech/ngspice/models/cornerMOShv.lib mos_tt
+
+Vdd vdd 0 3.3
+Vgs vg 0 1.48 ac 1
+Vss vss 0 0
+Vref vref 0 1.48
+.control
+ac dec 10 1 1G
+plot vdb(vout)
+op
+print vout
+print vs
+let gm_diff = @n.xm1.nsg13_hv_nmos[gm]
+let id_diff = @n.xm1.nsg13_hv_nmos[ids]
+let gds_diff = @n.xm1.nsg13_hv_nmos[gds]
+let gm_al = @n.xm2.nsg13_hv_pmos[gm]
+let id_al = @n.xm2.nsg13_hv_pmos[ids]
+let gds_al = @n.xm2.nsg13_hv_pmos[gds]
+let gm_cm = @n.xm5.nsg13_hv_nmos[gm]
+let id_cm = @n.xm5.nsg13_hv_nmos[ids]
+let gds_cm = @n.xm5.nsg13_hv_nmos[gds]
+print gm_diff
+print gds_diff
+print id_diff
+print gm_diff/id_diff
+print gm_al
+print gds_al
+print id_al
+print gm_al/id_al
+print gm_cm
+print gds_cm
+print id_cm
+print gm_cm/id_cm
+.endc
+
+
+
+**** end user architecture code
+**.ends
+.end

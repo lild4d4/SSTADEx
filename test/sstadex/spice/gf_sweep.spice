@@ -1,0 +1,27 @@
+* Lookup Table Generation *
+.include /opt/pdks/gf180mcuD/libs.tech/ngspice/design.ngspice 
+.lib '/opt/pdks/gf180mcuD/libs.tech/ngspice/sm141064.ngspice typical'
+VGS NG 0 DC=0
+VBS NB 0 DC=0
+VDS ND 0 DC=0
+XM1 ND NG 0 NB nfet_03v3 L=0.4u W=20.0u
+
+.options TEMP = 27
+.options TNOM = 27
+.control
+save i(vds)
+save @m.xm1.m0[vth]
+save @m.xm1.m0[vdsat]
+save @m.xm1.m0[gm]
+save @m.xm1.m0[gmbs]
+save @m.xm1.m0[gds]
+save @m.xm1.m0[cgg]
+save @m.xm1.m0[cgs]
+save @m.xm1.m0[cbg]
+save @m.xm1.m0[cgd]
+save @m.xm1.m0[cdd]
+dc VDS 0.0 1.8 0.01 VGS 0.0 1.8 0.01
+let i_vds = abs(i(vds))
+write /tmp/tmp56zxsz7z all
+.endc
+.end

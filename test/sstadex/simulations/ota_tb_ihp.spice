@@ -1,0 +1,31 @@
+** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/sstadex/xschem/ota_tb_ihp.sch
+**.subckt ota_tb_ihp
+I2 vs vss 40e-6
+XM1 vs vn net1 vs sg13_hv_nmos w=1.0u l=0.45u ng=1 m=1
+XM2 vs vp1 vout vs sg13_hv_nmos w=1.0u l=0.45u ng=1 m=1
+XM3 vout net1 vdd vdd sg13_hv_pmos w=1.0u l=0.45u ng=1 m=1
+XM4 net1 net1 vdd vdd sg13_hv_pmos w=1.0u l=0.45u ng=1 m=1
+**** begin user architecture code
+
+
+
+.lib /opt/pdks/ihp-sg13g2/libs.tech/ngspice/models/cornerMOShv.lib mos_tt
+
+Vref vn 0 0.9
+Vdd vdd 0 1.8
+Vpos vp1 0 0.9 ac 1
+Vss vss 0 0
+
+.control
+ac dec 10 1 1G
+plot vdb(vout)
+plot phase(vout)
+op
+print vout vs
+.endc
+
+
+
+**** end user architecture code
+**.ends
+.end

@@ -1,0 +1,36 @@
+** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/sstadex/xschem/cascode_test.sch
+**.subckt cascode_test
+Ro_m2 vout vcp 314198 m=1
+Gm_m2 vout vcp vss vcp 0.0001904
+Cgd_m2 vss vout 3.75e-15 m=1
+Cgs_m1 vss vcp 3.26e-13 m=1
+Ro_m1 vcp vss 769230 m=1
+Gm_m1 vcp vss vp vss 0.0002847
+I2 vss vout 0
+Cds_m2 vout vcp 1.67e-13 m=1
+Cds_m1 vcp vss 9.13e-14 m=1
+Cgd_m1 vp vcp 0 m=1
+**** begin user architecture code
+
+
+
+.lib /opt/pdks/sky130A/libs.tech/ngspice/sky130.lib.spice tt
+
+Vref vn 0 0
+Vdd vdd 0 0
+Vpos vp 0 0 ac 1
+Vss vss 0 0
+
+.control
+
+ac dec 10 1 1G
+plot vdb(vout)
+
+
+.endc
+
+
+
+**** end user architecture code
+**.ends
+.end

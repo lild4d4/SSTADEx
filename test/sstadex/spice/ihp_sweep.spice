@@ -1,0 +1,27 @@
+* Lookup Table Generation *
+.lib '/opt/pdks/ihp-sg13g2/libs.tech/ngspice/models/cornerMOShv.lib mos_tt'
+VGS NG 0 DC=0
+VBS NB 0 DC=0
+VDS ND 0 DC=0
+XM1 ND NG 0 NB sg13_hv_nmos L=0.4u W=20.0u
+
+.options TEMP = 27
+.options TNOM = 27
+.control
+pre_osdi /opt/pdks/ihp-sg13g2/libs.tech/ngspice/openvaf/psp103_nqs.osdi
+save i(vds)
+save @n.xm1.nsg13_hv_nmos[vth]
+save @n.xm1.nsg13_hv_nmos[vdsat]
+save @n.xm1.nsg13_hv_nmos[gm]
+save @n.xm1.nsg13_hv_nmos[gmbs]
+save @n.xm1.nsg13_hv_nmos[gds]
+save @n.xm1.nsg13_hv_nmos[cgg]
+save @n.xm1.nsg13_hv_nmos[cgs]
+save @n.xm1.nsg13_hv_nmos[cbg]
+save @n.xm1.nsg13_hv_nmos[cgd]
+save @n.xm1.nsg13_hv_nmos[cdd]
+dc VDS 0.0 1.8 0.01 VGS 0.0 1.8 0.01
+let i_vds = abs(i(vds))
+write /tmp/tmp02j7cq6i all
+.endc
+.end

@@ -1,0 +1,45 @@
+** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/sstadex/xschem/sd_example2.sch
+**.subckt sd_example2
+XM1 vout vg1 vss vss sg13_hv_nmos w=68.09u l=0.8u ng=1 m=1
+C1 vout vss 1e-12 m=1
+I1 vss vout 2.31e-6
+B1 net1 vss V = vcc/2*(1+tanh(1000*(v(vfb)-v(vref))))
+V1 vg1 net1 dc 0 ac 1
+R1 vfb vout 100000000 m=1
+C2 vfb vss 10 m=1
+**** begin user architecture code
+
+
+
+.lib /opt/pdks/ihp-sg13g2/libs.tech/ngspice/models/cornerMOShv.lib mos_tt
+.lib /opt/pdks/ihp-sg13g2/libs.tech/ngspice/models/cornerMOSlv.lib mos_tt
+
+Vdd vdd 0 3.3
+Vss vss 0 0
+Vref vref 0 1.2
+
+.param vcc=3.3
+
+.control
+ac dec 10 1 1G
+plot vdb(vout)
+wrdata sd_example2.csv vdb(vout)
+op
+print vout
+print vfb
+print vg1
+print vg2
+let gm_diff = @n.xm1.nsg13_hv_nmos[gm]
+let id_diff = @n.xm1.nsg13_hv_nmos[ids]
+let gds_diff = @n.xm1.nsg13_hv_nmos[gds]
+print gm_diff
+print gds_diff
+print id_diff
+print gm_diff/id_diff
+.endc
+
+
+
+**** end user architecture code
+**.ends
+.end

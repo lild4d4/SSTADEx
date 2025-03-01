@@ -2,14 +2,14 @@
 **.subckt stage2_OTA
 Ro_stage2 net1 vout 473596.7 m=1
 Gm_stage2 vout net1 Vaout net1 2.7200000000000004e-05
-Gma_1stage vss Vaout V_p V_n 10
-Ra_1stage vss Vaout 50 m=1
+Gma_1stage net1 Vaout V_p V_n 10
+Ra_1stage net1 Vaout 50 m=1
 V1 net1 vss 3
 V3 V_n vss 3
 I2 vout vss 40e-6
 V2 V_p vss 3
 CL vout vss 1e-12 m=1
 C2 Vaout vout 1e-12 m=1
-Ca_1stage Vaout vss 1e-12 m=1
+Ca_1stage Vaout net1 1e-12 m=1
 **.ends
 .end
