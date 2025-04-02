@@ -7,6 +7,7 @@ from .primitives import (
     cm_pmos,
     diffpair_cc,
     current_mirror_cc,
+    common_source,
 )
 
 __all__ = [
@@ -19,4 +20,5 @@ __all__ = [
     "diffpair_cc",
     "Test",
     "current_mirror_cc",
+    "common_source",
 ]
