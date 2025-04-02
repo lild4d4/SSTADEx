@@ -1,4 +1,5 @@
 import numpy as np
+from sympy import Symbol
 
 
 class Macromodel:
@@ -24,6 +25,9 @@ class Macromodel:
         outputs=[],
         is_primitive=False,
         ext_mask=None,
+        run_pareto=True,
+        subs_expr=None,
+        use_subs=False,
     ):
         self.name = name
         self.netlist = netlist
@@ -43,6 +47,9 @@ class Macromodel:
         self.outputs = outputs
         self.is_primitive = is_primitive
         self.ext_mask = ext_mask
+        self.run_pareto = run_pareto
+        self.subs_expr = subs_expr
+        self.use_subs = use_subs
 
     def hasPrimitive(self):
         if len(self.primitives) == 0:
@@ -74,6 +81,11 @@ class Macromodel:
                             param
                         ][: len(results_df["area"])]
 
+            if param == Symbol("Cin_2stage"):
+                self.macromodel_parameters[param] = results_df[param].values
+            elif param == Symbol("Cgd_2stage"):
+                self.macromodel_parameters[param] = results_df[param].values
+
         self.output_results = {}
         for output in self.outputs:
             self.output_results[output] = results_df[output].values
@@ -84,11 +96,14 @@ class Macromodel:
 
 
 class Test:
-    def __init__(self, composed=0, parametros={}, lamb=None, target_param=""):
+    def __init__(
+        self, composed=0, parametros={}, lamb=None, target_param="", only_up=False
+    ):
         self.composed = composed
         self.parametros = parametros
         self.lamd = lamb
         self.target_param = target_param
+        self.only_up = only_up
 
     def eval(funct):
         return {"eval": funct}
