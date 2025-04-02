@@ -116,6 +116,17 @@ def spice_sim(project, dict):
                     index = -1
                 print(line)
                 new_file.write(line)
+            elif words[0][0] == "C":
+                try:
+                    index = list(dict_keys).index(words[0])
+                    words[3] = str(dict[words[0]][i])
+                    print(words)
+                    words.append("\n")
+                    line = " ".join(words)
+                except ValueError:
+                    index = -1
+                print(line)
+                new_file.write(line)
             else:
                 print(line)
                 new_file.write(line)
