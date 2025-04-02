@@ -8,6 +8,67 @@ class Primitive:
         self.parameters = parameters
 
 
+class common_source(Primitive):
+    def __init__(self, netlist="", inputs=[], outputs=[], type="", conf=0):
+        self.netlst = netlist
+        self.inputs = inputs
+        self.outputs = outputs
+        self.type = type
+        self.conf = conf
+
+    def build(self):
+        pt_transistor = Transistor(
+            "../../LUTs/IHP_LUT_lv_20w.npy",
+            self.type,
+            0,
+            self.inputs["vds_lut"],
+            self.inputs["vgs_lut"],
+            self.inputs["length"],
+            self.inputs["2d_var"],
+            [
+                self.inputs[self.inputs["2d_var"][0]],
+                self.inputs[self.inputs["2d_var"][1]],
+            ],
+            conf=self.conf,
+        )
+
+        self.mesh = np.meshgrid(
+            self.inputs[self.inputs["2d_var"][0]], self.inputs[self.inputs["2d_var"][1]]
+        )
+
+        pos = 0
+        input_has_l = False
+        for in_ in self.inputs["2d_var"]:
+            if in_ == "length":
+                self.L = np.repeat(
+                    self.inputs["length"], np.asarray(self.mesh[0]).shape[pos]
+                )
+                input_has_l = True
+            else:
+                pos += 1
+
+        if not input_has_l:
+            if self.conf == 1:
+                self.L = np.repeat(
+                    self.inputs["length"],
+                    len(self.inputs[self.inputs["2d_var"][0]])
+                    * len(self.inputs[self.inputs["2d_var"][1]]),
+                )
+            else:
+                self.L = np.repeat(
+                    self.inputs["length"], len(self.inputs[self.inputs["2d_var"][0]])
+                )
+
+        self.W = self.inputs["il"] / pt_transistor.jd
+        self.gdsid = pt_transistor.gds / pt_transistor.id
+        self.gds = self.gdsid * self.inputs["il"]
+        self.Ro = 1 / self.gds
+        self.cgg = (self.W * pt_transistor.cgg) / 20e-6
+        self.gm = pt_transistor.gmid * self.inputs["il"]
+        self.cgs = (self.W * pt_transistor.cgs) / 20e-6
+        self.cgd = (self.W * pt_transistor.cgd) / 20e-6
+
+
 class simplediffpair(Primitive):
     def __init__(self, name="", netlist="", inputs=[], outputs=[], type=""):
         super().__init__()
@@ -457,3 +518,14 @@ class current_mirror_cc:
         self.cout = cgd_m2
         self.ccp_m1 = cgd_m1
         self.ccp_m2 = cgg_m2
+
+
+def simple_active_load():
+    def __init__(
+        vout,
+        vin,
+    ):
+        pass
+
+    def build(self):
+        pass
