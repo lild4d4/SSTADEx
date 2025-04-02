@@ -51,7 +51,7 @@ N 730 -100 780 -100 {
 lab=vfb}
 C {sg13g2_pr/sg13_hv_nmos.sym} 440 -30 2 1 {name=M1
 l=3.2u
-w=10.91u
+w=10.67u
 ng=1
 m=1
 model=sg13_hv_nmos
@@ -94,7 +94,7 @@ print gm_diff/id_diff
 
 "}
 C {devices/lab_pin.sym} 460 120 3 0 {name=p2 sig_type=std_logic lab=vss}
-C {isource.sym} 460 -170 0 0 {name=I1 value=8.2e-6}
+C {isource.sym} 460 -170 0 0 {name=I1 value=8.21e-6}
 C {devices/lab_pin.sym} 460 -220 1 0 {name=p4 sig_type=std_logic lab=vss}
 C {devices/lab_pin.sym} 380 -30 3 0 {name=p3 sig_type=std_logic lab=vg1}
 C {bsource.sym} 140 0 0 0 {name=B1 VAR=V FUNC="vcc/2*(1+tanh(1000*(v(vfb)-v(vref))))"}

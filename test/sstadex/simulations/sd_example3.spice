@@ -1,8 +1,8 @@
 ** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/sstadex/xschem/sd_example3.sch
 **.subckt sd_example3
-XM1 vout vg1 vss vss sg13_hv_nmos w=10.91u l=3.2u ng=1 m=1
+XM1 vout vg1 vss vss sg13_hv_nmos w=10.67u l=3.2u ng=1 m=1
 C1 vout vss 1p m=1
-I1 vss vout 8.2e-6
+I1 vss vout 8.21e-6
 B1 net1 vss V = vcc/2*(1+tanh(1000*(v(vfb)-v(vref))))
 V1 vg1 net1 dc 0 ac 1
 R1 vfb vout 100000000 m=1
@@ -21,7 +21,7 @@ Vref vref 0 1.2
 .param vcc=3.3
 
 .control
-ac dec 10 1 1G
+ac dec 1000 1 1G
 plot vdb(vout)
 wrdata sd_example3.csv vdb(vout)
 op

@@ -51,7 +51,7 @@ N 620 -90 670 -90 {
 lab=vfb}
 C {sg13g2_pr/sg13_hv_nmos.sym} 330 -20 2 1 {name=M1
 l=0.8u
-w=68.09u
+w=73.46u
 ng=1
 m=1
 model=sg13_hv_nmos

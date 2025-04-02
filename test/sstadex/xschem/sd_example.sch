@@ -51,7 +51,7 @@ N 350 -100 400 -100 {
 lab=vfb}
 C {sg13g2_pr/sg13_hv_nmos.sym} 60 -30 2 1 {name=M1
 l=1.6u
-w=5.097u
+w=5.1u
 ng=1
 m=1
 model=sg13_hv_nmos
@@ -75,7 +75,7 @@ Vref vref 0 1.2
 .param vcc=3.3
 
 .control
-ac dec 10 1 1G
+ac dec 1000 1 1G
 plot vdb(vout)
 wrdata sd_example1.csv vdb(vout)
 op 
@@ -96,7 +96,7 @@ print gm_diff/id_diff
 
 "}
 C {devices/lab_pin.sym} 80 120 3 0 {name=p2 sig_type=std_logic lab=vss}
-C {isource.sym} 80 -170 0 0 {name=I1 value=14.75e-6}
+C {isource.sym} 80 -170 0 0 {name=I1 value=14.7e-6}
 C {devices/lab_pin.sym} 80 -220 1 0 {name=p4 sig_type=std_logic lab=vdd}
 C {devices/lab_pin.sym} 0 -30 3 0 {name=p3 sig_type=std_logic lab=vg1}
 C {bsource.sym} -240 0 0 0 {name=B1 VAR=V FUNC="vcc/2*(1+tanh(10000*(v(vfb)-v(vref))))"}

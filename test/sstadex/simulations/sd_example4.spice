@@ -1,11 +1,11 @@
-** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/sstadex/xschem/sd_example2.sch
-**.subckt sd_example2
-XM1 vout vg1 vss vss sg13_hv_nmos w=73.46u l=0.8u ng=1 m=1
-C1 vout vss 1e-12 m=1
-I1 vss vout 2.31e-6
+** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/sstadex/xschem/sd_example4.sch
+**.subckt sd_example4
+XM1 vout vg1 vss vss sg13_hv_nmos w=60.84u l=0.8u ng=1 m=1
+C1 vout vss 1p m=1
+I1 vss vout 20e-6
 B1 net1 vss V = vcc/2*(1+tanh(1000*(v(vfb)-v(vref))))
 V1 vg1 net1 dc 0 ac 1
-R1 vfb vout 100000000 m=1
+R1 vfb vout 100000000000 m=1
 C2 vfb vss 10 m=1
 **** begin user architecture code
 
@@ -23,7 +23,10 @@ Vref vref 0 1.2
 .control
 ac dec 1000 1 1G
 plot vdb(vout)
-wrdata sd_example2.csv vdb(vout)
+meas ac gain find vdb(vout) at=1
+let low_gain = gain-3
+meas ac fc WHEN vdb(vout)=0
+wrdata sd_example4.csv vdb(vout)
 op
 print vout
 print vfb
