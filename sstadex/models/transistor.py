@@ -8,7 +8,16 @@ import numpy as np
 
 class Transistor:
     def __init__(
-        self, lookup_table_file, mos_type, vsb, vds, vgs, lengths, dof, dof_values
+        self,
+        lookup_table_file,
+        mos_type,
+        vsb,
+        vds,
+        vgs,
+        lengths,
+        dof,
+        dof_values,
+        conf=0,
     ):
         self.lookup_table_file = lookup_table_file
         self.mos_type = mos_type
@@ -18,6 +27,7 @@ class Transistor:
         self.lengths = lengths
         self.dof = dof
         self.dof_values = dof_values
+        self.conf = conf
 
         self.lookup_table = load_lookup_table(lookup_table_file)
 
@@ -51,7 +61,6 @@ class Transistor:
                 self.cgs,
                 self.vth,
                 self.id,
-                self.cds,
             ) = self.get_parameters(self.lengths)
         elif mode == 1:
             self.jd = []
@@ -62,25 +71,39 @@ class Transistor:
             self.cgs = []
             self.vth = []
             self.id = []
-            self.cds = []
             for idx, length in enumerate(lengths):
                 parameters = self.get_parameters(length)
-                diagonals = [np.diag(x) for x in parameters]
-                for param, diag in zip(
-                    [
-                        self.jd,
-                        self.gmid,
-                        self.gds,
-                        self.cgg,
-                        self.cgd,
-                        self.cgs,
-                        self.vth,
-                        self.id,
-                        self.cds,
-                    ],
-                    diagonals,
-                ):
-                    param.append(diag)
+                if self.conf == 0:
+                    diagonals = [np.diag(x) for x in parameters]
+                    for param, diag in zip(
+                        [
+                            self.jd,
+                            self.gmid,
+                            self.gds,
+                            self.cgg,
+                            self.cgd,
+                            self.cgs,
+                            self.vth,
+                            self.id,
+                        ],
+                        diagonals,
+                    ):
+                        param.append(diag)
+                else:
+                    for param, diag in zip(
+                        [
+                            self.jd,
+                            self.gmid,
+                            self.gds,
+                            self.cgg,
+                            self.cgd,
+                            self.cgs,
+                            self.vth,
+                            self.id,
+                        ],
+                        parameters,
+                    ):
+                        param.append(diag.flatten())
 
             self.jd = np.asarray(self.jd)
             self.gmid = np.asarray(self.gmid)
@@ -90,7 +113,6 @@ class Transistor:
             self.cgs = np.asarray(self.cgs)
             self.vth = np.asarray(self.vth)
             self.id = np.asarray(self.id)
-            self.cds = np.asarray(self.cds)
 
     def get_parameters(self, lengths_m):
         self.pt_lutable = LoadMosfet(
@@ -153,14 +175,6 @@ class Transistor:
             z_expression=self.pt_lutable.cgs_expression,
         )
 
-        cds = self.pt_lutable.interpolate(
-            x_expression=expressions[self.eof[0]],
-            x_value=self.dof_values[0],
-            y_expression=expressions[self.eof[1]],
-            y_value=self.dof_values[1],
-            z_expression=self.pt_lutable.cds_expression,
-        )
-
         vth = self.pt_lutable.interpolate(
             x_expression=expressions[self.eof[0]],
             x_value=self.dof_values[0],
@@ -177,4 +191,4 @@ class Transistor:
             z_expression=self.pt_lutable.id_expression,
         )
 
-        return jd, gmid, gds, cgg, cgd, cgs, vth, id, cds
+        return jd, gmid, gds, cgg, cgd, cgs, vth, id
