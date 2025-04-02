@@ -31,11 +31,7 @@ N 150 50 210 50 {
 lab=vs}
 N -210 50 -210 110 {
 lab=vs}
-N -30 110 150 110 {
-lab=vs}
 N 150 50 150 110 {
-lab=vs}
-N -30 110 -30 160 {
 lab=vs}
 N 150 -230 150 -180 {
 lab=vdd}
@@ -103,7 +99,7 @@ N -280 50 -210 50 {
 lab=vs}
 N 80 50 150 50 {
 lab=vs}
-N -210 110 -30 110 {
+N -30 110 150 110 {
 lab=vs}
 N -280 -50 -210 -50 {
 lab=#net1}
@@ -127,8 +123,34 @@ N 350 40 350 100 {
 lab=vr}
 N -30 240 350 240 {
 lab=vss}
-N -30 220 -30 240 {
+N -90 130 -90 150 {
+lab=vs}
+N -90 210 -90 230 {
 lab=vss}
+N 40 130 40 150 {
+lab=vs}
+N 40 210 40 230 {
+lab=vss}
+N -130 200 -130 230 {
+lab=vss}
+N -130 230 -90 230 {
+lab=vss}
+N -30 130 40 130 {
+lab=vs}
+N -30 230 40 230 {
+lab=vss}
+N -160 160 -130 160 {
+lab=vss}
+N -30 230 -30 240 {
+lab=vss}
+N -90 230 -30 230 {
+lab=vss}
+N -30 110 -30 130 {
+lab=vs}
+N -210 110 -30 110 {
+lab=vs}
+N -90 130 -30 130 {
+lab=vs}
 C {devices/res.sym} -150 0 0 0 {name=Rdiff_2
 value=1
 footprint=1206
@@ -141,7 +163,6 @@ footprint=1206
 device=resistor
 m=1}
 C {devices/vccs.sym} 80 0 0 0 {name=Gdiff_1 value=1}
-C {devices/isource.sym} -30 190 0 0 {name=I2 value=1}
 C {devices/vsource.sym} 20 -200 0 0 {name=V1 value=1.8 savecurrent=false}
 C {devices/vsource.sym} -410 40 0 0 {name=V_n value=1 savecurrent=false}
 C {devices/lab_pin.sym} -30 110 1 0 {name=p1 sig_type=std_logic lab=vs}
@@ -173,3 +194,10 @@ footprint=1206
 device=resistor
 m=1}
 C {devices/lab_pin.sym} 350 70 2 0 {name=p10 sig_type=std_logic lab=vr}
+C {devices/res.sym} 40 180 0 0 {name=Rcs
+value=1
+footprint=1206
+device=resistor
+m=1}
+C {devices/vccs.sym} -90 180 0 0 {name=Gcs value=1}
+C {devices/lab_pin.sym} -160 160 0 0 {name=p11 sig_type=std_logic lab=vss}

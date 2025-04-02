@@ -1,32 +1,36 @@
 ** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/Tesis_notebooks/xschem/ota_2stage_tb.sch
 **.subckt ota_2stage_tb
-I1 vs vss 40e-6
-I2 vout vss 20e-6
-XM1 vout_s1 vn vs vs sg13_hv_nmos w=219.27u l=0.8u ng=1 m=1
-XM2 net2 net1 vs vs sg13_hv_nmos w=219.27u l=0.8u ng=1 m=1
-XM3 vout_s1 net2 vdd vdd sg13_hv_pmos w=10.48u l=0.4u ng=1 m=1
-XM4 net2 net2 vdd vdd sg13_hv_pmos w=10.48u l=0.4u ng=1 m=1
-XM5 vout vout_s1 vdd vdd sg13_hv_pmos w=31.32u l=0.8u ng=1 m=1
+XM1 vout_s1 vn vs vs sg13_hv_nmos w=117u l=0.45u ng=1 m=1
+XM2 net2 net1 vs vs sg13_hv_nmos w=117u l=0.45u ng=1 m=1
+XM3 vout_s1 net2 vdd vdd sg13_hv_pmos w=1.92u l=0.4u ng=1 m=1
+XM4 net2 net2 vdd vdd sg13_hv_pmos w=1.92u l=0.4u ng=1 m=1
+XM5 vout vout_s1 vdd vdd sg13_hv_pmos w=96.35u l=6.4u ng=1 m=1
 R1 vfb vout 10000000000 m=1
 C2 vfb vss 10 m=1
-R2 vfb vss 45000000000 m=1
+R2 vfb vss 27600000000 m=1
 V1 net1 vfb dc 0 ac 1
-C1 vout vout_s1 5e-12 m=1
-C3 vout vss 1e-12 m=1
+C3 vout vss 2.516e-11 m=1
+XM6 vss net3 vs vss sg13_hv_nmos w=28.4u l=3.2u ng=1 m=1
+XM7 vss net3 net3 vss sg13_hv_nmos w=28.4u l=3.2u ng=1 m=1
+I2 vdd net3 40e-6
+XM8 vss net3 vout vss sg13_hv_nmos w=28.4u l=3.2u ng=1 m=1
+Cc net4 vout_s1 1e-10 m=1
+Rc vout net4 10000 m=1
 **** begin user architecture code
 
 
 
 .lib /opt/pdks/ihp-sg13g2/libs.tech/ngspice/models/cornerMOShv.lib mos_tt
 
-Vref vn 0 1.35
-Vdd vdd 0 3.3
+Vref vn 0 0.9
+Vdd vdd 0 1.8
 Vss vss 0 0
 
 .control
 ac dec 10 1 1G
 plot vdb(vout)
 plot phase(vout)*180/PI
+meas pm find phase(vout)*180/PI when vdb(vout)=0
 op
 print vout vs vout_s1 vfb
 .endc

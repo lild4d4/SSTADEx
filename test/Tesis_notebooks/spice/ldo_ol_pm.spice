@@ -1,0 +1,22 @@
+** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/Tesis_notebooks/xschem/ldo_ol_pm_tb.sch
+**.subckt ldo_ol_pm_tb
+R3 vpos vfb 10000000000 m=1
+C1 vpos vss 10 m=1
+Ro_pt vss vout 201 m=1
+Gm_pt vout vss net1 vss 0.1845
+R1 vout vfb 22500 m=1
+R2 vfb vss 67500 m=1
+Gma net1 vss net2 vss 0.000073814
+Ra vss net1 1991878 m=1
+Rl vout vss 18 m=1
+Cl vout vss 1e-12 m=1
+Cgd_pt1 net1 vss 3.13e-12 m=1
+Gma_1stage net2 vss vol vss 0.0001536
+Ra_1stage vss net2 541957 m=1
+V1 vol vpos 1
+Cin_2stage net2 vss 1e-14 m=1
+**** begin user architecture code
+
+**** end user architecture code
+**.ends
+.end

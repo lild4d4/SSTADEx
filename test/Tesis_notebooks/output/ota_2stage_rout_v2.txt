@@ -1,0 +1,10 @@
+Vr 1 0 0.9
+Rr 2 1 1000
+Ro_2stage 3 2 100
+Gm_2stage 2 3 4 3 1
+V1 3 0 1
+Cin_2stage 4 3 1e-12
+V2 4 0 1
+Gcs_2stage 2 0 0 0 1
+Rcs_2stage 0 2 100
+Cin_pt 2 0 1e-12

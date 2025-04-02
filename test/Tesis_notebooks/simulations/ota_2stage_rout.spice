@@ -5,12 +5,10 @@ Gm_2stage vout vdd net1 vdd 1
 Gma_1stage net1 vss vss vpos 1
 Ra_1stage vss net1 100 m=1
 V1 vdd vss 1
-Cgg_2stage net1 vdd 1e-12 m=1
-Cgd_2stage net1 vout 1e-12 m=1
-Ca_1stage net1 vss 1e-12 m=1
 V2 vpos vss 1
-I_amp2 vout vss 1m
 Vr vr vss 0.9
 Rr vout vr 1000 m=1
+Gcs_2stage vout vss vss vss 1
+Rcs_2stage vss vout 100 m=1
 **.ends
 .end

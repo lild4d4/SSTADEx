@@ -1,26 +1,29 @@
-** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/Tesis_notebooks/xschem/ldo_tb.sch
-**.subckt ldo_tb
-I_amp1 vs vss 4e-05 
-I_amp2 vmid vss 4e-05 
-R1 vout vfb 22500 m=1 
-R2 vfb vss 67500 m=1 
-Cl vout vss 1e-6 m=1
-R3 vout vss 100000000000000 m=1 
-XM1 vout_s1 vfb vs vs sg13_hv_nmos L=6.3999999999999995u W=7048.8971413927475u ng=1 m=1 
-XM2 net1 vn vs vs sg13_hv_nmos L=6.3999999999999995u W=7048.8971413927475u ng=1 m=1 
-XM3 vout_s1 net1 vdd_1 vdd_1 sg13_hv_pmos L=6.3999999999999995u W=9.019167828725301u ng=1 m=1 
-XM4 net1 net1 vdd_1 vdd_1 sg13_hv_pmos L=6.3999999999999995u W=9.019167828725301u ng=1 m=1 
-XM5 vmid vout_s1 vdd_1 vdd_1 sg13_hv_pmos L=6.3999999999999995u W=18.04253341681678u ng=1 m=1 
-XM6 vout vmid vdd vdd sg13_hv_pmos L=6.3999999999999995u W=54887.22502881546u ng=1 m=1 
+** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/Tesis_notebooks/xschem/ota_2stage_tb.sch
+**.subckt ota_2stage_tb
+XM1 vout_s1 vn vs vs sg13_hv_nmos L=3.1999999999999997u W=309.4677996593u ng=1 m=1 
+XM2 net2 net1 vs vs sg13_hv_nmos L=3.1999999999999997u W=309.4677996593u ng=1 m=1 
+XM3 vout_s1 net2 vdd vdd sg13_hv_pmos L=6.3999999999999995u W=177.8724061624u ng=1 m=1 
+XM4 net2 net2 vdd vdd sg13_hv_pmos L=6.3999999999999995u W=177.8724061624u ng=1 m=1 
+XM5 vout vout_s1 vdd vdd sg13_hv_pmos L=3.1999999999999997u W=170.474533378u ng=1 m=1 
+R1 vfb vout 10000000000 m=1
+C2 vfb vss 10 m=1
+R2 vfb vss -42857142857 m=1
+V1 net1 vfb dc 0 ac 1
+C3 vout vss 2.026e-11 m=1
+XM6 vss net3 vs vss sg13_hv_nmos L=6.3999999999999995u W=54.14271527541397u ng=1 m=1 
+XM7 vss net3 net3 vss sg13_hv_nmos L=6.3999999999999995u W=54.14271527541397u ng=1 m=1 
+I2 vdd net3 4e-05 
+XM8 vss net3 vout vss sg13_hv_nmos L=6.3999999999999995u W=54.14271527541397u ng=1 m=1 
+Cc vout_s1 net4 1e-10 m=1 
+Rc vout net4 10000.0 m=1 
 **** begin user architecture code
 
 
 
 .lib /opt/pdks/ihp-sg13g2/libs.tech/ngspice/models/cornerMOShv.lib mos_tt
 
-Vref vn 0 1.35
-Vdd vdd 0 3.3 ac 1
-Vdd_1 vdd_1 0 3.3
+Vref vn 0 0.9
+Vdd vdd 0 1.8
 Vss vss 0 0
 
 .control
@@ -28,9 +31,3 @@ pre_osdi /opt/pdks/ihp-sg13g2/libs.tech/ngspice/openvaf/psp103_nqs.osdi
 ac dec 10 1 1G
 wrdata temp.csv vdb(vout) phase(vout)
 .endc
-
-
-
-**** end user architecture code
-**.ends
-.end

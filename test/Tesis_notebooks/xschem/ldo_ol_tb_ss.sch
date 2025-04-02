@@ -110,7 +110,7 @@ lab=vpos}
 N -280 -230 -280 -180 {
 lab=vol}
 C {res.sym} -90 -10 1 0 {name=R3
-value=100000000
+value=10000000000
 footprint=1206
 device=resistor
 m=1}
@@ -123,11 +123,11 @@ C {devices/lab_pin.sym} -150 -10 0 0 {name=p13 sig_type=std_logic lab=vfb}
 C {devices/lab_pin.sym} -10 -10 2 0 {name=p8 sig_type=std_logic lab=vpos}
 C {devices/lab_pin.sym} -10 130 3 0 {name=p14 sig_type=std_logic lab=vss}
 C {devices/res.sym} 300 -240 0 0 {name=Ro_pt
-value=202
+value=201
 footprint=1206
 device=resistor
 m=1}
-C {devices/vccs.sym} 170 -240 2 1 {name=Gm_pt value=0.18588}
+C {devices/vccs.sym} 170 -240 2 1 {name=Gm_pt value=0.1845}
 C {devices/res.sym} 170 -110 0 0 {name=R1
 value=22500
 footprint=1206
@@ -140,7 +140,7 @@ device=resistor
 m=1}
 C {devices/vccs.sym} -320 -250 0 1 {name=Gma value=0.0061445}
 C {devices/res.sym} -200 -250 2 0 {name=Ra
-value=7094036
+value=1991879
 footprint=1206
 device=resistor
 m=1}
@@ -156,12 +156,12 @@ device=resistor
 m=1}
 C {capa.sym} 90 -190 3 0 {name=Cgd_pt
 m=1
-value=3e-12
+value=4.19e-14
 footprint=1206
 device="ceramic capacitor"}
 C {capa.sym} 290 -60 0 0 {name=Cl
 m=1
-value=5.3e-12
+value=1e-12
 footprint=1206
 device="ceramic capacitor"}
 C {devices/lab_pin.sym} -240 -140 3 0 {name=p18 sig_type=std_logic lab=vss}
@@ -189,5 +189,10 @@ print vout vmid vout_s1 vs
 C {capa.sym} 90 -290 3 0 {name=Cgd_pt1
 m=1
 value=3.13e-12
+footprint=1206
+device="ceramic capacitor"}
+C {capa.sym} -130 -250 0 0 {name=Cgd_pt2
+m=1
+value=8e-11
 footprint=1206
 device="ceramic capacitor"}

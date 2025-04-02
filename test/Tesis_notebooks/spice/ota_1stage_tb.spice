@@ -1,13 +1,16 @@
 ** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/Tesis_notebooks/xschem/ota_1stage_tb.sch
 **.subckt ota_1stage_tb
-I2 vs vss 40e-6
-XM1 vs vp1 vout vs sg13_hv_nmos w=1.0u l=0.45u ng=1 m=1
-XM2 vs vn net1 vs sg13_hv_nmos w=1.0u l=0.45u ng=1 m=1
-XM3 vout net1 vdd vdd sg13_hv_pmos w=1.0u l=0.45u ng=1 m=1
-XM4 net1 net1 vdd vdd sg13_hv_pmos w=1.0u l=0.45u ng=1 m=1
+XM1 vs net1 vout vs sg13_hv_nmos w=5.33u l=0.8u ng=1 m=1
+XM2 vs vn net2 vs sg13_hv_nmos w=5.33u l=0.8u ng=1 m=1
+XM3 vout net2 vdd vdd sg13_hv_pmos w=9u l=6.4u ng=1 m=1
+XM4 net2 net2 vdd vdd sg13_hv_pmos w=9u l=6.4u ng=1 m=1
 R1 vfb vout 10000000000 m=1
 C2 vfb vss 10 m=1
 R2 vfb vss 54000000000 m=1
+XM5 vss net3 vs vss sg13_hv_nmos w=5.4u l=3.2u ng=1 m=1
+XM6 vss net3 net3 vss sg13_hv_nmos w=5.4u l=3.2u ng=1 m=1
+I2 vdd net3 40e-6
+V1 net1 vfb dc 0 ac 1
 **** begin user architecture code
 
 
@@ -16,7 +19,6 @@ R2 vfb vss 54000000000 m=1
 
 Vref vn 0 1.35
 Vdd vdd 0 3.3
-Vpos vp1 0 1.35 ac 1
 Vss vss 0 0
 
 .control

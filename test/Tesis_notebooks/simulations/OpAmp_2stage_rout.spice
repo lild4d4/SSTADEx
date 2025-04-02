@@ -1,0 +1,15 @@
+** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/Tesis_notebooks/xschem/OpAmp_2stage_rout.sch
+**.subckt OpAmp_2stage_rout
+Gma_1stage net1 vss vss vpos 1
+Ra_1stage vss net1 100 m=1
+Vpos vpos vss 1
+Cin_pt vout vss 1e-12 m=1
+Cin_2stage net1 vss 1e-12 m=1
+Gma_2stage vout vss net1 vss 1
+Ra_2stage vss vout 100 m=1
+Cgd_2stage net2 vout 5e-14 m=1
+Rc net1 net2 100 m=1
+Vr vr vss 0.9
+Rr vout vr 1000 m=1
+**.ends
+.end

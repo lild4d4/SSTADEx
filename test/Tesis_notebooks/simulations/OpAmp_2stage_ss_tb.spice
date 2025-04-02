@@ -1,0 +1,31 @@
+** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/Tesis_notebooks/xschem/OpAmp_2stage_ss_tb.sch
+**.subckt OpAmp_2stage_ss_tb
+Gma_1stage net1 vss vss vpos 0.0003277
+Ra_1stage vss net1 108549 m=1
+Cin_pt vout vss 2.5e-11 m=1
+Cin_2stage net1 vss 1.678e-14 m=1
+Gma_2stage vout vss net1 vss 0.00013814
+Ra_2stage vss vout 993887 m=1
+Cin_1 net2 vout 3e-10 m=1
+Rc net1 net2 7000 m=1
+**** begin user architecture code
+
+
+
+Vpos vpos 0 0 ac 1
+Vss vss 0 0
+
+.control
+
+ac dec 10 1 1G
+plot vdb(vout)
+plot phase(vout)*180/PI
+
+
+.endc
+
+
+
+**** end user architecture code
+**.ends
+.end

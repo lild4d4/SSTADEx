@@ -2,34 +2,31 @@
 **.subckt untitled
 R3 vpos vfb 100000000 m=1
 C1 vpos vss 10 m=1
-Ro_pt vss vout 202 m=1
-Gm_pt vout vss net1 vss 0.18588
-R1 vout vfb 22500 m=1
-R2 vfb vss 67500 m=1
-Gma net1 vss vss vol 0.0061445
-Ra vss net1 7094036 m=1
-Rl vout vss 18 m=1
-Cgd_pt net1 vout 3e-12 m=1
-Cl vout vss 5.3e-12 m=1
+Ro_pt vss vout 1314 m=1
+Gm_pt vout vss net1 vss 0.225
+R1 vout vfb 328 m=1
+R2 vfb vss 984 m=1
+Gma net1 vss vss vol 0.01
+Ra vss net1 10000000 m=1
+Rl vout vss 12 m=1
+Cgg_pt net1 vss 1.86e-11 m=1
+Ca net1 vss 1e-17 m=1
+Cl vout vss 1e-12 m=1
 V3 vol vpos dc 0 ac 1
-Cgd_pt1 net1 vss 3.13e-12 m=1
+Cgg_pt1 net1 vout 1.86e-14 m=1
 **** begin user architecture code
 
 
 
-.lib /opt/pdks/ihp-sg13g2/libs.tech/ngspice/models/cornerMOShv.lib mos_tt
-
-Vref vn 0 1.35
-Vdd vdd 0 3.3 ac 1
-Vdd_1 vdd_1 0 3.3
 Vss vss 0 0
 
 .control
-ac dec 10 1 100G
+
+ac dec 10 1 1G
 plot vdb(vout)
-plot phase(vout)
-op
-print vout vmid vout_s1 vs
+plot phase(vout)*180/PI
+
+
 .endc
 
 

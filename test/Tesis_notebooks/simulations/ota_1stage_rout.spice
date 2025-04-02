@@ -4,7 +4,6 @@ Rdiff_2 net1 vs 1 m=1
 Gdiff_2 net1 vs vneg vs 1
 Rdiff_1 vout vs 1 m=1
 Gdiff_1 vout vs vpos vs 1
-I2 vs vss 1
 V1 vdd vss 1.8
 V_n vneg vss 1
 V_p vpos vss 1
@@ -14,5 +13,7 @@ Gaload_2 net1 vdd net1 vdd 1
 Raload_2 vdd net1 1 m=1
 Vr vr vss 0.9
 Rr vout vr 1000 m=1
+Rcs vs vss 1 m=1
+Gcs vs vss vss vss 1
 **.ends
 .end

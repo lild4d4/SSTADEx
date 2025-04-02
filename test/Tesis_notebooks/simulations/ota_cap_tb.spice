@@ -1,0 +1,32 @@
+** sch_path: /workspaces/usm-vlsi-tools/shared_xserver/SSTADEx/test/sstadex/xschem/ota_cap_tb.sch
+**.subckt ota_cap_tb
+Rdif_1 vout vss 530644 m=1
+Gdif_1 vout vss vp vss 0.0001557
+Raload_1 vdd vout 23640662 m=1
+Gaload vout vdd vss vdd 0.00003668
+**** begin user architecture code
+
+
+
+.lib /opt/pdks/sky130A/libs.tech/ngspice/sky130.lib.spice tt
+
+Vref vn 0 0.9
+Vdd vdd 0 0
+Vpos vp 0 0.9 ac 1
+Vss vss 0 0
+
+.control
+ac dec 10 1 1G
+plot vdb(vout)
+.endc
+
+.control
+tran 10n 1u
+plot i(V1)
+.endc
+
+
+
+**** end user architecture code
+**.ends
+.end

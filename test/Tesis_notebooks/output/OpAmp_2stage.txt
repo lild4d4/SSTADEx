@@ -1,0 +1,9 @@
+Gma_1stage 1 0 0 2 1
+Ra_1stage 0 1 100
+Vpos 2 0 1
+Cin_pt 3 0 1e-12
+Cin_2stage 1 0 1e-12
+Gma_2stage 3 0 1 0 1
+Ra_2stage 0 3 100
+Cc 4 3 5e-14
+Rc 1 4 100

@@ -21,8 +21,6 @@ N 130 -190 170 -190 {
 lab=vdd}
 N 50 -190 50 -120 {
 lab=#net1}
-N 170 -60 170 10 {
-lab=vout}
 N -320 -190 -200 -190 {
 lab=#net1}
 N -320 -120 -320 -110 {
@@ -79,13 +77,41 @@ N -240 -110 -240 -50 {
 lab=vss}
 N -280 -130 -280 -80 {
 lab=vpos}
-N 170 70 170 120 {
-lab=vss}
 N 430 -60 430 -10 {
 lab=vout}
 N 430 50 430 110 {
 lab=vr}
 N 430 170 430 190 {
+lab=vss}
+N 110 70 110 80 {
+lab=vss}
+N 230 70 230 80 {
+lab=vss}
+N 230 0 230 10 {
+lab=vout}
+N 110 0 110 10 {
+lab=vout}
+N 150 20 190 20 {
+lab=vss}
+N 190 80 230 80 {
+lab=vss}
+N 190 20 190 80 {
+lab=vss}
+N 170 0 230 0 {
+lab=vout}
+N 170 80 190 80 {
+lab=vss}
+N 150 60 150 80 {
+lab=vss}
+N 110 80 150 80 {
+lab=vss}
+N 170 -60 170 0 {
+lab=vout}
+N 110 0 170 0 {
+lab=vout}
+N 170 80 170 120 {
+lab=vss}
+N 150 80 170 80 {
 lab=vss}
 C {devices/res.sym} 300 -140 0 0 {name=Ro_2stage
 value=100
@@ -105,25 +131,9 @@ value=1}
 C {devices/lab_pin.sym} -240 -50 3 0 {name=p3 sig_type=std_logic lab=vss}
 C {devices/lab_pin.sym} 430 -60 2 0 {name=p2 sig_type=std_logic lab=vout}
 C {devices/lab_pin.sym} 270 -350 2 0 {name=p7 sig_type=std_logic lab=vdd}
-C {capa.sym} 90 -190 3 0 {name=Cgg_2stage
-m=1
-value=1e-12
-footprint=1206
-device="ceramic capacitor"}
-C {capa.sym} 90 -90 3 0 {name=Cgd_2stage
-m=1
-value=1e-12
-footprint=1206
-device="ceramic capacitor"}
-C {capa.sym} -130 -150 0 0 {name=Ca_1stage
-m=1
-value=1e-12
-footprint=1206
-device="ceramic capacitor"}
 C {devices/vsource.sym} -280 -50 0 0 {name=V2 value=1 savecurrent=false}
 C {devices/lab_pin.sym} -280 -20 3 0 {name=p8 sig_type=std_logic lab=vss
 value=1}
-C {isource.sym} 170 40 0 0 {name=I_amp2 value=1m}
 C {devices/lab_pin.sym} 170 120 3 0 {name=p4 sig_type=std_logic lab=vss}
 C {devices/lab_pin.sym} -280 -100 0 0 {name=p5 sig_type=std_logic lab=vpos}
 C {devices/vsource.sym} 430 140 0 0 {name=Vr value=0.9 savecurrent=false}
@@ -134,3 +144,9 @@ device=resistor
 m=1}
 C {devices/lab_pin.sym} 430 80 2 0 {name=p10 sig_type=std_logic lab=vr}
 C {devices/lab_pin.sym} 430 190 3 0 {name=p6 sig_type=std_logic lab=vss}
+C {devices/vccs.sym} 110 40 0 1 {name=Gcs_2stage value=1}
+C {devices/res.sym} 230 40 2 0 {name=Rcs_2stage
+value=100
+footprint=1206
+device=resistor
+m=1}
