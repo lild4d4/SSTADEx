@@ -70,17 +70,26 @@ class common_source(Primitive):
 
 
 class simplediffpair(Primitive):
-    def __init__(self, name="", netlist="", inputs=[], outputs=[], type=""):
+    def __init__(
+        self,
+        name="",
+        netlist="",
+        inputs=[],
+        outputs=[],
+        type="",
+        lut_file="../../LUTs/IHP_LUT_hv_20w.npy",
+    ):
         super().__init__()
         self.name = name
         self.netlst = netlist
         self.inputs = inputs
         self.outputs = outputs
         self.type = type
+        self.lut_file = lut_file
 
     def build(self):
         pt_transistor = Transistor(
-            "../../LUTs/IHP_LUT_hv_20w.npy",
+            self.lut_file,
             self.type,
             0,
             self.inputs["vds_lut"],
@@ -122,15 +131,23 @@ class simplediffpair(Primitive):
 
 
 class cs_pmos(Primitive):
-    def __init__(self, netlist="", inputs=[], outputs=[], type=""):
+    def __init__(
+        self,
+        netlist="",
+        inputs=[],
+        outputs=[],
+        type="",
+        lut_file="../../LUTs/IHP_LUT_hv_20w.npy",
+    ):
         self.netlst = netlist
         self.inputs = inputs
         self.outputs = outputs
         self.type = type
+        self.lut_file = lut_file
 
     def build(self):
         pt_transistor = Transistor(
-            "../../LUTs/IHP_LUT_hv_20w.npy",
+            self.lut_file,
             self.type,
             0,
             self.inputs["vds_lut"],
@@ -174,15 +191,23 @@ class cs_pmos(Primitive):
 
 
 class cs_nmos(Primitive):
-    def __init__(self, netlist="", inputs=[], outputs=[], type=""):
+    def __init__(
+        self,
+        netlist="",
+        inputs=[],
+        outputs=[],
+        type="",
+        lut_file="../../LUTs/IHP_LUT_hv_20w.npy",
+    ):
         self.netlst = netlist
         self.inputs = inputs
         self.outputs = outputs
         self.type = type
+        self.lut_file = lut_file
 
     def build(self):
         pt_transistor = Transistor(
-            "../../LUTs/ihp_lut_hv_20w.npy",
+            self.lut_file,
             self.type,
             0,
             self.inputs["vds_lut"],
@@ -206,17 +231,26 @@ class cs_nmos(Primitive):
 
 
 class cm_pmos(Primitive):
-    def __init__(self, name="", netlist="", inputs=[], outputs=[], type=""):
+    def __init__(
+        self,
+        name="",
+        netlist="",
+        inputs=[],
+        outputs=[],
+        type="",
+        lut_file="../../LUTs/IHP_LUT_hv_20w.npy",
+    ):
         super().__init__()
         self.name = name
         self.netlst = netlist
         self.inputs = inputs
         self.outputs = outputs
         self.type = type
+        self.lut_file = lut_file
 
     def build(self):
         pt_transistor = Transistor(
-            "../../LUTs/IHP_LUT_hv_20w.npy",
+            self.lut_file,
             self.type,
             0,
             self.inputs["vds_lut"],
@@ -260,7 +294,18 @@ class cm_pmos(Primitive):
 
 
 class diffpair_cc(Primitive):
-    def __init__(self, vcp, vs, vin, vout, il, sweep_size, lengths, vbias_end):
+    def __init__(
+        self,
+        vcp,
+        vs,
+        vin,
+        vout,
+        il,
+        sweep_size,
+        lengths,
+        vbias_end,
+        lut_file="../../LUTs/IHP_LUT_hv_20w.npy",
+    ):
         self.vcp = vcp
         self.vs = vs
         self.vin = vin
@@ -269,6 +314,7 @@ class diffpair_cc(Primitive):
         self.sweep_size = sweep_size
         self.lengths = lengths
         self.vbias_end = vbias_end
+        self.lut_file = lut_file
 
     def build(self):
         aux_mesh = np.meshgrid(self.vs, self.vcp)
@@ -277,7 +323,7 @@ class diffpair_cc(Primitive):
         vgs_m1 = np.tile(self.vin - self.vs, self.sweep_size)
 
         M1 = Transistor(
-            "../../LUTs/IHP_LUT_hv_20w.npy",
+            self.lut_file,
             "nmos",
             0,
             (0.1, 2, 0.01),
@@ -400,19 +446,29 @@ class diffpair_cc(Primitive):
 
 
 class current_mirror_cc:
-    def __init__(self, vcp, vout, il, sweep_size, lengths, vbias_end):
+    def __init__(
+        self,
+        vcp,
+        vout,
+        il,
+        sweep_size,
+        lengths,
+        vbias_end,
+        lut_file="../../LUTs/IHP_LUT_hv_20w.npy",
+    ):
         self.vcp = vcp
         self.vout = vout
         self.il = il
         self.sweep_size = sweep_size
         self.lengths = lengths
         self.vbias_end = vbias_end
+        self.lut_file = lut_file
 
     def build(self):
         vds_m1 = self.vcp
 
         M1 = Transistor(
-            "../../LUTs/IHP_LUT_hv_20w.npy",
+            self.lut_file,
             "pmos",
             0,
             (-2, -0.1, 0.01),
