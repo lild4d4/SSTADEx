@@ -6,44 +6,19 @@ from sympy import Symbol
 
 def filter_conditions(macromodel, macro_results, sizing):
     print(sizing)
-    if len(sizing) == 0:
-        area_mask = np.full(macro_results[0].shape, True)
-    else:
-        area_mask = np.full(sizing[0].shape, True)
 
-        size_cond = 1
-        for idx, prim_size in enumerate(sizing):
-            # print("prim size: ", prim_size)
-
-            if "max" in macromodel.area_conditions:
-                size_cond = macromodel.area_conditions["max"][idx]
-                # print("size cond max: ", size_cond)
-                for jdx, size in enumerate(prim_size):
-                    if size < size_cond:
-                        area_mask[jdx] = area_mask[jdx] & True
-                    else:
-                        area_mask[jdx] = area_mask[jdx] & False
-            if "min" in macromodel.area_conditions:
-                size_cond = macromodel.area_conditions["min"][idx]
-                # print("size cond min: ", size_cond)
-                for jdx, size in enumerate(prim_size):
-                    if size > size_cond:
-                        area_mask[jdx] = area_mask[jdx] & True
-                    else:
-                        area_mask[jdx] = area_mask[jdx] & False
-
-            # if idx < 1:
-            #    size_cond = macromodel.area_conditions[idx]
-            # else:
-            #    size_cond = 1
-            # print("size cond: ", size_cond)
-            # for jdx, size in enumerate(
-            #    prim_size
-            # ):  ## when the L area is added then should be sizing[idx]
-            #    if size < size_cond:
-            #        area_mask[jdx] = area_mask[jdx] & True
-            #    else:
-            #        area_mask[jdx] = area_mask[jdx] & False
+    # if idx < 1:
+    #    size_cond = macromodel.area_conditions[idx]
+    # else:
+    #    size_cond = 1
+    # print("size cond: ", size_cond)
+    # for jdx, size in enumerate(
+    #    prim_size
+    # ):  ## when the L area is added then should be sizing[idx]
+    #    if size < size_cond:
+    #        area_mask[jdx] = area_mask[jdx] & True
+    #    else:
+    #        area_mask[jdx] = area_mask[jdx] & False
 
     masks = []
 
@@ -68,7 +43,6 @@ def filter_conditions(macromodel, macro_results, sizing):
                         mask[jdx] = False
         masks.append(mask)
 
-    masks.append(area_mask)
     mask = np.full(macro_results[0].shape, True)
     for m in masks:
         # print("partial mask: ", m)

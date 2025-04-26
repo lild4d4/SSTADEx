@@ -63,6 +63,9 @@ def spice_sim(project, dict):
                 if index != -1:
                     words[6] = "L=" + str(dict[words[0]][1][i]) + "u"
                     words[7] = "W=" + str(dict[words[0]][0][i]) + "u"
+
+                    words[9] = "m=" + str(dict[words[0]][2][i])
+
                     # if words[0][0] == "R" or words[0][0] == "C":
                     #    words[3] = str(dict[words[0]][i])
                     # elif words[0][0] == "G":

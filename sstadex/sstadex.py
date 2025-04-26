@@ -4,6 +4,7 @@ from .opt import filter_conditions, get_new_conditions, run_pareto
 import sympy as sym
 import numpy as np
 import matplotlib.pyplot as plt
+import time
 
 
 def bfs():
@@ -177,7 +178,7 @@ def explore(macromodel, flatten_params, expr, debug=False):
             macromodel.outputs.insert(0, i)
 
     # print("macromodel outputs: ", macromodel.outputs)
-    # print("primmods_outputs_aux: ", primmods_outputs_aux)
+    print("primmods_outputs_aux: ", primmods_outputs_aux)
     # print("primvalues_list: * ", *primvalues_list)
 
     Y_2 = [[]]
@@ -242,6 +243,7 @@ def explore(macromodel, flatten_params, expr, debug=False):
 
             for idx, prim in enumerate(primmods_list):
                 for jdx, output in enumerate(prim.outputs):
+                    print("primods outputs: ", output)
                     primmods_outputs.append(
                         primmods_outputs_aux[output][tuple(meshgrid[idx].flatten()),]
                     )
@@ -372,14 +374,22 @@ def build(macromodel, repeat=True, debug=False):
     OUTPUT_DIR = "./output/"
     XSCHEM_DIR = "./xschem/"
 
+    MNA_times = {}
+    explore_times = {}
+
     tfs = []
     for spec in macromodel.specifications:
         macromodel.name = spec.netlist
         print("Netlist: ", macromodel.name)
 
+        start_time = time.time()
         report, df, df2, A, X, Z, nodes = mna(
             XSCHEM_RCFILE, XSCHEM_DIR, SPICE_DIR, OUTPUT_DIR, macromodel
         )
+        mna_time = time.time() - start_time
+        print(f"MNA of {spec.name} took: {mna_time}")
+
+        MNA_times[spec.name] = mna_time
 
         print(nodes)
 
@@ -435,6 +445,7 @@ def build(macromodel, repeat=True, debug=False):
 
         if specifications[idx].composed == 1:
             if list(proc.keys())[0] == "divide":
+                print("in divide")
                 numerator = proc["divide"][0]
                 denominator = proc["divide"][1]
                 if debug:
@@ -472,9 +483,13 @@ def build(macromodel, repeat=True, debug=False):
                 tuple([j for i in flattened_params.values() for j in i.keys()]),
                 exp,
             )
+            start_time = time.time()
             eval, exploration_axes, primmods_output = explore(
                 macromodel, flattened_params, exp, debug
             )
+            explore_time = time.time() - start_time
+            print(f"Explore time: {explore_time}")
+            explore_times[specifications[idx].name] = explore_time
             print("finished explore operation")
             eval = np.abs(eval)
             if specifications[idx].lamd != None:
@@ -503,9 +518,13 @@ def build(macromodel, repeat=True, debug=False):
                 tuple([j for i in flattened_params.values() for j in i.keys()]),
                 (exps[0] - exps[1]) / exps[0],
             )
+            start_time = time.time()
             eval, exploration_axes, primmods_output = explore(
                 macromodel, flattened_params, exp, debug
             )
+            explore_time = time.time() - start_time
+            print(f"Explore time: {explore_time}")
+            explore_times[specifications[idx].name] = explore_time
             print("evaluation shape: ", eval.shape)
             result.append(np.abs(eval))
 
@@ -514,9 +533,13 @@ def build(macromodel, repeat=True, debug=False):
             exp = sym.lambdify(
                 tuple([j for i in flattened_params.values() for j in i.keys()]), exp
             )
+            start_time = time.time()
             eval, exploration_axes, primmods_output = explore(
                 macromodel, flattened_params, exp, debug
             )
+            explore_time = time.time() - start_time
+            print(f"Explore time: {explore_time}")
+            explore_times[specifications[idx].name] = explore_time
 
             print("eval: ", eval)
 
@@ -558,9 +581,13 @@ def build(macromodel, repeat=True, debug=False):
             exp = sym.lambdify(
                 tuple([j for i in flattened_params.values() for j in i.keys()]), exp
             )
+            start_time = time.time()
             eval, exploration_axes, primmods_output = explore(
                 macromodel, flattened_params, exp, debug
             )
+            explore_time = time.time() - start_time
+            print(f"Explore time: {explore_time}")
+            explore_times[specifications[idx].name] = explore_time
 
             print("eval: ", eval)
 
@@ -572,7 +599,7 @@ def build(macromodel, repeat=True, debug=False):
                 temp = i.subs({sym.Symbol("s"): frec * 2j * np.pi})
                 gbw_j.append(temp)
 
-            f = np.logspace(1, 9, 200)
+            f = np.logspace(1, 9, 500)
             gbw_final = []
             phase_final = []
 
@@ -591,10 +618,12 @@ def build(macromodel, repeat=True, debug=False):
                     cross = np.argmin(np.abs(abs_values))
                     gbw_final.append(f[cross])
                     phase_final.append(np.angle(raw[cross]) * 180 / (np.pi))
-                    print("angle:", np.angle(raw[cross]) * 180 / (np.pi))
+                    # print("angle:", np.angle(raw[cross]) * 180 / (np.pi))
 
             phase_final = np.asarray(phase_final)
             print(phase_final)
             result.append(phase_final)
 
+    print(MNA_times)
+    print(explore_times)
     return result, exploration_axes, primmods_output
