@@ -83,6 +83,15 @@ class simplediffpair(Primitive):
         self.lut_file = lut_file
         self.lut_w = lut_w
 
+    def _resolve_range(self, key):
+        val = self.inputs[key]
+        if isinstance(val, tuple) and len(val) == 3:
+            return np.arange(val[0], val[1], val[2])  # mismo comportamiento que el interpolador
+        elif isinstance(val, (list, np.ndarray)):
+            return np.array(val)
+        else:
+            return np.array([val])
+
     def build(self):
         pt_transistor = Transistor(
             self.lut_file,
@@ -98,9 +107,16 @@ class simplediffpair(Primitive):
             ],
         )
 
-        self.mesh = np.meshgrid(
-            self.inputs[self.inputs["2d_var"][0]], self.inputs[self.inputs["2d_var"][1]]
-        )
+        #self.mesh = np.meshgrid(
+        #    self.inputs[self.inputs["2d_var"][0]], self.inputs[self.inputs["2d_var"][1]]
+        #)
+        var0 = self.inputs["2d_var"][0]
+        var1 = self.inputs["2d_var"][1]
+
+        arr0 = self._resolve_range(var0)
+        arr1 = self._resolve_range(var1)
+
+        self.mesh = np.meshgrid(arr0, arr1)
 
         pos = 0
         input_has_l = False
@@ -113,7 +129,7 @@ class simplediffpair(Primitive):
 
         if not input_has_l:
             self.L = np.repeat(
-                self.inputs["length"], len(self.inputs[self.inputs["2d_var"][0]])
+                self.inputs["length"], self.mesh[0].size  # ← usar .size del meshgrid
             )
 
         self.W = self.inputs["il"] / pt_transistor.jd
