@@ -1,8 +1,6 @@
-# from mosplot import load_lookup_table, LoadMosfet
 import sys
 
-sys.path.insert(0, "../../..")
-from gmid.mosplot import load_lookup_table, LoadMosfet
+from mosplot.plot import load_lookup_table, Mosfet
 import numpy as np
 
 
@@ -115,17 +113,17 @@ class Transistor:
             self.id = np.asarray(self.id)
 
     def get_parameters(self, lengths_m):
-        self.pt_lutable = LoadMosfet(
+        self.pt_lutable = Mosfet(
             lookup_table=self.lookup_table,
             mos=self.mos_type,
-            vsb=self.vsb,
+            vbs=self.vsb,
             vds=self.vds,
             vgs=self.vgs,
-            lengths=lengths_m,
+            length=lengths_m,
         )
 
         expressions = [
-            self.pt_lutable.lengths_expression,
+            self.pt_lutable.length_expression,
             self.pt_lutable.vgs_expression,
             self.pt_lutable.vds_expression,
         ]
