@@ -33,7 +33,7 @@ ngspice = NgspiceSimulator(
     # If the transistor is defined inside a subcircuit in
     # the library files, you must specify the symbol used (first entry)
     # and the hierarchical name (second entry). Override if needed.
-    mos_spice_symbols = ("XM1", "n.xm1.nsg13_lv_nmos"),
+    mos_spice_symbols = ("XM1", "n.xm1.nsg13_lv_pmos"),
 
     # Additional spice code that may be needed for the simulation goes here:
     #raw_spice = [
@@ -45,24 +45,15 @@ ngspice = NgspiceSimulator(
     # you can specify other parameters such as the number of fingers.
     # The keys are exactly those recognized by the model.
     device_parameters = {
-        "w": 1e-6,
+        "w": 10e-6,
     }
-)
-
-# Define a sweep object for NMOS transistors.
-nmos_sweep = TransistorSweep(
-    mos_type="sg13_lv_nmos",
-    vgs=(0.1, 1.1, 0.01),
-    vds=(0.1, 1.1, 0.01),
-    vbs=(0, -1.0, -0.1),
-    length=[0.4e-6, 0.8e-6, 1.6e-6, 3.2e-6, 6.4e-6]
 )
 
 # Define a sweep object for PMOS transistors.
 pmos_sweep = TransistorSweep(
     mos_type="sg13_lv_pmos",
-    vgs=(0.1, -1.1, -0.01),
-    vds=(0.1, -1.1, -0.01),
+    vgs=(-0.1, -1.2, -0.01),
+    vds=(-0.1, -1.2, -0.01),
     vbs=(0, 1.0, 0.1),
     length=[0.4e-6, 0.8e-6, 1.6e-6, 3.2e-6, 6.4e-6]
 )
@@ -76,7 +67,7 @@ obj = LookupTableGenerator(
 
     # Pass the sweep object, specifying the models they apply to.
     model_sweeps={
-        "sg13_lv_nmos": nmos_sweep
+        "sg13_lv_pmos": pmos_sweep
     },
 
     # Specify the number of processes to use to build the table faster.
@@ -90,4 +81,4 @@ obj = LookupTableGenerator(
 # obj.op_simulation()
 
 # Build and store the table.
-obj.build("../../LUTs/ihp-sg13g2/lv_10w")
+obj.build("../../LUTs/ihp-sg13g2/lv_10w_pmos")
