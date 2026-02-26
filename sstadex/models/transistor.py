@@ -47,7 +47,7 @@ class Transistor:
                 except:
                     mode = 0
 
-        print(mode)
+        print('mode: ', mode)
 
         if mode == 0:
             (
@@ -72,7 +72,8 @@ class Transistor:
             for idx, length in enumerate(lengths):
                 parameters = self.get_parameters(length)
                 if self.conf == 0:
-                    diagonals = [np.diag(x) for x in parameters]
+                    N = np.size(self.dof_values[0])
+                    diagonals = [np.diag(x.reshape(N, N)) for x in parameters]
                     for param, diag in zip(
                         [
                             self.jd,

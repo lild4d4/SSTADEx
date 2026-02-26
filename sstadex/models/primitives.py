@@ -72,7 +72,7 @@ class common_source(Primitive):
 
 class simplediffpair(Primitive):
     def __init__(
-        self, name="", netlist="", inputs=[], outputs=[], type="", lut_file="", lut_w=0
+        self, name="", netlist="", inputs=[], outputs=[], type="", lut_file="", lut_w=10e-6
     ):
         super().__init__()
         self.name = name
@@ -127,9 +127,10 @@ class simplediffpair(Primitive):
             else:
                 pos += 1
 
+        print('L: ', self.inputs["length"])
         if not input_has_l:
             self.L = np.repeat(
-                self.inputs["length"], self.mesh[0].size  # ← usar .size del meshgrid
+                self.inputs["length"], arr0.size  # ← usar .size del meshgrid
             )
 
         self.W = self.inputs["il"] / pt_transistor.jd
@@ -158,7 +159,7 @@ class simplediffpair(Primitive):
 
 class cs_pmos(Primitive):
     def __init__(
-        self, netlist="", inputs=[], outputs=[], type="", lut_file="", lut_w=0
+        self, netlist="", inputs=[], outputs=[], type="", lut_file="", lut_w=10e-6
     ):
         self.netlst = netlist
         self.inputs = inputs
@@ -279,6 +280,15 @@ class cm_pmos(Primitive):
         self.lut_file = lut_file
         self.lut_w = lut_w
 
+    def _resolve_range(self, key):
+        val = self.inputs[key]
+        if isinstance(val, tuple) and len(val) == 3:
+            return np.arange(val[0], val[1], val[2])  # mismo comportamiento que el interpolador
+        elif isinstance(val, (list, np.ndarray)):
+            return np.array(val)
+        else:
+            return np.array([val])
+
     def build(self):
         pt_transistor = Transistor(
             self.lut_file,
@@ -294,10 +304,14 @@ class cm_pmos(Primitive):
             ],
         )
 
-        self.mesh = np.meshgrid(
-            self.inputs[self.inputs["2d_var"][0]], self.inputs[self.inputs["2d_var"][1]]
-        )
+        var0 = self.inputs["2d_var"][0]
+        var1 = self.inputs["2d_var"][1]
 
+        arr0 = self._resolve_range(var0)
+        arr1 = self._resolve_range(var1)
+
+        self.mesh = np.meshgrid(arr0, arr1)
+        
         pos = 0
         input_has_l = False
         for in_ in self.inputs["2d_var"]:
@@ -310,8 +324,8 @@ class cm_pmos(Primitive):
                 pos += 1
 
         if not input_has_l:
-            self.L = np.repeat(
-                self.inputs["length"], len(self.inputs[self.inputs["2d_var"][0]])
+            self.L = self.L = np.repeat(
+                self.inputs["length"], arr0.size  # ← usar .size del meshgrid
             )
 
         self.W = self.inputs["il"] / pt_transistor.jd
