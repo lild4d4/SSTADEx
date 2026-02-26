@@ -2,7 +2,5 @@
 all: gmid
 
 .PHONY: gmid
-gmid: gmid.log
-
-gmid.log: gmid.py
+gmid:
 	python gmid.py > gmid.log 2>&1

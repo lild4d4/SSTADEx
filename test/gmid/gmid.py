@@ -17,11 +17,14 @@ x = nmos.lookup_expression_from_table(
 
 print(x)
 
+vds = np.linspace(0.1, 1, 10)
+vgs = np.linspace(0.1, 1, 10)
+
 gmid = nmos.interpolate(
         x_expression=nmos.vds_expression,
-        x_value=(0.1, 1, 0.01),
+        x_value=vds,
         y_expression=nmos.vgs_expression,
-        y_value=(0.1, 1, 0.01),
+        y_value=vgs,
         z_expression=nmos.gmid_expression
 )
 
