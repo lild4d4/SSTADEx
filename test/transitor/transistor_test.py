@@ -1,13 +1,14 @@
 from sstadex import Transistor
 import numpy as np
 
-lookup_table = "../../LUTs/ihp-sg13g2/lv_10w.npz"
+lookup_table_nmos = "../../LUTs/ihp-sg13g2/lv_10w_nmos.npz"
+lookup_table_pmos = "../../LUTs/ihp-sg13g2/lv_10w_pmos.npz"
 lengths = [0.4e-06]
 vds = (0.1, 1.2, 0.1)
 vgs = (0.1, 1.2, 0.1)
 
 pt_transistor = Transistor(
-            lookup_table_file=lookup_table,
+            lookup_table_file=  lookup_table_nmos,
             mos_type="sg13_lv_nmos",
             vsb=0,
             vds=vds,
@@ -25,7 +26,7 @@ vds_pmos = (-1.2, -0.1, 0.1)
 vgs_pmos = (-1.2, -0.1, 0.1)
 
 pt_transistor_pmos = Transistor(
-            lookup_table_file=lookup_table,
+            lookup_table_file=lookup_table_pmos,
             mos_type="sg13_lv_pmos",
             vsb=0,
             vds=vds_pmos,
