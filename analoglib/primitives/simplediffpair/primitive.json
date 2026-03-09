@@ -1,0 +1,38 @@
+{
+  "name": "simplediffpair",
+  "version": "1.0",
+  "description": "Simple differential pair — single transistor per branch, NMOS or PMOS",
+  "transistor_type": "nmos",
+
+  "ports": [
+    { "name": "VINP",  "role": "INPUT",  "description": "Positive differential input" },
+    { "name": "VINN",  "role": "INPUT",  "description": "Negative differential input" },
+    { "name": "VOUTP", "role": "OUTPUT", "description": "Positive output (drain of M2)" },
+    { "name": "VOUTN", "role": "OUTPUT", "description": "Negative output (drain of M1)" },
+    { "name": "VTAIL", "role": "BIAS",   "description": "Tail current source node" },
+    { "name": "VDD",   "role": "SUPPLY", "description": "Positive supply" },
+    { "name": "VSS",   "role": "SUPPLY", "description": "Ground / negative supply" }
+  ],
+
+  "layout_params": [
+    { "name": "W",    "unit": "m",   "computed": true,  "description": "Transistor width (set by build)" },
+    { "name": "L",    "unit": "m",   "computed": false, "default": 4e-7, "description": "Gate length" },
+    { "name": "nf",   "unit": "int", "computed": false, "default": 2,   "description": "Number of gate fingers" },
+    { "name": "rows", "unit": "int", "computed": false, "default": 1,   "description": "Number of rows in array" }
+  ],
+
+  "lut_config": {
+    "lut_w": 10e-6,
+    "axes": [
+      { "variable": "gmid",   "values": [5, 25, 1],                        "type": "arange" },
+      { "variable": "length", "values": [4e-7, 8e-7, 1.6e-6, 3.2e-6],     "type": "array"  }
+    ],
+    "lengths": [4e-7, 8e-7, 1.6e-6, 3.2e-6]
+  },
+
+  "files": {
+    "build":   "build.py",
+    "netlist": "netlist/netlist.spi",
+    "symbol":  "symbol/symbol.sym"
+  }
+}
