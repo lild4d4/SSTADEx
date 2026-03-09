@@ -28,6 +28,7 @@ class Transistor:
         self.conf = conf
 
         self.lookup_table = load_lookup_table(lookup_table_file)
+        self.mos_type = self._resolve_mos_key(self.lookup_table, self.mos_type)
 
         mode = 0
 
@@ -36,6 +37,8 @@ class Transistor:
             print(d[:6])
             if d[:6] == "length":
                 self.eof.append(0)
+            elif d[:4] == "gmid":
+                self.eof.append(3)
             elif d[:3] == "vgs":
                 self.eof.append(1)
             elif d[:3] == "vds":
@@ -113,6 +116,24 @@ class Transistor:
             self.vth = np.asarray(self.vth)
             self.id = np.asarray(self.id)
 
+    def _resolve_mos_key(self, lookup_table, mos_type):
+        if mos_type in lookup_table:
+            return mos_type
+
+        metadata_keys = {"description", "simulator", "parameter_names", "device_parameters"}
+        device_keys = [k for k in lookup_table.keys() if k not in metadata_keys]
+
+        # Accept common aliases and pick the matching device entry from LUT
+        if mos_type in {"nmos", "pmos"}:
+            candidates = [k for k in device_keys if mos_type in k.lower()]
+            if len(candidates) == 1:
+                return candidates[0]
+
+        if len(device_keys) == 1:
+            return device_keys[0]
+
+        raise KeyError(f"Could not resolve mos_type '{mos_type}' in LUT keys: {device_keys}")
+
     def get_parameters(self, lengths_m):
         self.pt_lutable = Mosfet(
             lookup_table=self.lookup_table,
@@ -127,6 +148,7 @@ class Transistor:
             self.pt_lutable.length_expression,
             self.pt_lutable.vgs_expression,
             self.pt_lutable.vds_expression,
+            self.pt_lutable.gmid_expression,
         ]
 
         jd = self.pt_lutable.interpolate(
