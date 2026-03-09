@@ -12,6 +12,7 @@ Expected output:
 
 from pathlib import Path
 import sys
+import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -46,6 +47,30 @@ print(lib)
 dp = lib.get("simplediffpair", il=100e-6)
 print(dp)
 # Expected: <Primitive 'simplediffpair' v1.0 | lut=path/to/LUTs/IHP_LUT_nmos.npy>
+dp.set_port_voltages({
+    "VINP":  [0.9, 0.9, 0.9],
+    "VINN":  0.9,
+    "VOUTP": [0.9, 1, 1.1],
+    "VOUTN": 1,
+    "VTAIL": np.linspace(0.1, 0.9, 10)
+})
+print(dp.summary())
+
+df = dp.build()
+
+print("\n--- DataFrame ---")
+print(f"shape: {df.shape}")
+print(df.head())
+
+
+dp.set_port_voltages({
+    "VINP":  0.9,
+    "VINN":  0.9,
+    "VOUTP": 1,
+    "VOUTN": 1,
+    "VTAIL": np.linspace(0.1, 0.9, 10)
+})
+print(dp.summary())
 
 df = dp.build()
 

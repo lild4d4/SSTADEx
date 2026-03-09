@@ -171,7 +171,7 @@ class SimpleDiffPair(Primitive):
         )
 
         # --- meshgrid for sweep shape ---
-        mesh = np.meshgrid(arr0, arr1)
+        #mesh = np.meshgrid(arr0, arr1)
 
         # length column — repeat to match mesh shape
         L_col = np.repeat(cfg.lengths, np.size(vds_sweep))

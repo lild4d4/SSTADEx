@@ -35,14 +35,52 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from abc import ABC, abstractmethod
 
 import numpy as np
 import pandas as pd
 
+from enum import Enum, auto
+
+class PortRole(Enum):
+    INPUT   = auto()   # AC/signal input
+    OUTPUT  = auto()   # AC/signal output
+    BIAS    = auto()   # DC bias (set from outside)
+    SUPPLY  = auto()   # VDD / VSS
+    INTERNAL = auto()  # internal node (not exposed)
 
 # ---------------------------------------------------------------------------
 # Internal config dataclasses (loaded from primitive.json)
 # ---------------------------------------------------------------------------
+
+@dataclass
+class Port:
+    """
+    A port of a primitive.
+
+    Parameters
+    ----------
+    name : str
+        Port name (must match the token in the netlist template).
+    role : PortRole
+        Functional role of the port.
+    dc_voltage : float | None
+        DC operating voltage applied from outside.
+        Must be set before calling `build()`.
+    description : str
+        Human-readable description.
+    """
+    name: str
+    role: PortRole
+    dc_voltage: float | np.array | None = None
+    description: str = ""
+
+    def set_voltage(self, v: float | np.array) -> None:
+        self.dc_voltage = v
+
+    def __repr__(self) -> str:
+        v = f"{self.dc_voltage:}V" if self.dc_voltage is not None else "unset"
+        return f"Port({self.name!r}, {self.role.name}, {v})"
 
 @dataclass
 class SweepAxis:
@@ -90,8 +128,12 @@ class Primitive:
 
         # identity
         self.name            = descriptor["name"]
+        self.description     = descriptor.get("description", "")
         self.version         = descriptor.get("version", "1.0")
         self.transistor_type = descriptor.get("transistor_type", "nmos")
+        self.ports = {name: Port(name, PortRole[p["role"]], description=p.get("description"))
+                      for name, p in descriptor.get("ports", {}).items()
+        }
 
         # LUT config
         lc = descriptor["lut_config"]
@@ -134,8 +176,7 @@ class Primitive:
         with open(json_path) as f:
             descriptor = json.load(f)
 
-        return cls(descriptor=descriptor, folder=folder, lut_file=lut_file, **kwargs)
-
+        return cls(descriptor=descriptor, folder=folder, lut_file=lut_file, **kwargs)    
     # ------------------------------------------------------------------
     # build() -- dispatches to the primitive's build.py
     # ------------------------------------------------------------------
@@ -206,6 +247,35 @@ class Primitive:
         if fn is None:
             raise AttributeError(f"'{filepath}' has no function '{fn_name}'.")
         return fn
+    
+    def set_port_voltage(self, port_name: str, voltage: float) -> None:
+        """Set the DC voltage on a port (called from outside before build())."""
+        if port_name not in self.ports:
+            raise KeyError(f"Port {port_name!r} not found in primitive {self.name!r}.")
+        self.ports[port_name].set_voltage(voltage)
+
+    def set_port_voltages(self, voltages: dict[str, float]) -> None:
+        """Bulk-set port voltages from a dict."""
+        for name, v in voltages.items():
+            self.set_port_voltage(name, v)
+
+    def summary(self) -> str:
+        lines = [
+            f"{'='*60}",
+            f"Primitive : {self.name}  (v{self.version})",
+            f"Desc      : {self.description}",
+            f"{'─'*60}",
+            "Ports:",
+        ]
+        for p in self.ports.values():
+            lines.append(f"  {p}")
+        lines.append("Layout params:")
+        # for lp in self.layout_params.values():
+        #     val = f"{lp.default}" if lp.default is not None else "TBD"
+        #     flag = " [computed]" if lp.computed else ""
+        #     lines.append(f"  {lp.name} [{lp.unit}] = {val}{flag}  — {lp.description}")
+        lines.append(f"{'='*60}")
+        return "\n".join(lines)
 
     def __repr__(self) -> str:
         return f"<Primitive '{self.name}' v{self.version} | lut={self.lut_file}>"
