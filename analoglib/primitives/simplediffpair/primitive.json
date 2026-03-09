@@ -4,15 +4,13 @@
   "description": "Simple differential pair — single transistor per branch, NMOS or PMOS",
   "transistor_type": "nmos",
 
-  "ports": [
-    { "name": "VINP",  "role": "INPUT",  "description": "Positive differential input" },
-    { "name": "VINN",  "role": "INPUT",  "description": "Negative differential input" },
-    { "name": "VOUTP", "role": "OUTPUT", "description": "Positive output (drain of M2)" },
-    { "name": "VOUTN", "role": "OUTPUT", "description": "Negative output (drain of M1)" },
-    { "name": "VTAIL", "role": "BIAS",   "description": "Tail current source node" },
-    { "name": "VDD",   "role": "SUPPLY", "description": "Positive supply" },
-    { "name": "VSS",   "role": "SUPPLY", "description": "Ground / negative supply" }
-  ],
+  "ports": {
+            "VINP":  { "name": "VINP",  "role": "INPUT",  "description": "Positive differential input" },
+            "VINN":  { "name": "VINN",  "role": "INPUT",  "description": "Negative differential input" },
+            "VOUTP": { "name": "VOUTP", "role": "OUTPUT", "description": "Positive output" },
+            "VOUTN": { "name": "VOUTN", "role": "OUTPUT", "description": "Negative output" },
+            "VTAIL": { "name": "VTAIL", "role": "BIAS",   "description": "Tail current source node" }
+  },
 
   "layout_params": [
     { "name": "W",    "unit": "m",   "computed": true,  "description": "Transistor width (set by build)" },
@@ -24,10 +22,10 @@
   "lut_config": {
     "lut_w": 10e-6,
     "axes": [
-      { "variable": "gmid",   "values": [5, 25, 1],                        "type": "arange" },
-      { "variable": "length", "values": [4e-7, 8e-7, 1.6e-6, 3.2e-6],     "type": "array"  }
+      { "variable": "vds",   "values": [0.1, 1.2, 100], "type": "arange" },
+      { "variable": "vgs", "values": [0.1, 1.2, 100], "type": "arange"  }
     ],
-    "lengths": [4e-7, 8e-7, 1.6e-6, 3.2e-6]
+    "lengths": [4e-7, 8e-7, 1.6e-6, 3.2e-6, 6.4e-6]
   },
 
   "files": {

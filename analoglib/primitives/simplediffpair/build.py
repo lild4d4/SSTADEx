@@ -19,60 +19,77 @@ from sstadex.models import Transistor
 
 
 def build(primitive) -> pd.DataFrame:
-    cfg = primitive.lut_config
 
-    # resolve sweep axes
-    gmid_arr   = cfg.axes[0].resolve()   # e.g. arange(5, 25, 1)
-    length_arr = cfg.axes[1].resolve()   # e.g. [4e-7, 8e-7, 1.6e-6, 3.2e-6]
+    cfg = primitive.lut_config
+    length_arr = cfg.lengths
+
+    ax0 = tuple(cfg.axes[0].values)
+    ax1 = tuple(cfg.axes[1].values)
     id_ = primitive.il / 2  # each branch carries half the tail current
     rows = []
 
-    for length in length_arr:
-        tr = Transistor(
-            lookup_table_file = primitive.lut_file,
-            mos_type          = primitive.transistor_type,
-            vsb               = 0,
-            vds               = (0.1, 1.2, 0.01),
-            vgs               = (0.1, 1.2, 0.01),
-            lengths           = [float(length)],
-            dof               = ["vds", "vgs"],
-            dof_values        = [(0.1, 1.2, 0.01), (0.1, 1.2, 0.01)],
-        )
+    ports = primitive.ports
+    
+    voutp = ports["VOUTP"].dc_voltage 
+    vtail = ports["VTAIL"].dc_voltage 
+    vinp = ports["VINP"].dc_voltage 
 
-        gmid_lut = np.asarray(tr.gmid).flatten()
-        jd_lut   = np.asarray(tr.jd).flatten()
-        gds_lut  = np.asarray(tr.gds).flatten()
-        id_lut   = np.asarray(tr.id).flatten()
-        cgg_lut  = np.asarray(tr.cgg).flatten()
-        cgs_lut  = np.asarray(tr.cgs).flatten()
-        cgd_lut  = np.asarray(tr.cgd).flatten()
+    voutp = np.atleast_1d(voutp)
+    vtail = np.atleast_1d(vtail)
+    vinp = np.atleast_1d(vinp)
 
-        valid = np.isfinite(gmid_lut) & np.isfinite(jd_lut) & np.isfinite(id_lut) & (id_lut != 0)
-        gmid_v = gmid_lut[valid]
-        jd_v   = jd_lut[valid]
-        gds_v  = gds_lut[valid]
-        id_v   = id_lut[valid]
-        cgg_v  = cgg_lut[valid]
-        cgs_v  = cgs_lut[valid]
-        cgd_v  = cgd_lut[valid]
+    # matrices 2D alineadas
+    vds = voutp[:, None] - vtail[None, :]
+    vgs = vinp[:, None]  - vtail[None, :]
 
-        for target_gmid in gmid_arr:
-            idx = int(np.argmin(np.abs(gmid_v - target_gmid)))
-            W = id_ / jd_v[idx]
-            gdsid = gds_v[idx] / id_v[idx]
-            gds = gdsid * id_
-            rows.append(
-                {
-                    "length": float(length),
-                    "width": float(W),
-                    "gm": float(gmid_v[idx] * id_),
-                    "gds": float(gds),
-                    "gdsid": float(gdsid),
-                    "Ro": float(1.0 / gds),
-                    "cgg": float((W * cgg_v[idx]) / cfg.lut_w),
-                    "cgs": float((W * cgs_v[idx]) / cfg.lut_w),
-                    "cgd": float((W * cgd_v[idx]) / cfg.lut_w),
-                }
-            )
+    vds_sweep = vds.ravel()
+    vgs_sweep = vgs.ravel()
 
-    return pd.DataFrame(rows)
+    print('voutp: ', voutp)
+    print('vtail: ', vtail)
+    print('vinp: ', vinp)
+    print('vds_sweep: ', vds_sweep)
+    print('vgs_sweep: ', vgs_sweep)
+
+    # for length in length_arr:
+    tr = Transistor(
+        lookup_table_file = primitive.lut_file,
+        mos_type          = primitive.transistor_type,
+        vsb               = 0,
+        vds               = ax0, # -> this way is faster than (0.1, 1.2, 0.01) for some reason. Need to check.
+        vgs               = ax1,
+        lengths           = length_arr,
+        dof               = ["vds", "vgs"],
+        dof_values        = [vds_sweep, vgs_sweep],
+    )
+
+    # --- meshgrid for sweep shape ---
+    mesh = np.meshgrid(ax0, ax1)
+    # length column — repeat to match mesh shape
+    L_col = np.repeat(cfg.lengths, np.size(vds_sweep))
+    # --- scale small-signal params to operating current ---
+    il = id_           # total tail current
+    id = il / 2             # each branch
+    W     = id / tr.jd
+    gdsid = tr.gds / tr.id
+    gds   = gdsid * id
+    Ro    = 1.0 / gds
+    gm    = tr.gmid * id
+    cgg   = (W * tr.cgg) / cfg.lut_w
+    cgs   = (W * tr.cgs) / cfg.lut_w
+    cgd   = (W * tr.cgd) / cfg.lut_w
+    # --- update layout param W (representative / median) ---
+    #self._layout_params["W"].default = float(np.nanmedian(W))
+    df = pd.DataFrame({
+        "length": np.asarray(L_col).flatten(),
+        "width":  np.asarray(W).flatten(),
+        "gm":     np.asarray(gm).flatten(),
+        "gds":    np.asarray(gds).flatten(),
+        "gdsid":  np.asarray(gdsid).flatten(),
+        "Ro":     np.asarray(Ro).flatten(),
+        "cgg":    np.asarray(cgg).flatten(),
+        "cgs":    np.asarray(cgs).flatten(),
+        "cgd":    np.asarray(cgd).flatten(),
+    })
+
+    return df
