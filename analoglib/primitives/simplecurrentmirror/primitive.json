@@ -3,6 +3,26 @@
   "version": "1.0",
   "description": "Simple current mirror — single transistor per branch, NMOS or PMOS",
   "transistor_type": "pmos",
+  "subckt_name": "simplecurrentmirror",
+  "pin_order": ["VINP", "VINN", "VOUTP", "VOUTN", "VDD"],
+
+  "small_signal": {
+    "branches": [
+      {
+        "name": "m1",
+        "vd": "VINN",
+        "vg": "VINP",
+        "vs": "VDD"
+      },
+      {
+        "name": "m2",
+        "vd": "VOUTN",
+        "vg": "VINP",
+        "vs": "VDD"
+      }
+    ]
+  },
+
 
   "ports": {
             "VINP":  { "name": "VINP",  "role": "INPUT",  "description": "Positive input" },
@@ -30,7 +50,7 @@
 
   "files": {
     "build":   "build.py",
-    "netlist": "netlist/netlist.spi",
+    "netlist": "netlist/netlist.spice",
     "symbol":  "symbol/symbol.sym"
   }
 }

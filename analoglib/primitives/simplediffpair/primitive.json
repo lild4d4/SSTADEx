@@ -3,6 +3,25 @@
   "version": "1.0",
   "description": "Simple differential pair — single transistor per branch, NMOS or PMOS",
   "transistor_type": "nmos",
+  "subckt_name": "simplediffpair",
+  "pin_order": ["VINP", "VINN", "VOUTP", "VOUTN", "VTAIL"],
+
+  "small_signal": {
+    "branches": [
+      {
+        "name": "m1",
+        "vd": "VOUTN",
+        "vg": "VINP",
+        "vs": "VTAIL"
+      },
+      {
+        "name": "m2",
+        "vd": "VOUTP",
+        "vg": "VINN",
+        "vs": "VTAIL"
+      }
+    ]
+  },
 
   "ports": {
             "VINP":  { "name": "VINP",  "role": "INPUT",  "description": "Positive differential input" },
@@ -30,7 +49,7 @@
 
   "files": {
     "build":   "build.py",
-    "netlist": "netlist/netlist.spi",
+    "netlist": "netlist/netlist.spice",
     "symbol":  "symbol/symbol.sym"
   }
 }

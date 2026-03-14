@@ -53,26 +53,10 @@ Ib_out = Iq_max-I_amp
 
 #LDO = pd.DataFrame.from_dict({'Vout': [Vout], 'Vin': [Vin], 'Vref': [Vref], 'IL': [IL], 'CL': [CL], 'RL': [RL], 'Iq_max': [Iq_max], 'Ib_out': [Ib_out], 'R1': [R1], 'R2': [R2]}, orient='index', columns=['Value'])
 
-########################## MACROMODELS ############################################
-vs = np.linspace(0.2, Vout-0.1, 10)
-
-# OTA_1stage_macro 
-OTA_1stage_macro = Macromodel(
-    name = 'OTA_1stage_macro',
-    outputs = [
-        Symbol("W_diff"), Symbol("L_diff"), 
-        Symbol("W_al"), Symbol("L_al")],
-    electrical_parameters = {
-        "Vdd": Vin,
-        "Vneg": Vref,
-        "Vout": Vout,
-        "Il": I_amp},
-    macromodel_parameters={
-        Symbol('Ra'): np.logspace(3, 7, N_points),
-        Symbol('gma'): np.logspace(-5, -2, N_points)}
-    )
 
 ########################## PRIMITIVES ############################################
+
+vs = np.linspace(0.2, Vout-0.1, 10)
 
 # diff pair
 diffpair = lib.get("simplediffpair", il=I_amp)
@@ -141,6 +125,54 @@ currentmirror.outputs = {
 }
 
 currentmirror_df.to_csv('currentmirror.csv')
+
+########################## MACROMODELS ############################################
+
+# OTA_1stage_macro 
+OTA_1stage_macro = Macromodel(
+    name = 'OTA_1stage_macro',
+    ports=["VINP", "VINN", "VOUT", "VDD", "IBIAS"],
+    outputs = [
+        Symbol("W_diff"), Symbol("L_diff"), 
+        Symbol("W_al"), Symbol("L_al")],
+    electrical_parameters = {
+        "Vdd": Vin,
+        "Vneg": Vref,
+        "Vout": Vout,
+        "Il": I_amp},
+    macromodel_parameters={
+        Symbol('Ra'): np.logspace(3, 7, N_points),
+        Symbol('gma'): np.logspace(-5, -2, N_points)}
+    )
+
+OTA_1stage_macro.add_instance(
+    "XDP",
+    diffpair,
+    {
+        "VINP": "VINP",
+        "VINN": "VINN",
+        "VOUTP": "N1",
+        "VOUTN": "VOUT",
+        "VTAIL": "IBIAS",
+    },
+    index=0,
+)
+
+OTA_1stage_macro.add_instance(
+    "XCM",
+    currentmirror,
+    {
+        "VINP": "N1",
+        "VINN": "N1",
+        "VOUTP": "NC",
+        "VOUTN": "VOUT",
+        "VDD": "VDD",
+    },
+    index=0,
+)
+
+OTA_1stage_macro.gen_netlist(view="small_signal")
+print(OTA_1stage_macro.netlist)
 
 #################### TESTBENCHES ##########################
 gain_1stage_OTA = Test()

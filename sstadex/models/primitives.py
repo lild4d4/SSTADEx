@@ -135,6 +135,12 @@ class Primitive:
                       for name, p in descriptor.get("ports", {}).items()
         }
 
+        self.subckt_name = descriptor.get("subckt_name", self.name)
+        self.pin_order = descriptor.get("pin_order", list(descriptor.get("ports", {}).keys()))
+        self._netlist_template = None
+
+        self.small_signal = descriptor.get("small_signal", {})
+
         # LUT config
         lc = descriptor["lut_config"]
         self.lut_config = LUTConfig(
@@ -163,6 +169,12 @@ class Primitive:
     # ------------------------------------------------------------------
     # Factory
     # ------------------------------------------------------------------
+
+    @property
+    def netlist_template(self) -> str:
+        if self._netlist_template is None:
+            self._netlist_template = self._load_text_file("netlist", required=True)
+        return self._netlist_template
 
     @classmethod
     def from_folder(cls, folder: str | Path, lut_file: str, **kwargs) -> "Primitive":
@@ -247,6 +259,112 @@ class Primitive:
         if fn is None:
             raise AttributeError(f"'{filepath}' has no function '{fn_name}'.")
         return fn
+
+    def _load_text_file(self, file_key: str, required: bool = True) -> str | None:
+        filename = self._files.get(file_key)
+        if filename is None:
+            if required:
+                raise FileNotFoundError(
+                    f"Primitive '{self.name}' has no file entry for '{file_key}'."
+                )
+            return None
+
+        filepath = self._folder / filename
+        if not filepath.exists():
+            if required:
+                raise FileNotFoundError(
+                    f"Required file '{filepath}' not found in primitive '{self.name}'."
+                )
+            return None
+
+        return filepath.read_text()
+
+    def render_subckt(self, index: int | None = None) -> str:
+        params = self.get_netlist_params(index=index)
+        print(f"rendering subckt with params: {params}")
+        tokens = {
+            "SUBCKT_NAME": self.subckt_name,
+            **params,
+        }
+
+        return self.netlist_template.format(**tokens)
+
+    def render_instance(self, instance_name: str, net_map: dict[str, str], view: str = "physical") -> str:
+        if view == "physical":
+            return self.render_physical_instance(instance_name, net_map)
+        if view == "small_signal":
+            return self.render_small_signal_instance(instance_name, net_map)
+        raise ValueError(f"Unknown view '{view}'. Expected 'physical' or 'small_signal'.")
+
+    def render_physical_instance(self, instance_name: str, net_map: dict[str, str]) -> str:
+        missing = [pin for pin in self.pin_order if pin not in net_map]
+        if missing:
+            raise KeyError(
+                f"Primitive '{self.name}' missing nets for pins: {missing}"
+            )
+
+        nets = [net_map[pin] for pin in self.pin_order]
+        return f"{instance_name} {' '.join(nets)} {self.subckt_name}"
+
+    def small_signal_branches(self) -> list[dict[str, str]]:
+        """
+        Returns a list of branch descriptors for the simplified small-signal model.
+
+        Each branch must define:
+            - name: unique branch suffix inside the primitive
+            - vd: drain/output-like port name
+            - vg: control/input-like port name
+            - vs: source/reference port name
+        """
+        raise NotImplementedError(
+            f"Primitive '{self.name}' must implement small_signal_branches()."
+        )
+
+    def render_small_signal_instance(self, instance_name: str, net_map: dict[str, str]) -> str:
+        lines = []
+        branches = self.small_signal_branches()
+
+        for branch in branches:
+            required = [branch["vd"], branch["vg"], branch["vs"]]
+            missing = [pin for pin in required if pin not in net_map]
+            if missing:
+                raise KeyError(
+                    f"Primitive '{self.name}' instance '{instance_name}' missing nets for branch "
+                    f"'{branch['name']}': {missing}"
+                )
+
+            vd = net_map[branch["vd"]]
+            vg = net_map[branch["vg"]]
+            vs = net_map[branch["vs"]]
+            suffix = f"{instance_name}_{branch['name']}"
+
+            lines.append(f"R_gds_{suffix} {vd} {vs} 1")
+            lines.append(f"G_gm_{suffix} {vd} {vs} {vg} {vs} 1")
+
+        return "\n".join(lines)
+
+
+    def get_netlist_params(self, index: int | None = None) -> dict[str, Any]:
+        params = {}
+        idx = 0 if index is None else index
+
+        for key, values in self.outputs.items():
+            arr = np.asarray(values)
+            if arr.ndim == 0:
+                params[key] = arr.item()
+            else:
+                params[key] = arr[idx]
+
+        return params
+
+    def small_signal_branches(self) -> list[dict[str, str]]:
+        branches = self.small_signal.get("branches", [])
+        if not branches:
+            raise ValueError(
+                f"Primitive '{self.name}' has no small_signal branches defined."
+            )
+        return branches
+
     
     def set_port_voltage(self, port_name: str, voltage: float) -> None:
         """Set the DC voltage on a port (called from outside before build())."""
