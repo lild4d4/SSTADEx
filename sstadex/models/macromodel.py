@@ -168,18 +168,69 @@ class Macromodel:
 
         return "\n".join([header, *body_lines, footer])
 
-    def gen_netlist(self, view: str = "physical") -> str:
+    def _coerce_spice_block(self, block) -> str:
+        if block is None:
+            return ""
+        if isinstance(block, list):
+            return "\n".join(str(line) for line in block if str(line).strip()).strip()
+        return str(block).strip()
+
+    def _normalize_extra_spice(self, extra_spice=None) -> dict[str, str]:
+        if extra_spice is None:
+            return {"pre": "", "body": "", "post": ""}
+
+        if isinstance(extra_spice, str):
+            return {"pre": "", "body": extra_spice.strip(), "post": ""}
+
+        return {
+            "pre": self._coerce_spice_block(extra_spice.get("pre", "")),
+            "body": self._coerce_spice_block(extra_spice.get("body", "")),
+            "post": self._coerce_spice_block(extra_spice.get("post", "")),
+        }
+
+    def _assemble_netlist(self, pre: str, core: str, post: str) -> str:
+        parts = []
+
+        if pre:
+            parts.append(pre)
+        if core:
+            parts.append(core)
+        if post:
+            parts.append(post)
+
+        if not parts:
+            return ""
+
+        return "\n\n".join(parts) + "\n"
+
+    def _gen_physical_netlist(self, extra_spice=None) -> str:
+        extra = self._normalize_extra_spice(extra_spice)
+        subckts = self._collect_subckts()
+        top = self.render_subckt()
+
+        if extra["body"]:
+            top = top.replace(
+                f".ends {self.subckt_name}",
+                f"{extra['body']}\n.ends {self.subckt_name}",
+            )
+
+        core_parts = [*subckts, top]
+        core = "\n\n".join(part for part in core_parts if part)
+        return self._assemble_netlist(extra["pre"], core, extra["post"])
+
+    def gen_netlist(self, view: str = "physical", extra_spice=None) -> str:
         if view == "physical":
-            self.netlist = self._gen_physical_netlist()
+            self.netlist = self._gen_physical_netlist(extra_spice=extra_spice)
             return self.netlist
 
         if view == "small_signal":
-            self.netlist = self._gen_small_signal_netlist()
+            self.netlist = self._gen_small_signal_netlist(extra_spice=extra_spice)
             return self.netlist
 
         raise ValueError(f"Unknown view '{view}'. Expected 'physical' or 'small_signal'.")
 
-    def _gen_small_signal_netlist(self) -> str:
+    def _gen_small_signal_netlist(self, extra_spice=None) -> str:
+        extra = self._normalize_extra_spice(extra_spice)
         lines = []
     
         if getattr(self, "ports", None):
@@ -203,8 +254,12 @@ class Macromodel:
             raise TypeError(
                 f"Instance '{inst.name}' block does not support small-signal rendering."
             )
-    
-        return "\n".join(lines)
+
+        if extra["body"]:
+            lines.append(extra["body"])
+
+        core = "\n".join(lines)
+        return self._assemble_netlist(extra["pre"], core, extra["post"])
 
 
 class Test:

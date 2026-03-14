@@ -171,7 +171,7 @@ OTA_1stage_macro.add_instance(
     index=0,
 )
 
-OTA_1stage_macro.gen_netlist(view="small_signal")
+OTA_1stage_macro.gen_netlist(view="small_signal", extra_spice={"body": ["I2 IBIAS VSS 1",]})
 print(OTA_1stage_macro.netlist)
 
 #################### TESTBENCHES ##########################
