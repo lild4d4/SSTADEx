@@ -1,16 +1,34 @@
 import pandas as pd
+from pathlib import Path
+import sys
+import numpy as np
+from sympy import Symbol
+from sympy import lambdify
+import matplotlib.pyplot as plt
 
-lookup_table_nmos = "../../LUTs/ihp-sg13g2/lv_10w_nmos.npz"
-lookup_table_pmos = "../../LUTs/ihp-sg13g2/lv_10w_pmos.npz"
-lut_w = 10e-6
+from sstadex import Macromodel, Test, dfs
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from sstadex.models import Library
 
 N_points = 10
-lengths_nmos = [0.4e-06, 0.8e-06, 1.6e-06, 3.2e-06, 6.4e-6]
-lengths_pmos = [0.4e-06, 0.8e-06, 1.6e-06, 3.2e-06, 6.4e-6]
+lib = Library(
+    name      = "ihp_sg13g2",
+    lut_files = {
+        "nmos": str(ROOT / "LUTs/ihp-sg13g2/lv_10w_nmos.npz"),
+        "pmos": str(ROOT / "LUTs/ihp-sg13g2/lv_10w_pmos.npz"),
+    },
+)
+
+lib.register_all(ROOT / "analoglib/primitives/")
+print(lib)
 
 ## Electrical parameters
 
-Vout = 0.9                                    # LDO output voltage
+Vout = 1                                    # LDO output voltage
 Vin = 1.5                                      # LDO supply voltage
 Vref = 0.9                                      # LDO voltage reference
 IL = 1e-3                                      # Load current
@@ -25,7 +43,7 @@ estability_condition = 60
 size_condition = 1e-3
 
 I_bias = 5e-6
-I_amp = 10e-6 
+I_amp = 20e-6 
 
 Iq_max = IL*(1-efficiency)
 Ib_out = Iq_max-I_amp
@@ -36,26 +54,14 @@ Ib_out = Iq_max-I_amp
 #LDO = pd.DataFrame.from_dict({'Vout': [Vout], 'Vin': [Vin], 'Vref': [Vref], 'IL': [IL], 'CL': [CL], 'RL': [RL], 'Iq_max': [Iq_max], 'Ib_out': [Ib_out], 'R1': [R1], 'R2': [R2]}, orient='index', columns=['Value'])
 
 ########################## MACROMODELS ############################################
-from sstadex import Macromodel, simplediffpair, cm_pmos
-import numpy as np
-from sympy import Symbol
+vs = np.linspace(0.2, Vout-0.1, 10)
 
-Vota_1stage = np.linspace(Vout-0.3, Vout+0.5, 5)
-
+# OTA_1stage_macro 
 OTA_1stage_macro = Macromodel(
     name = 'OTA_1stage_macro',
     outputs = [
-        Symbol("W_2stage"), Symbol("L_2stage"),
-        Symbol("vin_2stage"),
-        Symbol('W_cs_2stage'), Symbol('L_cs_2stage'),
-        Symbol('vgs_cs_2stage'),
         Symbol("W_diff"), Symbol("L_diff"), 
-        Symbol("vout_1stage"),
-        Symbol("W_al"), Symbol("L_al"),
-        Symbol("W_cs"), Symbol("L_cs"),
-        Symbol('vgs_cs'),
-        Symbol("W_cc"), Symbol("L_cc"),
-        Symbol("W_rc"), Symbol("L_rc")],
+        Symbol("W_al"), Symbol("L_al")],
     electrical_parameters = {
         "Vdd": Vin,
         "Vneg": Vref,
@@ -66,52 +72,182 @@ OTA_1stage_macro = Macromodel(
         Symbol('gma'): np.logspace(-5, -2, N_points)}
     )
 
+########################## PRIMITIVES ############################################
 
-####################################################################################
-vs = np.linspace(0.2, Vout-0.1, 10)
-vds_diffpair = Vout-vs
-vgs_diffpair = Vref-vs
+# diff pair
+diffpair = lib.get("simplediffpair", il=I_amp)
+print(diffpair)
 
-diffpair = simplediffpair(
-    lut_file=lookup_table_nmos,
-    lut_w=lut_w,
-    netlist='diffpair.spice',
-    type='sg13_lv_nmos',
-    inputs = { 
-        'vds_lut': (0.1, 1.2, 0.01),
-        'vgs_lut': (0.1, 1.2, 0.01), 
-        'vds': vds_diffpair, 
-        'vgs': vgs_diffpair, 
-        'il': I_amp/2,
-        'length': lengths_nmos, 
-        '2d_var': ['vds', 'vgs']}
-)
+diffpair.set_port_voltages({
+    "VINP":  Vref,
+    "VINN":  Vref,
+    "VOUTP": Vout,
+    "VOUTN": Vout,
+    "VTAIL": vs
+})
+print(diffpair.summary())
 
 diffpair_df = diffpair.build()
 
-diffpair_mask = (diffpair_df["width"]>3e-6) & (diffpair_df["width"]<3e-4)
-diffpair_df = diffpair_df[diffpair_mask]
+print("\n--- DataFrame ---")
+print(f"shape: {diffpair_df.shape}")
+print(diffpair_df.head())
+
+#diffpair_mask = (diffpair_df["width"]>3e-6) & (diffpair_df["width"]<3e-4)
+#diffpair_df = diffpair_df[diffpair_mask]
+
+diffpair.parameters = {
+    Symbol('gdiff_1'): diffpair_df['gm'].values,
+    Symbol('Rdiff_1'): diffpair_df['Ro'].values,
+}
+
+diffpair.outputs = {
+    Symbol("W_diff"): diffpair_df["width"].values,
+    Symbol("L_diff"): diffpair_df["length"].values,
+}
 
 diffpair_df.to_csv('diffpair.csv')
 
-####################################################################################
+# current mirror
+currentmirror = lib.get("simplecurrentmirror", il=I_amp)
+print(currentmirror)
 
-activeload = cm_pmos(
-    lut_file=lookup_table_pmos,
-    lut_w=lut_w,
-    netlist='pmos_cs.spice',
-    type='sg13_lv_pmos',
-    inputs={
-        'vds_lut': (-1.2, -0.1, 0.01), 
-        'vgs_lut': (-1.2, -0.1, 0.01), 
-        'vds': OTA_1stage_macro.electrical_parameters["Vout"]-OTA_1stage_macro.electrical_parameters["Vdd"],
-        'vgs': OTA_1stage_macro.electrical_parameters["Vout"]-OTA_1stage_macro.electrical_parameters["Vdd"], 
-        'il': I_amp/2,
-        'length': lengths_pmos, 
-        '2d_var': ['vds', 'vgs']})
+currentmirror.set_port_voltages({
+    "VINP":  Vout,
+    "VINN":  Vout,
+    "VOUTP": Vout,
+    "VOUTN": Vout,
+    "VDD": Vin
+})
+print(currentmirror.summary())
 
-activeload_df = activeload.build()
-#activeload_mask = (activeload_df["width"]>3e-6) & (activeload_df["width"]<3e-4)
-#activeload_df = activeload_df
+currentmirror_df = currentmirror.build()
 
-activeload_df.to_csv('activeload.csv')
+print("\n--- DataFrame ---")
+print(f"shape: {currentmirror_df.shape}")
+print(currentmirror_df.head())
+
+#currentmirror_mask = (currentmirror_df["width"]>3e-6) & (currentmirror_df["width"]<3e-4)
+#currentmirror_df = currentmirror_df[currentmirror_mask]
+
+currentmirror.parameters = {
+    Symbol('gaload_1'): currentmirror_df['gm'].values,
+    Symbol('Raload_1'): currentmirror_df['Ro'].values,
+}
+
+currentmirror.outputs = {
+    Symbol("W_al"): currentmirror_df["width"].values,
+    Symbol("L_al"): currentmirror_df["length"].values,
+}
+
+currentmirror_df.to_csv('currentmirror.csv')
+
+#################### TESTBENCHES ##########################
+gain_1stage_OTA = Test()
+gain_1stage_OTA.tf = ("vout", "vpos")
+gain_1stage_OTA.name = "gain_1stage"
+gain_1stage_OTA.netlist = "ota_1stage"
+gain_1stage_OTA.parametros = {
+    Symbol("gdiff_2"): Symbol("gdiff_1"),
+    Symbol("Rdiff_2"): Symbol("Rdiff_1"),
+    Symbol("gaload_2"): Symbol("gaload_1"),
+    Symbol("Raload_2"): Symbol("Raload_1"),
+    Symbol("V1"): 0,
+    Symbol("V_n"): 0,
+    Symbol("V_p"): 1,
+    Symbol("I2"): 0,
+    Symbol("s"): 0}
+gain_1stage_OTA.opt_goal = "max"
+gain_1stage_OTA.conditions = {"min": [10**(-100/20)]}
+gain_1stage_OTA.variables = {}
+gain_1stage_OTA.out_def = {"eval": gain_1stage_OTA.tf}
+
+##################################################################
+
+psrr_1stage_OTA = Test()
+psrr_1stage_OTA.tf = ("vout", "vdd")
+psrr_1stage_OTA.name = "psrr_1stage"
+psrr_1stage_OTA.netlist = "ota_1stage"
+psrr_1stage_OTA.parametros = {
+    Symbol("gdiff_2"): Symbol("gdiff_1"),
+    Symbol("Rdiff_2"): Symbol("Rdiff_1"),
+    Symbol("gaload_2"): Symbol("gaload_1"),
+    Symbol("Raload_2"): Symbol("Raload_1"),
+    Symbol("V1"): 1,
+    Symbol("V_n"): 0,
+    Symbol("V_p"): 0,
+    Symbol("I2"): 0,
+    Symbol("s"): 0}
+psrr_1stage_OTA.opt_goal = "max"
+psrr_1stage_OTA.conditions = {"min": [0.0000001]}
+psrr_1stage_OTA.variables = {}
+psrr_1stage_OTA.out_def = {"eval": psrr_1stage_OTA.tf}
+
+##################################################################
+
+rout_1stage_OTA = Test()
+rout_1stage_OTA.name = "rout_1stage"
+rout_1stage_OTA.target_param = Symbol("Ra_1stage")
+rout_1stage_OTA.tf = ["vout", "vr"]
+rout_1stage_OTA.netlist = "ota_1stage_rout"
+rout_1stage_OTA.parametros = {Symbol("gdiff_2"): Symbol("gdiff_1"),
+                              Symbol("Rdiff_2"): Symbol("Rdiff_1"),
+                                Symbol("gaload_2"): Symbol("gaload_1"),
+                                Symbol("Raload_2"): Symbol("Raload_1"),
+                                Symbol("V1"): 0,
+                                Symbol("V_n"): 0,
+                                Symbol("V_p"): 0,
+                                Symbol("Vr"): 1,
+                                Symbol("I2"): 0,
+                                Symbol("s"): 0,
+                                Symbol("Rr"): 1000,
+                                Symbol("Cl"): 1e-12}
+
+rout_1stage_OTA.opt_goal = "max"
+rout_1stage_OTA.conditions = {"min": [1]}
+x = Symbol("x")
+rout_1stage_OTA.lamd = lambdify(x, x*1000/(1-x))
+rout_1stage_OTA.variables = {}
+rout_1stage_OTA.out_def = {"eval": rout_1stage_OTA.tf}
+
+##################################################################
+
+gm_1stage_OTA = Test()
+gm_1stage_OTA.target_param = Symbol("gma_1stage")
+gm_1stage_OTA.name = "gm_1stage"
+gm_1stage_OTA.tf = ["vout", "vpos"]
+gm_1stage_OTA.netlist = "ota_1stage"
+gm_1stage_OTA.composed = 1
+gm_1stage_OTA.out_def = {"divide": [gain_1stage_OTA, rout_1stage_OTA]}
+gm_1stage_OTA.opt_goal = "max"
+gm_1stage_OTA.conditions = {"min": [9.999999999999999e-6]}
+
+
+
+
+OTA_1stage_macro.ext_mask = None
+
+OTA_1stage_macro.primitives = [diffpair, currentmirror]
+OTA_1stage_macro.submacromodels = [] 
+OTA_1stage_macro.num_level_exp = -1
+OTA_1stage_macro.specifications = [gain_1stage_OTA, rout_1stage_OTA, gm_1stage_OTA]
+OTA_1stage_macro.opt_specifications = [gain_1stage_OTA]
+OTA_1stage_macro.is_primitive = 0
+OTA_1stage_macro.run_pareto = True
+
+_, _, _, ota_1stage_df, mask = dfs(OTA_1stage_macro, debug = False)
+
+ota_1stage_df.to_csv('ota_1stage_df.csv')
+
+ota_1stage_df["gain"] = 20*np.log10(ota_1stage_df["gain_1stage"])
+
+
+fig, ax = plt.subplots()
+
+ax.scatter(ota_1stage_df["area"], ota_1stage_df["gain"])
+ax.set_xscale('log')
+
+fig.tight_layout()
+fig.savefig("gain.png", dpi=300)
+
+plt.close(fig)

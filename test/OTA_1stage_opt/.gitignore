@@ -1,3 +1,6 @@
 activeload.csv
 diffpair.csv
 ota_1stage_opt.log
+*.csv
+output/
+*.png
