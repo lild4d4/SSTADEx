@@ -1,4 +1,4 @@
 .subckt {SUBCKT_NAME} VINP VINN VOUTP VOUTN VDD
-M1 VINN VINP VDD VDD sg13_lv_pmos W={width} L={length}
-M2 VOUTN VINP VDD VDD sg13_lv_pmos W={width} L={length}
+M1 VINN VINP VDD VDD sg13_lv_pmos W={W_al} L={L_al}
+M2 VOUTN VINP VDD VDD sg13_lv_pmos W={W_al} L={L_al}
 .ends {SUBCKT_NAME}

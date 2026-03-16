@@ -1,4 +1,6 @@
 from unicodedata import name
+from pathlib import Path
+import subprocess
 
 import numpy as np
 from sympy import Symbol
@@ -11,6 +13,7 @@ class NetlistInstance:
     block: Any
     net_map: dict[str, str]
     index: int | None = None
+    netlist_params: dict[str, Any] | None = None
 class Macromodel:
     def __init__(
         self,
@@ -110,13 +113,21 @@ class Macromodel:
         print("outputs results: ", self.output_results)
         print("macromodel parameters updated: ", self.macromodel_parameters)
 
-    def add_instance(self, name: str, block, net_map: dict[str, str], index: int | None = None) -> None:
+    def add_instance(
+        self,
+        name: str,
+        block,
+        net_map: dict[str, str],
+        index: int | None = None,
+        netlist_params: dict[str, Any] | None = None,
+    ) -> None:
         self.instances.append(
             NetlistInstance(
                 name=name,
                 block=block,
                 net_map=net_map,
                 index=index,
+                netlist_params=netlist_params or {},
             )
         )
 
@@ -152,11 +163,25 @@ class Macromodel:
 
         return blocks
 
+    def _resolve_instance_netlist_params(
+        self,
+        inst: NetlistInstance,
+        point: dict | None,
+    ) -> dict[str, Any]:
+        if point is None:
+            return dict(inst.netlist_params or {})
+
+        resolved = {}
+        for key, value in (inst.netlist_params or {}).items():
+            resolved[key] = point[value] if value in point else value
+        return resolved
+
     def render_subckt(self) -> str:
         header = f".subckt {self.subckt_name} {' '.join(self.ports)}"
 
         body_lines = []
         for inst in self.instances:
+            print("inst.net_map: ", inst.net_map)
             body_lines.append(
                 inst.block.render_instance(
                     instance_name=inst.name,
@@ -218,6 +243,39 @@ class Macromodel:
         core = "\n\n".join(part for part in core_parts if part)
         return self._assemble_netlist(extra["pre"], core, extra["post"])
 
+    def gen_netlist_for_params(self, point: dict, extra_spice=None) -> str:
+        extra = self._normalize_extra_spice(extra_spice)
+        emitted = set()
+        subckts = []
+
+        for inst in self.instances:
+            block = inst.block
+            key = getattr(block, "subckt_name", getattr(block, "name", inst.name))
+
+            if key in emitted or not hasattr(block, "render_subckt"):
+                continue
+
+            resolved_params = self._resolve_instance_netlist_params(inst, point)
+            subckts.append(
+                block.render_subckt(
+                    index=inst.index,
+                    netlist_params=resolved_params,
+                    use_defaults=False,
+                )
+            )
+            emitted.add(key)
+
+        top = self.render_subckt()
+        if extra["body"]:
+            top = top.replace(
+                f".ends {self.subckt_name}",
+                f"{extra['body']}\n.ends {self.subckt_name}",
+            )
+
+        core = "\n\n".join([*subckts, top])
+        self.netlist = self._assemble_netlist(extra["pre"], core, extra["post"])
+        return self.netlist
+
     def gen_netlist(self, view: str = "physical", extra_spice=None) -> str:
         if view == "physical":
             self.netlist = self._gen_physical_netlist(extra_spice=extra_spice)
@@ -260,6 +318,69 @@ class Macromodel:
 
         core = "\n".join(lines)
         return self._assemble_netlist(extra["pre"], core, extra["post"])
+
+    def _normalize_sim_points(self, params) -> list[dict]:
+        if isinstance(params, dict):
+            return [params]
+        if isinstance(params, list):
+            return params
+        if hasattr(params, "to_dict"):
+            return params.to_dict(orient="records")
+        raise TypeError("params must be a dict, list[dict], or pandas.DataFrame.")
+
+    def _run_ngspice(
+        self,
+        netlist_text: str,
+        run_name: str,
+        workdir: str = "./simulations",
+    ) -> dict:
+        workdir_path = Path(workdir)
+        workdir_path.mkdir(parents=True, exist_ok=True)
+
+        spice_path = workdir_path / f"{run_name}.spice"
+        log_path = workdir_path / f"{run_name}.log"
+
+        spice_path.write_text(netlist_text)
+
+        proc = subprocess.run(
+            ["ngspice", "-b", "-o", str(log_path), str(spice_path)],
+            capture_output=True,
+            text=True,
+        )
+
+        return {
+            "run_name": run_name,
+            "spice_path": spice_path,
+            "log_path": log_path,
+            "returncode": proc.returncode,
+            "stdout": proc.stdout,
+            "stderr": proc.stderr,
+        }
+
+    def ngspice_sim(
+        self,
+        params,
+        extra_spice=None,
+        workdir: str = "./simulations",
+    ) -> list[dict]:
+        points = self._normalize_sim_points(params)
+        results = []
+
+        for idx, point in enumerate(points):
+            run_name = f"{self.name}_{idx}"
+            netlist_text = self.gen_netlist_for_params(
+                point=point,
+                extra_spice=extra_spice,
+            )
+            sim_result = self._run_ngspice(
+                netlist_text=netlist_text,
+                run_name=run_name,
+                workdir=workdir,
+            )
+            sim_result["params"] = point
+            results.append(sim_result)
+
+        return results
 
 
 class Test:

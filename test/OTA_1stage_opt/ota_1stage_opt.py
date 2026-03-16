@@ -156,6 +156,10 @@ OTA_1stage_macro.add_instance(
         "VTAIL": "IBIAS",
     },
     index=0,
+    netlist_params={
+        "W_diff": Symbol("W_diff"),
+        "L_diff": Symbol("L_diff"),
+    },
 )
 
 OTA_1stage_macro.add_instance(
@@ -169,10 +173,11 @@ OTA_1stage_macro.add_instance(
         "VDD": "VDD",
     },
     index=0,
+    netlist_params={
+        "W_al": Symbol("W_al"),
+        "L_al": Symbol("L_al"),
+    },
 )
-
-OTA_1stage_macro.gen_netlist(view="physical")
-print(OTA_1stage_macro.netlist)
 
 #################### TESTBENCHES ##########################
 
@@ -268,6 +273,16 @@ plt.close(fig)
 
 ota_1stage_df_filtered = ota_1stage_df[((ota_1stage_df[Symbol("W_diff")]>1e-6) & (ota_1stage_df[Symbol("W_al")]>1e-6))]
 ota_1stage_df_filtered.to_csv('ota_1stage_df_filtered.csv')
+
+point = {
+    Symbol("W_diff"): 12e-6,
+    Symbol("L_diff"): 0.4e-6,
+    Symbol("W_al"): 8e-6,
+    Symbol("L_al"): 0.4e-6,
+}
+
+netlist_text = OTA_1stage_macro.gen_netlist_for_params(point)
+print(netlist_text)
 
 # gain_1stage_OTA = Test()
 # gain_1stage_OTA.tf = ("vout", "vpos")

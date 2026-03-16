@@ -225,6 +225,7 @@ class Primitive:
         responsible for creating the Symbol mapping when building its equations.
         """
         sizing_keys = {c for c in df.columns if c.startswith(("width", "length", "W", "L"))}
+        print(f"Sizing keys: {sizing_keys}")
 
         for col in df.columns:
             values = df[col].values
@@ -279,8 +280,16 @@ class Primitive:
 
         return filepath.read_text()
 
-    def render_subckt(self, index: int | None = None) -> str:
-        params = self.get_netlist_params(index=index)
+    def render_subckt(
+        self,
+        index: int | None = None,
+        netlist_params: dict | None = None,
+        use_defaults: bool = True,
+    ) -> str:
+        params = self.get_netlist_params(index=index) if use_defaults else {}
+        if netlist_params is not None:
+            params.update(netlist_params)
+        params = {str(k): v for k, v in params.items()}
         print(f"rendering subckt with params: {params}")
         tokens = {
             "SUBCKT_NAME": self.subckt_name,
