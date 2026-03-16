@@ -6,7 +6,7 @@ from sympy import Symbol
 from sympy import lambdify
 import matplotlib.pyplot as plt
 
-from sstadex import Macromodel, Test, dfs
+from sstadex import Macromodel, Test, dfs, Testbench, VoltageSource, CurrentSource, Resistor, Capacitor
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -14,7 +14,7 @@ if str(ROOT) not in sys.path:
 
 from sstadex.models import Library
 
-N_points = 10
+N_points = 100
 lib = Library(
     name      = "ihp_sg13g2",
     lut_files = {
@@ -56,7 +56,7 @@ Ib_out = Iq_max-I_amp
 
 ########################## PRIMITIVES ############################################
 
-vs = np.linspace(0.2, Vout-0.1, 10)
+vs = np.linspace(0.2, Vout-0.1, N_points)
 
 # diff pair
 diffpair = lib.get("simplediffpair", il=I_amp)
@@ -81,8 +81,8 @@ print(diffpair_df.head())
 #diffpair_df = diffpair_df[diffpair_mask]
 
 diffpair.parameters = {
-    Symbol('gdiff_1'): diffpair_df['gm'].values,
-    Symbol('Rdiff_1'): diffpair_df['Ro'].values,
+    Symbol('g_gm_xdp_m1'): diffpair_df['gm'].values,
+    Symbol('R_gds_xdp_m1'): diffpair_df['Ro'].values,
 }
 
 diffpair.outputs = {
@@ -115,8 +115,8 @@ print(currentmirror_df.head())
 #currentmirror_df = currentmirror_df[currentmirror_mask]
 
 currentmirror.parameters = {
-    Symbol('gaload_1'): currentmirror_df['gm'].values,
-    Symbol('Raload_1'): currentmirror_df['Ro'].values,
+    Symbol('g_gm_xcm_m1'): currentmirror_df['gm'].values,
+    Symbol('R_gds_xcm_m1'): currentmirror_df['Ro'].values,
 }
 
 currentmirror.outputs = {
@@ -146,7 +146,7 @@ OTA_1stage_macro = Macromodel(
     )
 
 OTA_1stage_macro.add_instance(
-    "XDP",
+    "xdp",
     diffpair,
     {
         "VINP": "VINP",
@@ -159,7 +159,7 @@ OTA_1stage_macro.add_instance(
 )
 
 OTA_1stage_macro.add_instance(
-    "XCM",
+    "xcm",
     currentmirror,
     {
         "VINP": "N1",
@@ -171,99 +171,85 @@ OTA_1stage_macro.add_instance(
     index=0,
 )
 
-OTA_1stage_macro.gen_netlist(view="small_signal", extra_spice={"body": ["I2 IBIAS VSS 1",]})
+OTA_1stage_macro.gen_netlist(view="physical")
 print(OTA_1stage_macro.netlist)
 
 #################### TESTBENCHES ##########################
-gain_1stage_OTA = Test()
-gain_1stage_OTA.tf = ("vout", "vpos")
-gain_1stage_OTA.name = "gain_1stage"
-gain_1stage_OTA.netlist = "ota_1stage"
-gain_1stage_OTA.parametros = {
-    Symbol("gdiff_2"): Symbol("gdiff_1"),
-    Symbol("Rdiff_2"): Symbol("Rdiff_1"),
-    Symbol("gaload_2"): Symbol("gaload_1"),
-    Symbol("Raload_2"): Symbol("Raload_1"),
-    Symbol("V1"): 0,
-    Symbol("V_n"): 0,
-    Symbol("V_p"): 1,
-    Symbol("I2"): 0,
-    Symbol("s"): 0}
-gain_1stage_OTA.opt_goal = "max"
-gain_1stage_OTA.conditions = {"min": [10**(-100/20)]}
-gain_1stage_OTA.variables = {}
-gain_1stage_OTA.out_def = {"eval": gain_1stage_OTA.tf}
 
-##################################################################
+tb_gain = Testbench(
+    name="ota_1stage_gain",
+    dut=OTA_1stage_macro,
+    view="small_signal",
+    elements=[
+        CurrentSource("I2", "IBIAS", "VSS", 0),
+        VoltageSource("Vdd", "VDD", "VSS", 0),
+        VoltageSource("Vss", "VSS", "VSS", 0),
+        VoltageSource("V_n", "VINN", "VSS", 0),
+        VoltageSource("V_p", "VINP", "VSS", 1),
+    ],
+    tf=("VOUT", "VINP"),
+    parameter_map={
+        Symbol("Vdd"): 0,
+        Symbol("Vss"): 0,
+        Symbol("V_n"): 0,
+        Symbol("V_p"): 1,
+        Symbol("I2"): 0,
+        Symbol("g_gm_xdp_m2"): Symbol("g_gm_xdp_m1"),
+        Symbol("R_gds_xdp_m2"): Symbol("R_gds_xdp_m1"),
+        Symbol("g_gm_xcm_m2"): Symbol("g_gm_xcm_m1"),
+        Symbol("R_gds_xcm_m2"): Symbol("R_gds_xcm_m1"),
+        Symbol("s"): 0,
+    },
+)
 
-psrr_1stage_OTA = Test()
-psrr_1stage_OTA.tf = ("vout", "vdd")
-psrr_1stage_OTA.name = "psrr_1stage"
-psrr_1stage_OTA.netlist = "ota_1stage"
-psrr_1stage_OTA.parametros = {
-    Symbol("gdiff_2"): Symbol("gdiff_1"),
-    Symbol("Rdiff_2"): Symbol("Rdiff_1"),
-    Symbol("gaload_2"): Symbol("gaload_1"),
-    Symbol("Raload_2"): Symbol("Raload_1"),
-    Symbol("V1"): 1,
-    Symbol("V_n"): 0,
-    Symbol("V_p"): 0,
-    Symbol("I2"): 0,
-    Symbol("s"): 0}
-psrr_1stage_OTA.opt_goal = "max"
-psrr_1stage_OTA.conditions = {"min": [0.0000001]}
-psrr_1stage_OTA.variables = {}
-psrr_1stage_OTA.out_def = {"eval": psrr_1stage_OTA.tf}
+gain_1stage = tb_gain.make_test(
+    name="gain_1stage",
+    opt_goal="max",
+    conditions={"min": [10 ** (-100 / 20)]},
+)
 
-##################################################################
+tb_rout = Testbench(
+    name="ota_1stage_rout",
+    dut=OTA_1stage_macro,
+    view="small_signal",
+    elements=[
+        CurrentSource("I2", "IBIAS", "VSS", 0),
+        VoltageSource("Vdd", "VDD", "VSS", 0),
+        VoltageSource("Vss", "VSS", "VSS", 0),
+        VoltageSource("V_n", "VINN", "VSS", 0),
+        VoltageSource("V_p", "VINP", "VSS", 0),
+        VoltageSource("Vr", "VR", "VSS", 1),
+        Resistor("Rr", "VR", "VOUT", 1000),
+    ],
+    tf=("VOUT", "VR"),
+    parameter_map={
+        Symbol("Vdd"): 0,
+        Symbol("Vss"): 0,
+        Symbol("V_n"): 0,
+        Symbol("V_p"): 0,
+        Symbol("Vr"): 1,
+        Symbol("I2"): 0,
+        Symbol("Rr"): 1000,
+        Symbol("g_gm_xdp_m2"): Symbol("g_gm_xdp_m1"),
+        Symbol("R_gds_xdp_m2"): Symbol("R_gds_xdp_m1"),
+        Symbol("g_gm_xcm_m2"): Symbol("g_gm_xcm_m1"),
+        Symbol("R_gds_xcm_m2"): Symbol("R_gds_xcm_m1"),
+        Symbol("s"): 0,
+    },
+)
 
-rout_1stage_OTA = Test()
-rout_1stage_OTA.name = "rout_1stage"
-rout_1stage_OTA.target_param = Symbol("Ra_1stage")
-rout_1stage_OTA.tf = ["vout", "vr"]
-rout_1stage_OTA.netlist = "ota_1stage_rout"
-rout_1stage_OTA.parametros = {Symbol("gdiff_2"): Symbol("gdiff_1"),
-                              Symbol("Rdiff_2"): Symbol("Rdiff_1"),
-                                Symbol("gaload_2"): Symbol("gaload_1"),
-                                Symbol("Raload_2"): Symbol("Raload_1"),
-                                Symbol("V1"): 0,
-                                Symbol("V_n"): 0,
-                                Symbol("V_p"): 0,
-                                Symbol("Vr"): 1,
-                                Symbol("I2"): 0,
-                                Symbol("s"): 0,
-                                Symbol("Rr"): 1000,
-                                Symbol("Cl"): 1e-12}
+rout_1stage = tb_rout.make_test(
+    name="rout_1stage",
+    opt_goal="max",
+    conditions={"min": [1]},
+    lamd=lambda x: x * 1000 / (1 - x),
+)
 
-rout_1stage_OTA.opt_goal = "max"
-rout_1stage_OTA.conditions = {"min": [1]}
-x = Symbol("x")
-rout_1stage_OTA.lamd = lambdify(x, x*1000/(1-x))
-rout_1stage_OTA.variables = {}
-rout_1stage_OTA.out_def = {"eval": rout_1stage_OTA.tf}
-
-##################################################################
-
-gm_1stage_OTA = Test()
-gm_1stage_OTA.target_param = Symbol("gma_1stage")
-gm_1stage_OTA.name = "gm_1stage"
-gm_1stage_OTA.tf = ["vout", "vpos"]
-gm_1stage_OTA.netlist = "ota_1stage"
-gm_1stage_OTA.composed = 1
-gm_1stage_OTA.out_def = {"divide": [gain_1stage_OTA, rout_1stage_OTA]}
-gm_1stage_OTA.opt_goal = "max"
-gm_1stage_OTA.conditions = {"min": [9.999999999999999e-6]}
-
-
-
-
-OTA_1stage_macro.ext_mask = None
-
+OTA_1stage_macro.specifications = [gain_1stage, rout_1stage]
+OTA_1stage_macro.opt_specifications = [gain_1stage]
 OTA_1stage_macro.primitives = [diffpair, currentmirror]
-OTA_1stage_macro.submacromodels = [] 
+OTA_1stage_macro.submacromodels = []
 OTA_1stage_macro.num_level_exp = -1
-OTA_1stage_macro.specifications = [gain_1stage_OTA, rout_1stage_OTA, gm_1stage_OTA]
-OTA_1stage_macro.opt_specifications = [gain_1stage_OTA]
 OTA_1stage_macro.is_primitive = 0
 OTA_1stage_macro.run_pareto = True
 
@@ -272,14 +258,122 @@ _, _, _, ota_1stage_df, mask = dfs(OTA_1stage_macro, debug = False)
 ota_1stage_df.to_csv('ota_1stage_df.csv')
 
 ota_1stage_df["gain"] = 20*np.log10(ota_1stage_df["gain_1stage"])
-
-
 fig, ax = plt.subplots()
-
 ax.scatter(ota_1stage_df["area"], ota_1stage_df["gain"])
 ax.set_xscale('log')
-
 fig.tight_layout()
 fig.savefig("gain.png", dpi=300)
-
 plt.close(fig)
+
+
+ota_1stage_df_filtered = ota_1stage_df[((ota_1stage_df[Symbol("W_diff")]>1e-6) & (ota_1stage_df[Symbol("W_al")]>1e-6))]
+ota_1stage_df_filtered.to_csv('ota_1stage_df_filtered.csv')
+
+# gain_1stage_OTA = Test()
+# gain_1stage_OTA.tf = ("vout", "vpos")
+# gain_1stage_OTA.name = "gain_1stage"
+# gain_1stage_OTA.netlist = "ota_1stage"
+# gain_1stage_OTA.parametros = {
+#     Symbol("gdiff_2"): Symbol("gdiff_1"),
+#     Symbol("Rdiff_2"): Symbol("Rdiff_1"),
+#     Symbol("gaload_2"): Symbol("gaload_1"),
+#     Symbol("Raload_2"): Symbol("Raload_1"),
+#     Symbol("V1"): 0,
+#     Symbol("V_n"): 0,
+#     Symbol("V_p"): 1,
+#     Symbol("I2"): 0,
+#     Symbol("s"): 0}
+# gain_1stage_OTA.opt_goal = "max"
+# gain_1stage_OTA.conditions = {"min": [10**(-100/20)]}
+# gain_1stage_OTA.variables = {}
+# gain_1stage_OTA.out_def = {"eval": gain_1stage_OTA.tf}
+
+# ##################################################################
+
+# psrr_1stage_OTA = Test()
+# psrr_1stage_OTA.tf = ("vout", "vdd")
+# psrr_1stage_OTA.name = "psrr_1stage"
+# psrr_1stage_OTA.netlist = "ota_1stage"
+# psrr_1stage_OTA.parametros = {
+#     Symbol("gdiff_2"): Symbol("gdiff_1"),
+#     Symbol("Rdiff_2"): Symbol("Rdiff_1"),
+#     Symbol("gaload_2"): Symbol("gaload_1"),
+#     Symbol("Raload_2"): Symbol("Raload_1"),
+#     Symbol("V1"): 1,
+#     Symbol("V_n"): 0,
+#     Symbol("V_p"): 0,
+#     Symbol("I2"): 0,
+#     Symbol("s"): 0}
+# psrr_1stage_OTA.opt_goal = "max"
+# psrr_1stage_OTA.conditions = {"min": [0.0000001]}
+# psrr_1stage_OTA.variables = {}
+# psrr_1stage_OTA.out_def = {"eval": psrr_1stage_OTA.tf}
+
+# ##################################################################
+
+# rout_1stage_OTA = Test()
+# rout_1stage_OTA.name = "rout_1stage"
+# rout_1stage_OTA.target_param = Symbol("Ra_1stage")
+# rout_1stage_OTA.tf = ["vout", "vr"]
+# rout_1stage_OTA.netlist = "ota_1stage_rout"
+# rout_1stage_OTA.parametros = {Symbol("gdiff_2"): Symbol("gdiff_1"),
+#                               Symbol("Rdiff_2"): Symbol("Rdiff_1"),
+#                                 Symbol("gaload_2"): Symbol("gaload_1"),
+#                                 Symbol("Raload_2"): Symbol("Raload_1"),
+#                                 Symbol("V1"): 0,
+#                                 Symbol("V_n"): 0,
+#                                 Symbol("V_p"): 0,
+#                                 Symbol("Vr"): 1,
+#                                 Symbol("I2"): 0,
+#                                 Symbol("s"): 0,
+#                                 Symbol("Rr"): 1000,
+#                                 Symbol("Cl"): 1e-12}
+
+# rout_1stage_OTA.opt_goal = "max"
+# rout_1stage_OTA.conditions = {"min": [1]}
+# x = Symbol("x")
+# rout_1stage_OTA.lamd = lambdify(x, x*1000/(1-x))
+# rout_1stage_OTA.variables = {}
+# rout_1stage_OTA.out_def = {"eval": rout_1stage_OTA.tf}
+
+# ##################################################################
+
+# gm_1stage_OTA = Test()
+# gm_1stage_OTA.target_param = Symbol("gma_1stage")
+# gm_1stage_OTA.name = "gm_1stage"
+# gm_1stage_OTA.tf = ["vout", "vpos"]
+# gm_1stage_OTA.netlist = "ota_1stage"
+# gm_1stage_OTA.composed = 1
+# gm_1stage_OTA.out_def = {"divide": [gain_1stage_OTA, rout_1stage_OTA]}
+# gm_1stage_OTA.opt_goal = "max"
+# gm_1stage_OTA.conditions = {"min": [9.999999999999999e-6]}
+
+
+
+
+# OTA_1stage_macro.ext_mask = None
+
+# OTA_1stage_macro.primitives = [diffpair, currentmirror]
+# OTA_1stage_macro.submacromodels = [] 
+# OTA_1stage_macro.num_level_exp = -1
+# OTA_1stage_macro.specifications = [gain_1stage_OTA, rout_1stage_OTA, gm_1stage_OTA]
+# OTA_1stage_macro.opt_specifications = [gain_1stage_OTA]
+# OTA_1stage_macro.is_primitive = 0
+# OTA_1stage_macro.run_pareto = True
+
+# _, _, _, ota_1stage_df, mask = dfs(OTA_1stage_macro, debug = False)
+
+# ota_1stage_df.to_csv('ota_1stage_df.csv')
+
+# ota_1stage_df["gain"] = 20*np.log10(ota_1stage_df["gain_1stage"])
+
+
+# fig, ax = plt.subplots()
+
+# ax.scatter(ota_1stage_df["area"], ota_1stage_df["gain"])
+# ax.set_xscale('log')
+
+# fig.tight_layout()
+# fig.savefig("gain.png", dpi=300)
+
+# plt.close(fig)

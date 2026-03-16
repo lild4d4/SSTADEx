@@ -1,4 +1,5 @@
 from collections import deque
+from pathlib import Path
 from sstadex import mna, mna_solve, mna_tf, Macromodel, Primitive
 from .opt import filter_conditions, get_new_conditions, run_pareto
 import sympy as sym
@@ -379,7 +380,15 @@ def build(macromodel, repeat=True, debug=False):
 
     tfs = []
     for spec in macromodel.specifications:
-        macromodel.name = spec.netlist
+        if getattr(spec, "testbench", None) is not None:
+            testbench = spec.testbench
+            macromodel.name = testbench.name
+            spice_path = Path(SPICE_DIR) / f"{macromodel.name}.spice"
+            spice_path.parent.mkdir(parents=True, exist_ok=True)
+            spice_path.write_text(testbench.gen_netlist())
+            print(testbench.gen_netlist())
+        else:
+            macromodel.name = spec.netlist
         print("Netlist: ", macromodel.name)
 
         start_time = time.time()
@@ -391,9 +400,11 @@ def build(macromodel, repeat=True, debug=False):
 
         MNA_times[spec.name] = mna_time
 
-        print(nodes)
+        print("MNA nodes: ", nodes)
 
         sol = mna_solve(macromodel)
+
+        print("MNA solution: ", sol)
         tfs.append(*mna_tf(macromodel, spec))
 
         # print("A: ", A)

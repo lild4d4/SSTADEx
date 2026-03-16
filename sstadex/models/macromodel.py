@@ -264,13 +264,34 @@ class Macromodel:
 
 class Test:
     def __init__(
-        self, composed=0, parametros={}, lamb=None, target_param="", only_up=False
+        self,
+        name="",
+        tf=None,
+        netlist="",
+        parametros=None,
+        variables=None,
+        out_def=None,
+        composed=0,
+        lamb=None,
+        target_param="",
+        only_up=False,
+        opt_goal="max",
+        conditions=None,
+        testbench=None,
     ):
+        self.name = name
+        self.tf = tf
+        self.netlist = netlist
         self.composed = composed
-        self.parametros = parametros
+        self.parametros = parametros or {}
+        self.variables = variables or {}
+        self.out_def = out_def or {}
         self.lamd = lamb
         self.target_param = target_param
         self.only_up = only_up
+        self.opt_goal = opt_goal
+        self.conditions = conditions or {}
+        self.testbench = testbench
 
     def eval(funct):
         return {"eval": funct}
