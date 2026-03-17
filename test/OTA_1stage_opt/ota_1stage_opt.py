@@ -14,7 +14,7 @@ if str(ROOT) not in sys.path:
 
 from sstadex.models import Library
 
-N_points = 100
+N_points = 10
 lib = Library(
     name      = "ihp_sg13g2",
     lut_files = {
@@ -25,6 +25,8 @@ lib = Library(
 
 lib.register_all(ROOT / "analoglib/primitives/")
 print(lib)
+
+lengths = [4e-7, 8e-7, 1.6e-6, 3.2e-6, 6.4e-6]
 
 ## Electrical parameters
 
@@ -48,8 +50,11 @@ I_amp = 20e-6
 Iq_max = IL*(1-efficiency)
 Ib_out = Iq_max-I_amp
 
-#R1 = (Vout-Vref)/Ib_out
+#R1 = (Vout-Vref)/1e-6
 #R2 = Vref*R1/(Vout-Vref)
+
+#print(f"R1: {R1:.2f} Ohm")
+#print(f"R2: {R2:.2f} Ohm")
 
 #LDO = pd.DataFrame.from_dict({'Vout': [Vout], 'Vin': [Vin], 'Vref': [Vref], 'IL': [IL], 'CL': [CL], 'RL': [RL], 'Iq_max': [Iq_max], 'Ib_out': [Ib_out], 'R1': [R1], 'R2': [R2]}, orient='index', columns=['Value'])
 
@@ -89,6 +94,8 @@ diffpair.outputs = {
     Symbol("W_diff"): diffpair_df["width"].values,
     Symbol("L_diff"): diffpair_df["length"].values,
 }
+
+diffpair_df["vs"] = np.tile(vs, len(lengths))
 
 diffpair_df.to_csv('diffpair.csv')
 
@@ -151,8 +158,8 @@ OTA_1stage_macro.add_instance(
     {
         "VINP": "VINP",
         "VINN": "VINN",
-        "VOUTP": "N1",
-        "VOUTN": "VOUT",
+        "VOUTP": "VOUT",
+        "VOUTN": "VOUTN",
         "VTAIL": "IBIAS",
     },
     index=0,
@@ -166,10 +173,10 @@ OTA_1stage_macro.add_instance(
     "xcm",
     currentmirror,
     {
-        "VINP": "N1",
-        "VINN": "N1",
-        "VOUTP": "NC",
-        "VOUTN": "VOUT",
+        "VINP": "VOUTN",
+        "VINN": "VOUTN",
+        "VOUTP": "VOUT",
+        "VOUTN": "VOUTN",
         "VDD": "VDD",
     },
     index=0,
@@ -281,7 +288,33 @@ point = {
     Symbol("L_al"): 0.4e-6,
 }
 
-netlist_text = OTA_1stage_macro.gen_netlist_for_params(point)
+netlist_text = OTA_1stage_macro.gen_netlist_for_params(
+    point,
+    extra_spice = {
+        "body": [
+            
+        ],
+        "post": [
+            "OTA_1stage_macro net1 vn vout vdd ibias", # VINP VINN VOUTP VDD IBIAS
+            "R1 vfb vout 10000000000 m=1",
+            "C2 vfb vss 10 m=1",
+            "R2 vfb vss 90000000000 m=1",
+            "V1 net1 vfb dc 0 ac 1",
+            "I1 ibias vss 20e-6"
+
+            ".lib /home/designer/shared/SSTADEx/IHP-Open-PDK/ihp-sg13g2/libs.tech/ngspice/models/cornerMOSlv.lib mos_tt",
+            "Vref vn 0 0.9",
+            "Vdd vdd 0 1.5",
+            "Vss vss 0 0",
+            ".control",
+            "pre_osdi /home/designer/shared/SSTADEx/IHP-Open-PDK/ihp-sg13g2/libs.tech/ngspice/osdi/psp103_nqs.osdi",
+            "ac dec 10 1 1G",
+            "wrdata temp.csv vdb(vout) phase(vout)",
+            ".endc"
+        ]
+    }
+)
+
 print(netlist_text)
 
 # gain_1stage_OTA = Test()
@@ -392,3 +425,5 @@ print(netlist_text)
 # fig.savefig("gain.png", dpi=300)
 
 # plt.close(fig)
+
+# C:\Users\Admin\Documents\PhD\uniccass-icdesign-tools\shared_xserver\SSTADEx\IHP-Open-PDK

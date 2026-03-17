@@ -10,14 +10,14 @@
     "branches": [
       {
         "name": "m1",
-        "vd": "VINN",
+        "vd": "VOUTP",
         "vg": "VINP",
         "vs": "VDD"
       },
       {
         "name": "m2",
         "vd": "VOUTN",
-        "vg": "VINP",
+        "vg": "VINN",
         "vs": "VDD"
       }
     ]
@@ -42,8 +42,8 @@
   "lut_config": {
     "lut_w": 10e-6,
     "axes": [
-      { "variable": "vds",   "values": [-1.2, -0.1, 100], "type": "arange" },
-      { "variable": "vgs", "values": [-1.2, -0.1, 100], "type": "arange"  }
+      { "variable": "vds",   "values": [-1.2, -0.1], "type": "arange" },
+      { "variable": "vgs", "values": [-1.2, -0.1], "type": "arange"  }
     ],
     "lengths": [4e-7, 8e-7, 1.6e-6, 3.2e-6, 6.4e-6]
   },
