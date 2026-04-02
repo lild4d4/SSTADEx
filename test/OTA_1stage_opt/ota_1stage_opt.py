@@ -151,8 +151,8 @@ OTA_1stage_macro.add_instance(
     {
         "VINP": "VINP",
         "VINN": "VINN",
-        "VOUTP": "N1",
-        "VOUTN": "VOUT",
+        "VOUTP": "VOUT",
+        "VOUTN": "N1",
         "VTAIL": "IBIAS",
     },
     index=0,
@@ -168,8 +168,8 @@ OTA_1stage_macro.add_instance(
     {
         "VINP": "N1",
         "VINN": "N1",
-        "VOUTP": "NC",
-        "VOUTN": "VOUT",
+        "VOUTP": "VOUT",
+        "VOUTN": "NC",
         "VDD": "VDD",
     },
     index=0,
@@ -283,112 +283,3 @@ point = {
 
 netlist_text = OTA_1stage_macro.gen_netlist_for_params(point)
 print(netlist_text)
-
-# gain_1stage_OTA = Test()
-# gain_1stage_OTA.tf = ("vout", "vpos")
-# gain_1stage_OTA.name = "gain_1stage"
-# gain_1stage_OTA.netlist = "ota_1stage"
-# gain_1stage_OTA.parametros = {
-#     Symbol("gdiff_2"): Symbol("gdiff_1"),
-#     Symbol("Rdiff_2"): Symbol("Rdiff_1"),
-#     Symbol("gaload_2"): Symbol("gaload_1"),
-#     Symbol("Raload_2"): Symbol("Raload_1"),
-#     Symbol("V1"): 0,
-#     Symbol("V_n"): 0,
-#     Symbol("V_p"): 1,
-#     Symbol("I2"): 0,
-#     Symbol("s"): 0}
-# gain_1stage_OTA.opt_goal = "max"
-# gain_1stage_OTA.conditions = {"min": [10**(-100/20)]}
-# gain_1stage_OTA.variables = {}
-# gain_1stage_OTA.out_def = {"eval": gain_1stage_OTA.tf}
-
-# ##################################################################
-
-# psrr_1stage_OTA = Test()
-# psrr_1stage_OTA.tf = ("vout", "vdd")
-# psrr_1stage_OTA.name = "psrr_1stage"
-# psrr_1stage_OTA.netlist = "ota_1stage"
-# psrr_1stage_OTA.parametros = {
-#     Symbol("gdiff_2"): Symbol("gdiff_1"),
-#     Symbol("Rdiff_2"): Symbol("Rdiff_1"),
-#     Symbol("gaload_2"): Symbol("gaload_1"),
-#     Symbol("Raload_2"): Symbol("Raload_1"),
-#     Symbol("V1"): 1,
-#     Symbol("V_n"): 0,
-#     Symbol("V_p"): 0,
-#     Symbol("I2"): 0,
-#     Symbol("s"): 0}
-# psrr_1stage_OTA.opt_goal = "max"
-# psrr_1stage_OTA.conditions = {"min": [0.0000001]}
-# psrr_1stage_OTA.variables = {}
-# psrr_1stage_OTA.out_def = {"eval": psrr_1stage_OTA.tf}
-
-# ##################################################################
-
-# rout_1stage_OTA = Test()
-# rout_1stage_OTA.name = "rout_1stage"
-# rout_1stage_OTA.target_param = Symbol("Ra_1stage")
-# rout_1stage_OTA.tf = ["vout", "vr"]
-# rout_1stage_OTA.netlist = "ota_1stage_rout"
-# rout_1stage_OTA.parametros = {Symbol("gdiff_2"): Symbol("gdiff_1"),
-#                               Symbol("Rdiff_2"): Symbol("Rdiff_1"),
-#                                 Symbol("gaload_2"): Symbol("gaload_1"),
-#                                 Symbol("Raload_2"): Symbol("Raload_1"),
-#                                 Symbol("V1"): 0,
-#                                 Symbol("V_n"): 0,
-#                                 Symbol("V_p"): 0,
-#                                 Symbol("Vr"): 1,
-#                                 Symbol("I2"): 0,
-#                                 Symbol("s"): 0,
-#                                 Symbol("Rr"): 1000,
-#                                 Symbol("Cl"): 1e-12}
-
-# rout_1stage_OTA.opt_goal = "max"
-# rout_1stage_OTA.conditions = {"min": [1]}
-# x = Symbol("x")
-# rout_1stage_OTA.lamd = lambdify(x, x*1000/(1-x))
-# rout_1stage_OTA.variables = {}
-# rout_1stage_OTA.out_def = {"eval": rout_1stage_OTA.tf}
-
-# ##################################################################
-
-# gm_1stage_OTA = Test()
-# gm_1stage_OTA.target_param = Symbol("gma_1stage")
-# gm_1stage_OTA.name = "gm_1stage"
-# gm_1stage_OTA.tf = ["vout", "vpos"]
-# gm_1stage_OTA.netlist = "ota_1stage"
-# gm_1stage_OTA.composed = 1
-# gm_1stage_OTA.out_def = {"divide": [gain_1stage_OTA, rout_1stage_OTA]}
-# gm_1stage_OTA.opt_goal = "max"
-# gm_1stage_OTA.conditions = {"min": [9.999999999999999e-6]}
-
-
-
-
-# OTA_1stage_macro.ext_mask = None
-
-# OTA_1stage_macro.primitives = [diffpair, currentmirror]
-# OTA_1stage_macro.submacromodels = [] 
-# OTA_1stage_macro.num_level_exp = -1
-# OTA_1stage_macro.specifications = [gain_1stage_OTA, rout_1stage_OTA, gm_1stage_OTA]
-# OTA_1stage_macro.opt_specifications = [gain_1stage_OTA]
-# OTA_1stage_macro.is_primitive = 0
-# OTA_1stage_macro.run_pareto = True
-
-# _, _, _, ota_1stage_df, mask = dfs(OTA_1stage_macro, debug = False)
-
-# ota_1stage_df.to_csv('ota_1stage_df.csv')
-
-# ota_1stage_df["gain"] = 20*np.log10(ota_1stage_df["gain_1stage"])
-
-
-# fig, ax = plt.subplots()
-
-# ax.scatter(ota_1stage_df["area"], ota_1stage_df["gain"])
-# ax.set_xscale('log')
-
-# fig.tight_layout()
-# fig.savefig("gain.png", dpi=300)
-
-# plt.close(fig)
