@@ -1,10 +1,10 @@
 {
-  "name": "simplecurrentmirror",
+  "name": "simplecurrentsource",
   "version": "1.0",
-  "description": "Simple current mirror — single transistor per branch, NMOS or PMOS",
-  "transistor_type": "pmos",
-  "subckt_name": "simplecurrentmirror",
-  "pin_order": ["VINP", "VINN", "VOUTP", "VOUTN", "VDD"],
+  "description": "Simple NMOS current source — single transistor per branch",
+  "transistor_type": "nmos",
+  "subckt_name": "simplecurrentsource",
+  "pin_order": ["VINP", "VINN", "VOUTP", "VOUTN", "VSS"],
 
   "small_signal": {
     "branches": [
@@ -12,24 +12,23 @@
         "name": "m1",
         "vd": "VOUTP",
         "vg": "VINP",
-        "vs": "VDD"
+        "vs": "VSS"
       },
       {
         "name": "m2",
         "vd": "VINP",
         "vg": "VINP",
-        "vs": "VDD"
+        "vs": "VSS"
       }
     ]
   },
 
-
   "ports": {
-            "VINP":  { "name": "VINP",  "role": "INPUT",  "description": "Positive input" },
-            "VINN":  { "name": "VINN",  "role": "INPUT",  "description": "Negative input" },
-            "VOUTP": { "name": "VOUTP", "role": "OUTPUT", "description": "Positive output" },
-            "VOUTN": { "name": "VOUTN", "role": "OUTPUT", "description": "Negative output" },
-            "VDD": { "name": "VDD", "role": "BIAS",   "description": "Vdd node" }
+    "VINP":  { "name": "VINP",  "role": "INPUT",  "description": "Reference gate/input" },
+    "VINN":  { "name": "VINN",  "role": "INPUT",  "description": "Diode-connected drain node" },
+    "VOUTP": { "name": "VOUTP", "role": "OUTPUT", "description": "Positive output" },
+    "VOUTN": { "name": "VOUTN", "role": "OUTPUT", "description": "Mirrored output" },
+    "VSS":   { "name": "VSS",   "role": "BIAS",   "description": "Source / ground node" }
   },
 
   "layout_params": [
@@ -42,8 +41,8 @@
   "lut_config": {
     "lut_w": 10e-6,
     "axes": [
-      { "variable": "vds",   "values": [-1.2, -0.1], "type": "arange" },
-      { "variable": "vgs", "values": [-1.2, -0.1], "type": "arange"  }
+      { "variable": "vds", "values": [0.1, 1.2, 100], "type": "arange" },
+      { "variable": "vgs", "values": [0.1, 1.2, 100], "type": "arange" }
     ],
     "lengths": [4e-7, 8e-7, 1.6e-6, 3.2e-6, 6.4e-6]
   },

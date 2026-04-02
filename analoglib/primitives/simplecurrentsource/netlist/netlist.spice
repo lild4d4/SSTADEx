@@ -1,0 +1,4 @@
+.subckt {SUBCKT_NAME} VINP VINN VOUTP VOUTN VSS
+M1 VOUTP VINP VSS VSS sg13_lv_nmos W={W_al} L={L_al}
+M2 VOUTN VINN VSS VSS sg13_lv_nmos W={W_al} L={L_al}
+.ends {SUBCKT_NAME}
