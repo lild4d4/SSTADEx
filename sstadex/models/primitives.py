@@ -193,7 +193,7 @@ class Primitive:
     # build() -- dispatches to the primitive's build.py
     # ------------------------------------------------------------------
 
-    def build(self) -> pd.DataFrame:
+    def build(self, **kwargs) -> pd.DataFrame:
         """
         Run LUT sweep via the primitive's build.py.
         Populates self.parameters and self.outputs from the returned DataFrame.
@@ -201,7 +201,7 @@ class Primitive:
         if self._build_fn is None:
             self._build_fn = self._load_fn("build", "build", required=True)
 
-        df = self._build_fn(self)
+        df = self._build_fn(self, **kwargs)
 
         # map DataFrame columns -> engine dicts
         self._populate_from_df(df)
