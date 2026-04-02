@@ -10,13 +10,13 @@
     "branches": [
       {
         "name": "m1",
-        "vd": "VINN",
+        "vd": "VOUTP",
         "vg": "VINP",
         "vs": "VDD"
       },
       {
         "name": "m2",
-        "vd": "VOUTN",
+        "vd": "VINP",
         "vg": "VINP",
         "vs": "VDD"
       }
