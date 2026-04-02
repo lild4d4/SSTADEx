@@ -74,7 +74,7 @@ obj = LookupTableGenerator(
     # Note: `ngspice` already applies parallel processing for certain
     # models. Setting `n_process` to values other than 1 may result in
     # slow downs.
-    n_process=4,
+    n_process=1,
 )
 
 # Optionally, run an op simulation to check outputs.

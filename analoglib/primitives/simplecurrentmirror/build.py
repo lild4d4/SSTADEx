@@ -46,8 +46,7 @@ def build(primitive) -> pd.DataFrame:
     # length column — repeat to match mesh shape
     L_col = np.repeat(cfg.lengths, np.size(vds_sweep))
     # --- scale small-signal params to operating current ---
-    il = id_           # total tail current
-    id = il / 2             # each branch
+    id = id_             # each branch
     W     = id / tr.jd
     gdsid = tr.gds / tr.id
     gds   = gdsid * id

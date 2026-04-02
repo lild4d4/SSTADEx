@@ -4,3 +4,5 @@ ota_1stage_opt.log
 *.csv
 output/
 *.png
+simulations/
+spice/

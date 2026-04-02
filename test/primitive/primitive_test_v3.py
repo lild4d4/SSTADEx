@@ -44,7 +44,7 @@ print(lib)
 # ---------------------------------------------------------------------------
 # 2. Instantiate primitive and run LUT sweep
 # ---------------------------------------------------------------------------
-dp = lib.get("simplediffpair", il=100e-6)
+dp = lib.get("simplediffpair", il=20e-6)
 print(dp)
 # Expected: <Primitive 'simplediffpair' v1.0 | lut=path/to/LUTs/IHP_LUT_nmos.npy>
 dp.set_port_voltages({
@@ -68,7 +68,7 @@ dp.set_port_voltages({
     "VINN":  0.9,
     "VOUTP": 1,
     "VOUTN": 1,
-    "VTAIL": np.linspace(0.1, 0.9, 10)
+    "VTAIL": 0.744
 })
 print(dp.summary())
 
