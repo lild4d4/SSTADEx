@@ -1,4 +1,4 @@
 .subckt {SUBCKT_NAME} VINP VINN VOUTP VOUTN VTAIL
-XM1 VOUTP VINP VTAIL VTAIL sg13_lv_nmos W={W_diff} L={L_diff}
-XM2 VOUTN VINN VTAIL VTAIL sg13_lv_nmos W={W_diff} L={L_diff}
+XM1 VOUTP VINP VTAIL VTAIL sg13_lv_nmos w={W_diff} l={L_diff}
+XM2 VOUTN VINN VTAIL VTAIL sg13_lv_nmos w={W_diff} l={L_diff}
 .ends {SUBCKT_NAME}
