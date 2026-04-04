@@ -1,6 +1,7 @@
 from unicodedata import name
 from pathlib import Path
 import subprocess
+import re
 
 import numpy as np
 from sympy import Symbol
@@ -321,7 +322,40 @@ class Macromodel:
 
     def _normalize_sim_points(self, params) -> list[dict]:
         if isinstance(params, dict):
-            return [params]
+            list_lengths = {}
+            scalar_values = {}
+
+            for key, value in params.items():
+                if isinstance(value, np.ndarray):
+                    if value.ndim == 0:
+                        scalar_values[key] = value.item()
+                    else:
+                        list_lengths[key] = value.tolist()
+                elif isinstance(value, (list, tuple)):
+                    list_lengths[key] = list(value)
+                else:
+                    scalar_values[key] = value
+
+            if not list_lengths:
+                return [params]
+
+            lengths = {len(values) for values in list_lengths.values()}
+            if len(lengths) != 1:
+                raise ValueError(
+                    "All iterable values in params must have the same length."
+                )
+
+            num_points = lengths.pop()
+            points = []
+            for idx in range(num_points):
+                point = {}
+                for key, values in list_lengths.items():
+                    point[key] = values[idx]
+                for key, value in scalar_values.items():
+                    point[key] = value
+                points.append(point)
+
+            return points
         if isinstance(params, list):
             return params
         if hasattr(params, "to_dict"):
@@ -357,27 +391,70 @@ class Macromodel:
             "stderr": proc.stderr,
         }
 
+    def _extract_log_variables(
+        self,
+        log_path: Path,
+        variables: list[str] | None,
+    ) -> dict[str, float | None]:
+        if not variables:
+            return {}
+
+        if not log_path.exists():
+            return {variable: None for variable in variables}
+
+        log_text = log_path.read_text()
+        extracted = {}
+
+        for variable in variables:
+            patterns = [
+                rf"v\(\s*{re.escape(variable)}\s*\)\s*=\s*([^\s]+)",
+                rf"\b{re.escape(variable)}\b\s*=\s*([^\s]+)",
+            ]
+
+            value = None
+            for pattern in patterns:
+                matches = re.findall(pattern, log_text, flags=re.IGNORECASE)
+                if matches:
+                    raw_value = matches[-1]
+                    try:
+                        value = float(raw_value)
+                    except ValueError:
+                        value = raw_value
+                    break
+
+            extracted[variable] = value
+
+        return extracted
+
     def ngspice_sim(
         self,
         params,
         extra_spice=None,
         workdir: str = "./simulations",
+        variables: list[str] | None = None,
     ) -> list[dict]:
         points = self._normalize_sim_points(params)
         results = []
 
         for idx, point in enumerate(points):
             run_name = f"{self.name}_{idx}"
+            print("run_name: ", run_name)
             netlist_text = self.gen_netlist_for_params(
                 point=point,
                 extra_spice=extra_spice,
             )
+            print(f"Running ngspice simulation for point {idx}: {point}")
+            print(f"Generated netlist:\n{netlist_text}")
             sim_result = self._run_ngspice(
                 netlist_text=netlist_text,
                 run_name=run_name,
                 workdir=workdir,
             )
             sim_result["params"] = point
+            sim_result["variables"] = self._extract_log_variables(
+                log_path=sim_result["log_path"],
+                variables=variables,
+            )
             results.append(sim_result)
 
         return results

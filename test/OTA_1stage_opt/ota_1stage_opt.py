@@ -176,7 +176,7 @@ OTA_1stage_macro.add_instance(
         "VINP": "N1",
         "VINN": "N1",
         "VOUTP": "VOUT",
-        "VOUTN": "NC",
+        "VOUTN": "N1",
         "VDD": "VDD",
     },
     index=0,
@@ -281,45 +281,69 @@ plt.close(fig)
 ota_1stage_df_filtered = ota_1stage_df[((ota_1stage_df[Symbol("W_diff")]>1e-6) & (ota_1stage_df[Symbol("W_al")]>1e-6))]
 ota_1stage_df_filtered.to_csv('ota_1stage_df_filtered.csv')
 
+print("w_diff", ota_1stage_df_filtered[Symbol("W_diff")].to_numpy())
+
 point = {
-    Symbol("W_diff"): 12e-6,
-    Symbol("L_diff"): 0.4e-6,
-    Symbol("W_al"): 8e-6,
-    Symbol("L_al"): 0.4e-6,
+    Symbol("W_diff"): ota_1stage_df_filtered[Symbol("W_diff")].to_numpy(),
+    Symbol("L_diff"): ota_1stage_df_filtered[Symbol("L_diff")].to_numpy(),
+    Symbol("W_al"): ota_1stage_df_filtered[Symbol("W_al")].to_numpy(),
+    Symbol("L_al"): ota_1stage_df_filtered[Symbol("L_al")].to_numpy(),
 }
 
-netlist_text = OTA_1stage_macro.gen_netlist_for_params(
+simulations = OTA_1stage_macro.ngspice_sim(
     point,
+    variables=["gain", "vout"],
     extra_spice = {
-        "body": [
-            
-        ],
-        "post": [
-            "XOTA_1stage_macro net1 vn vout vdd ibias", # VINP VINN VOUTP VDD IBIAS
-            "R1 vfb vout 10000000000 m=1",
+        "pre": [
+            "**",
+            "x1 net1 vn vout vdd ibias OTA_1stage_macro", # VINP VINN VOUTP VDD IBIAS
+            "R1 vfb vout 100000000 m=1",
             "C2 vfb vss 10 m=1",
-            "R2 vfb vss 90000000000 m=1",
+            "R2 vfb vss 900000000 m=1",
             "V1 net1 vfb dc 0 ac 1",
             "I1 ibias vss 20e-6",
-            ".lib /home/daniel/SSTADEX-prev/IHP-Open-PDK/ihp-sg13g2/libs.tech/ngspice/models/cornerMOSlv.lib mos_tt",
+            ".lib /home/designer/shared/SSTADEx/IHP-Open-PDK/ihp-sg13g2/libs.tech/ngspice/models/cornerMOSlv.lib mos_tt",
             "Vref vn 0 0.9",
             "Vdd vdd 0 1.5",
             "Vss vss 0 0",
             ".control",
-            "pre_osdi /home/daniel/SSTADEX-prev/IHP-Open-PDK/ihp-sg13g2/libs.tech/ngspice/osdi/psp103_nqs.osdi",
             "ac dec 10 1 1G",
-            "wrdata temp.csv vdb(vout) phase(vout)",
+            "meas ac gain find vdb(vout) at=1000",
+            "op",
+            "print v(vout)",
             ".endc",
             ".end"
         ]
-    }
+    })
+
+print(simulations)
+
+sim_results_df = pd.DataFrame(
+    [
+        {
+            **sim_result["params"],
+            **{
+                f"sim_{name}": value
+                for name, value in sim_result.get("variables", {}).items()
+            },
+            "run_name": sim_result["run_name"],
+            "returncode": sim_result["returncode"],
+        }
+        for sim_result in simulations
+    ]
 )
 
-spice_dir = Path("spice")
-spice_dir.mkdir(parents=True, exist_ok=True)
+ota_1stage_comparison_df = pd.concat(
+    [
+        ota_1stage_df_filtered.reset_index(drop=True),
+        sim_results_df[
+            ["run_name", "returncode", "sim_gain", "sim_vout"]
+        ].reset_index(drop=True),
+    ],
+    axis=1,
+)
 
-spice_path = spice_dir / "ota_1stage_generated.spice"
-spice_path.write_text(netlist_text)
+ota_1stage_comparison_df["error"] = np.abs(ota_1stage_comparison_df["gain"] - ota_1stage_comparison_df["sim_gain"])
 
-print(netlist_text)
-print(f"Saved netlist to: {spice_path}")
+ota_1stage_comparison_df.to_csv("ota_1stage_comparison.csv", index=False)
+print(ota_1stage_comparison_df)
