@@ -20,6 +20,7 @@ class Macromodel:
         self,
         name="",
         netlist=None,
+        model=None,
         electrical_parameters={},
         specifications={},
         electrical_variables={},
@@ -47,6 +48,7 @@ class Macromodel:
     ):
         self.name = name
         self.netlist = netlist
+        self.model = model
         self.electrical_parameters = electrical_parameters
         self.specifications = specifications
         self.electrical_variables = electrical_variables
@@ -141,6 +143,25 @@ class Macromodel:
 
         nets = [net_map[pin] for pin in self.ports]
         return f"{instance_name} {' '.join(nets)} {self.subckt_name}"
+
+    def render_small_signal_instance(self, instance_name: str, net_map: dict[str, str]) -> str:
+        if self.model is None:
+            raise ValueError(
+                f"Macromodel '{self.name}' has no simplified model defined."
+            )
+        print('DEBUG MESSAGE')
+        print(net_map)
+        missing = [pin for pin in self.ports if pin not in net_map]
+        if missing:
+            raise KeyError(
+                f"Macromodel '{self.name}' missing nets for ports: {missing}"
+            )
+
+        tokens = {"INSTANCE": instance_name}
+        for port in self.ports:
+            tokens[port] = net_map[port]
+
+        return self.model.format(**tokens)
 
     def _collect_subckts(self, emitted=None) -> list[str]:
         if emitted is None:
