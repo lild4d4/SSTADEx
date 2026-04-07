@@ -52,7 +52,7 @@ def build(primitive, ref_current=None) -> pd.DataFrame:
 
         l_col = np.repeat(cfg.lengths, np.size(vgs_cs))
         il = id_
-        id = il / 2
+        id = il
         w_m1 = id / tr.jd
         w_m2 = ref_current / tr.jd
         gdsid = tr.gds / tr.id
