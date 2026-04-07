@@ -84,29 +84,37 @@ class Macromodel:
 
     def update(self, macro_results):
         results_df = macro_results[3]
+        results_len = len(results_df.index)
 
         for param in self.macromodel_parameters:
+            updated = False
             for spec in self.specifications:
                 print("param: ", param)
                 print(spec.target_param)
-                if param == spec.target_param:
+                if param == spec.target_param and spec.name in results_df:
                     self.macromodel_parameters[param] = results_df[spec.name].values
-                elif spec.target_param != "":
-                    shape = np.asarray(results_df["area"].values).shape
-                    print(shape)
-                    if shape[0] > self.macromodel_parameters[param].shape[0]:
-                        self.macromodel_parameters[param] = np.resize(
-                            np.asarray(self.macromodel_parameters[param]), shape
-                        )
-                    else:
-                        self.macromodel_parameters[param] = self.macromodel_parameters[
-                            param
-                        ][: len(results_df["area"])]
+                    updated = True
+                    break
 
-            if param == Symbol("Cin_2stage"):
-                self.macromodel_parameters[param] = results_df[param].values
-            elif param == Symbol("Cgd_2stage"):
-                self.macromodel_parameters[param] = results_df[param].values
+            if not updated:
+                current_values = np.asarray(self.macromodel_parameters[param])
+
+                if current_values.ndim == 0:
+                    current_values = np.asarray([current_values.item()])
+
+                if results_len == 0:
+                    self.macromodel_parameters[param] = current_values[:0]
+                elif current_values.shape[0] < results_len:
+                    self.macromodel_parameters[param] = np.resize(
+                        current_values, (results_len,)
+                    )
+                else:
+                    self.macromodel_parameters[param] = current_values[:results_len]
+
+            # if param == Symbol("Cin_2stage"):
+            #     self.macromodel_parameters[param] = results_df[param].values
+            # elif param == Symbol("Cgd_2stage"):
+            #     self.macromodel_parameters[param] = results_df[param].values
 
         self.output_results = {}
         for output in self.outputs:
