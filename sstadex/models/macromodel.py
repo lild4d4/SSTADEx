@@ -45,6 +45,8 @@ class Macromodel:
         ports=None,
         instances=None,
         subckt_name=None,
+        interface_variables=[],
+        shared_nodes=None,
     ):
         self.name = name
         self.netlist = netlist
@@ -63,11 +65,14 @@ class Macromodel:
         self.tfs_sol = tfs_sol
         self.its_final = its_final
         self.outputs = outputs
+        self.interface_variables = interface_variables
+        self.interface_results = {}
         self.is_primitive = is_primitive
         self.ext_mask = ext_mask
         self.run_pareto = run_pareto
         self.subs_expr = subs_expr
         self.use_subs = use_subs
+        self.shared_nodes = shared_nodes or {}
 
         self.ports = ports or []
         self.instances = instances or []
@@ -119,6 +124,12 @@ class Macromodel:
         self.output_results = {}
         for output in self.outputs:
             self.output_results[output] = results_df[output].values
+
+        self.interface_results = {}
+        for interface_variable in self.interface_variables:
+            self.interface_results[interface_variable] = results_df[
+                interface_variable
+            ].values
 
         self.is_primitive = True
         print("outputs results: ", self.output_results)

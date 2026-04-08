@@ -12,6 +12,19 @@ def bfs():
     pass
 
 
+def get_block_output_symbols(block):
+    if isinstance(block, Macromodel):
+        return [
+            *list(block.outputs),
+            *list(getattr(block, "interface_variables", [])),
+        ]
+
+    return [
+        *list(getattr(block, "outputs", {}).keys()),
+        *list(getattr(block, "interface_variables", {}).keys()),
+    ]
+
+
 def dfs(macromodel, debug=False, going_up=0):
     print("############################################")
     print("Starting the exploration of: ", macromodel.name)
@@ -157,14 +170,19 @@ def explore(macromodel, flatten_params, expr, debug=False):
     prim_size = 0
 
     new_macromodel_outputs = []
+    new_macromodel_interface_variables = []
     for prim in primmods_list:
         if type(prim) is Macromodel:
             print("macro as prim")
             primmods_outputs_aux.update(prim.output_results)
+            primmods_outputs_aux.update(prim.interface_results)
             for out in prim.outputs:
                 # primmods_outputs_aux.append(prim.output_results[out])
                 if out not in new_macromodel_outputs:
                     new_macromodel_outputs.append(out)
+            for interface_variable in prim.interface_variables:
+                if interface_variable not in new_macromodel_interface_variables:
+                    new_macromodel_interface_variables.append(interface_variable)
         else:
             for out in macromodel.outputs:
                 # print("all macromodel outputs: ", out)
@@ -173,10 +191,20 @@ def explore(macromodel, flatten_params, expr, debug=False):
                     primmods_outputs_aux[out] = prim.outputs[
                         out
                     ]  ### this could be removed if we elimante the macromodel.outputs completly
+            for interface_variable in getattr(macromodel, "interface_variables", []):
+                if interface_variable in prim.interface_variables:
+                    primmods_outputs_aux[interface_variable] = prim.interface_variables[
+                        interface_variable
+                    ]
+
+        
 
     for i in reversed(new_macromodel_outputs):
         if i not in macromodel.outputs:
             macromodel.outputs.insert(0, i)
+    for i in reversed(new_macromodel_interface_variables):
+        if i not in macromodel.interface_variables:
+            macromodel.interface_variables.insert(0, i)
 
     # print("macromodel outputs: ", macromodel.outputs)
     print("primmods_outputs_aux: ", primmods_outputs_aux)
@@ -207,7 +235,7 @@ def explore(macromodel, flatten_params, expr, debug=False):
             pos = 0
             for idx, prim in enumerate(primmods_list):
                 if idx == 0:
-                    for jdx, output in enumerate(prim.outputs):
+                    for jdx, output in enumerate(get_block_output_symbols(prim)):
                         primmods_outputs.append(
                             np.tile(
                                 primmods_outputs_aux[output], len(primvalues_list[1][0])
@@ -215,7 +243,7 @@ def explore(macromodel, flatten_params, expr, debug=False):
                         )
                         pos = pos + 1
                 else:
-                    for jdx, output in enumerate(prim.outputs):
+                    for jdx, output in enumerate(get_block_output_symbols(prim)):
                         primmods_outputs.append(
                             np.repeat(
                                 primmods_outputs_aux[output], len(primvalues_list[0][0])
@@ -243,7 +271,7 @@ def explore(macromodel, flatten_params, expr, debug=False):
             # print("Y_2: ", Y_2)
 
             for idx, prim in enumerate(primmods_list):
-                for jdx, output in enumerate(prim.outputs):
+                for jdx, output in enumerate(get_block_output_symbols(prim)):
                     print("primods outputs: ", output)
                     primmods_outputs.append(
                         primmods_outputs_aux[output][tuple(meshgrid[idx].flatten()),]
@@ -265,7 +293,7 @@ def explore(macromodel, flatten_params, expr, debug=False):
         else:
             Y_2 = Y_2.reshape(len(primvalues_list_aux), -1)
             for idx, prim in enumerate(primmods_list):
-                for jdx, output in enumerate(prim.outputs):
+                for jdx, output in enumerate(get_block_output_symbols(prim)):
                     primmods_outputs.append(primmods_outputs_aux[output])
         # print(np.asarray(Y_2).shape)
         # if len(np.asarray(Y_2))!=1:

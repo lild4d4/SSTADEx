@@ -162,6 +162,7 @@ class Primitive:
         # engine interface -- populated after build()
         self.parameters: dict = {}
         self.outputs:    dict = {}
+        self.interface_variables: dict = {}
 
         # cached callables
         self._build_fn = None

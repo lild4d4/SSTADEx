@@ -96,6 +96,9 @@ diffpair.outputs = {
 }
 
 diffpair_df["vs"] = np.tile(vs, len(lengths))
+diffpair.interface_variables={
+    'vs_diff': np.tile(vs, len(lengths))
+}
 
 diffpair_df.to_csv('diffpair.csv')
 
@@ -149,10 +152,6 @@ print("\n--- DataFrame ---")
 print(f"shape: {currentsource_df.shape}")
 print(currentsource_df.head())
 
-
-currentsource_mask = (currentsource_df["width_m1"]>1e-6) & (currentsource_df["width_m2"]>1e-6)
-currentsource_df = currentsource_df[currentsource_mask]
-
 currentsource.parameters = {
     Symbol('g_gm_cs_m1'): currentsource_df['gm'].values,
     Symbol('R_gds_cs_m1'): currentsource_df['Ro'].values
@@ -163,6 +162,18 @@ currentsource.outputs = {
     Symbol("W_cs_m2"): currentsource_df["width_m2"].values,
     Symbol("L_cs"): currentsource_df["length"].values,
 }
+
+currentsource.interface_variables={
+    #'vs_cs': np.repeat(np.tile(vs, len(lengths)), 5),
+    'vs_cs': np.tile(vs, len(lengths)),
+    'vgs_cs': currentsource_df["vgs_cs"].values,
+}
+
+print('vs_cs: ', currentsource.interface_variables['vs_cs'])
+print('vgs_cs: ', currentsource.interface_variables['vgs_cs'])
+
+# currentsource_mask = (currentsource_df["width_m1"]>1e-6) & (currentsource_df["width_m2"]>1e-6)
+# currentsource_df = currentsource_df[currentsource_mask]
 
 currentsource_df.to_csv('currentsource.csv')
 
@@ -184,6 +195,14 @@ OTA_1stage_macro = Macromodel(
         Symbol('Ra'): np.logspace(3, 7, N_points),
         Symbol('gma'): np.logspace(-5, -2, N_points)}
     )
+
+OTA_1stage_macro.interface_variables = [
+    "vs_diff",
+]
+
+OTA_1stage_macro.shared_nodes = {
+    "IBIAS_node": ["vs_diff", "vs_cs"],
+}
 
 OTA_1stage_macro.add_instance(
     "xdp",
@@ -237,6 +256,11 @@ current_source_macro = Macromodel(
         Symbol('Ics'): [I_amp]
     }
 )
+
+current_source_macro.interface_variables=[
+    "vs_cs",
+    "vgs_cs"
+]
 
 OTA_1stage_macro.add_instance(
     "cs",
@@ -387,7 +411,7 @@ fig.savefig("gain.png", dpi=300)
 plt.close(fig)
 
 
-ota_1stage_df_filtered = ota_1stage_df[((ota_1stage_df[Symbol("W_diff")]>1e-6) & (ota_1stage_df[Symbol("W_al")]>1e-6))]
+ota_1stage_df_filtered = ota_1stage_df[((ota_1stage_df[Symbol("W_diff")]>1e-6) & (ota_1stage_df[Symbol("W_al")]>1e-6) & (ota_1stage_df[Symbol("W_cs_m1")]>1e-6) & (ota_1stage_df[Symbol("W_cs_m2")]>1e-6))]
 ota_1stage_df_filtered.to_csv('ota_1stage_df_filtered.csv')
 
 print("w_diff", ota_1stage_df_filtered[Symbol("W_diff")].to_numpy())
