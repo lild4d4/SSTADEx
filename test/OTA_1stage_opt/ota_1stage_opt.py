@@ -182,7 +182,7 @@ currentsource_df.to_csv('currentsource.csv')
 # OTA_1stage_macro 
 OTA_1stage_macro = Macromodel(
     name = 'OTA_1stage_macro',
-    ports=["VINP", "VINN", "VOUT", "VDD", "IBIAS"],
+    ports=["VINP", "VINN", "VOUT", "VDD", "IBIAS", "Vbias", "VSS"],
     outputs = [
         Symbol("W_diff"), Symbol("L_diff"), 
         Symbol("W_al"), Symbol("L_al")],
@@ -240,7 +240,7 @@ OTA_1stage_macro.add_instance(
 
 current_source_macro = Macromodel(
     name = 'current_source_macro',
-    ports = ['VOUT', 'VSS'],
+    ports = ['VOUT', 'VSS', 'Vbias'],
     outputs = [
         Symbol("W_cs_m1"),
         Symbol("W_cs_m2"),
@@ -253,7 +253,7 @@ current_source_macro = Macromodel(
     },
     model="""I{INSTANCE} {VOUT} {VSS} 0""",
     macromodel_parameters = {
-        Symbol('Ics'): [I_amp]
+        Symbol('Ixcs_macro'): [I_amp]
     }
 )
 
@@ -263,11 +263,12 @@ current_source_macro.interface_variables=[
 ]
 
 OTA_1stage_macro.add_instance(
-    "cs",
+    "xcs_macro",
     current_source_macro,
     {
         "VOUT": "IBIAS",
-        "VSS": "VSS"
+        "VSS": "VSS",
+        "Vbias": "Vbias"
     },
     index=0,
     netlist_params={
@@ -276,13 +277,14 @@ OTA_1stage_macro.add_instance(
 )
 
 current_source_macro.add_instance(
-    "cs",
+    "xcs",
     currentsource,
     {
         "VOUTP": "VOUT",
         "VSS": "VSS", 
         "VOUTN": "Vbias",
-        "VINP": "Vbias"
+        "VINP": "Vbias",
+        "VINN": "Vbias"
     },
     index=0,
     netlist_params={
@@ -416,67 +418,75 @@ ota_1stage_df_filtered.to_csv('ota_1stage_df_filtered.csv')
 
 print("w_diff", ota_1stage_df_filtered[Symbol("W_diff")].to_numpy())
 
-# point = {
-#     Symbol("W_diff"): ota_1stage_df_filtered[Symbol("W_diff")].to_numpy(),
-#     Symbol("L_diff"): ota_1stage_df_filtered[Symbol("L_diff")].to_numpy(),
-#     Symbol("W_al"): ota_1stage_df_filtered[Symbol("W_al")].to_numpy(),
-#     Symbol("L_al"): ota_1stage_df_filtered[Symbol("L_al")].to_numpy(),
-# }
+point = {
+    Symbol("W_diff"): ota_1stage_df_filtered[Symbol("W_diff")].to_numpy(),
+    Symbol("L_diff"): ota_1stage_df_filtered[Symbol("L_diff")].to_numpy(),
+    Symbol("W_al"): ota_1stage_df_filtered[Symbol("W_al")].to_numpy(),
+    Symbol("L_al"): ota_1stage_df_filtered[Symbol("L_al")].to_numpy(),
+    Symbol("W_cs_m1"): ota_1stage_df_filtered[Symbol("W_cs_m1")].to_numpy(),
+    Symbol("W_cs_m2"): ota_1stage_df_filtered[Symbol("W_cs_m2")].to_numpy(),
+    Symbol("L_cs"): ota_1stage_df_filtered[Symbol("L_cs")].to_numpy(),
+}
 
-# simulations = OTA_1stage_macro.ngspice_sim(
-#     point,
-#     variables=["gain", "vout"],
-#     extra_spice = {
-#         "pre": [
-#             "**",
-#             "x1 net1 vn vout vdd ibias OTA_1stage_macro", # VINP VINN VOUTP VDD IBIAS
-#             "R1 vfb vout 100000000 m=1",
-#             "C2 vfb vss 10 m=1",
-#             "R2 vfb vss 900000000 m=1",
-#             "V1 net1 vfb dc 0 ac 1",
-#             "I1 ibias vss 20e-6",
-#             ".lib /home/designer/shared/SSTADEx/IHP-Open-PDK/ihp-sg13g2/libs.tech/ngspice/models/cornerMOSlv.lib mos_tt",
-#             "Vref vn 0 0.9",
-#             "Vdd vdd 0 1.5",
-#             "Vss vss 0 0",
-#             ".control",
-#             "ac dec 10 1 1G",
-#             "meas ac gain find vdb(vout) at=1000",
-#             "op",
-#             "print v(vout)",
-#             ".endc",
-#             ".end"
-#         ]
-#     })
+simulations = OTA_1stage_macro.ngspice_sim(
+    point,
+    variables=["gain", "vout", "ibias", "vbias"],
+    extra_spice = {
+        "pre": [
+            "**",
+            "x1 net1 vn vout vdd ibias vbias vss OTA_1stage_macro", # VINP VINN VOUTP VDD IBIAS
+            "R1 vfb vout 100000000 m=1",
+            "C2 vfb vss 10 m=1",
+            "R2 vfb vss 900000000 m=1",
+            "V1 net1 vfb dc 0 ac 1",
+            "I0 vdd vbias 20e-6",
+            ".lib /home/daniel/SSTADEX-prev/IHP-Open-PDK/ihp-sg13g2/libs.tech/ngspice/models/cornerMOSlv.lib mos_tt",
+            "Vref vn 0 0.9",
+            "Vdd vdd 0 1.5",
+            "Vss vss 0 0",
+            ".control",
+            "pre_osdi /home/daniel/SSTADEX-prev/IHP-Open-PDK/ihp-sg13g2/libs.tech/ngspice/osdi/psp103_nqs.osdi",
+            "ac dec 10 1 1G",
+            "meas ac gain find vdb(vout) at=1000",
+            "op",
+            "print v(vout)",
+            "print v(ibias)",
+            "print v(vbias)",
+            ".endc",
+            ".end"
+        ]
+    })
 
-# print(simulations)
+print(simulations)
 
-# sim_results_df = pd.DataFrame(
-#     [
-#         {
-#             **sim_result["params"],
-#             **{
-#                 f"sim_{name}": value
-#                 for name, value in sim_result.get("variables", {}).items()
-#             },
-#             "run_name": sim_result["run_name"],
-#             "returncode": sim_result["returncode"],
-#         }
-#         for sim_result in simulations
-#     ]
-# )
+sim_results_df = pd.DataFrame(
+    [
+        {
+            **sim_result["params"],
+            **{
+                f"sim_{name}": value
+                for name, value in sim_result.get("variables", {}).items()
+            },
+            "run_name": sim_result["run_name"],
+            "returncode": sim_result["returncode"],
+        }
+        for sim_result in simulations
+    ]
+)
 
-# ota_1stage_comparison_df = pd.concat(
-#     [
-#         ota_1stage_df_filtered.reset_index(drop=True),
-#         sim_results_df[
-#             ["run_name", "returncode", "sim_gain", "sim_vout"]
-#         ].reset_index(drop=True),
-#     ],
-#     axis=1,
-# )
+ota_1stage_comparison_df = pd.concat(
+    [
+        ota_1stage_df_filtered.reset_index(drop=True),
+        sim_results_df[
+            ["run_name", "returncode", "sim_gain", "sim_vout", "sim_ibias", "sim_vbias"]
+        ].reset_index(drop=True),
+    ],
+    axis=1,
+)
 
-# ota_1stage_comparison_df["error"] = np.abs(ota_1stage_comparison_df["gain"] - ota_1stage_comparison_df["sim_gain"])
+ota_1stage_comparison_df["gain_error"] = 100*np.abs(ota_1stage_comparison_df["gain"] - ota_1stage_comparison_df["sim_gain"])/ota_1stage_comparison_df["gain"]
 
-# ota_1stage_comparison_df.to_csv("ota_1stage_comparison.csv", index=False)
-# print(ota_1stage_comparison_df)
+ota_1stage_comparison_df["ibias_error"] = 100*np.abs(ota_1stage_comparison_df["vs_diff"] - ota_1stage_comparison_df["sim_ibias"])/ota_1stage_comparison_df["vs_diff"]
+
+ota_1stage_comparison_df.to_csv("ota_1stage_comparison.csv", index=False)
+print(ota_1stage_comparison_df)

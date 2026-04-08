@@ -217,6 +217,64 @@ class Macromodel:
             resolved[key] = point[value] if value in point else value
         return resolved
 
+    def _render_model_subckt(self) -> str:
+        if self.model is None:
+            raise ValueError(
+                f"Macromodel '{self.name}' has no simplified model defined."
+            )
+
+        tokens = {"INSTANCE": self.subckt_name}
+        for port in self.ports:
+            tokens[port] = port
+
+        header = f".subckt {self.subckt_name} {' '.join(self.ports)}"
+        body = self.model.format(**tokens)
+        footer = f".ends {self.subckt_name}"
+        return "\n".join([header, body, footer])
+
+    def _collect_subckts_for_params(
+        self,
+        point: dict | None,
+        emitted=None,
+    ) -> list[str]:
+        if emitted is None:
+            emitted = set()
+
+        blocks = []
+        for inst in self.instances:
+            block = inst.block
+            key = getattr(block, "subckt_name", getattr(block, "name", inst.name))
+
+            if key in emitted:
+                continue
+
+            if isinstance(block, Macromodel):
+                if block.instances:
+                    nested = block._collect_subckts_for_params(point=point, emitted=emitted)
+                    for item in nested:
+                        if item not in blocks:
+                            blocks.append(item)
+                    if key not in emitted:
+                        blocks.append(block.render_subckt())
+                        emitted.add(key)
+                elif block.model is not None:
+                    blocks.append(block._render_model_subckt())
+                    emitted.add(key)
+                continue
+
+            if hasattr(block, "render_subckt"):
+                resolved_params = self._resolve_instance_netlist_params(inst, point)
+                blocks.append(
+                    block.render_subckt(
+                        index=inst.index,
+                        netlist_params=resolved_params,
+                        use_defaults=False,
+                    )
+                )
+                emitted.add(key)
+
+        return blocks
+
     def render_subckt(self) -> str:
         header = f".subckt {self.subckt_name} {' '.join(self.ports)}"
 
@@ -286,25 +344,7 @@ class Macromodel:
 
     def gen_netlist_for_params(self, point: dict, extra_spice=None) -> str:
         extra = self._normalize_extra_spice(extra_spice)
-        emitted = set()
-        subckts = []
-
-        for inst in self.instances:
-            block = inst.block
-            key = getattr(block, "subckt_name", getattr(block, "name", inst.name))
-
-            if key in emitted or not hasattr(block, "render_subckt"):
-                continue
-
-            resolved_params = self._resolve_instance_netlist_params(inst, point)
-            subckts.append(
-                block.render_subckt(
-                    index=inst.index,
-                    netlist_params=resolved_params,
-                    use_defaults=False,
-                )
-            )
-            emitted.add(key)
+        subckts = self._collect_subckts_for_params(point=point, emitted=set())
 
         top = self.render_subckt()
         if extra["body"]:
