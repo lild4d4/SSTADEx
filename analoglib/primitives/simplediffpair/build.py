@@ -38,12 +38,27 @@ def build(primitive) -> pd.DataFrame:
     vtail = np.atleast_1d(vtail)
     vinp = np.atleast_1d(vinp)
 
-    # matrices 2D alineadas
-    vds = voutp[:, None] - vtail[None, :]
-    vgs = vinp[:, None]  - vtail[None, :]
+    vds_sweep = []
+    vgs_sweep = []
 
-    vds_sweep = vds.ravel()
-    vgs_sweep = vgs.ravel()
+    print("Ready for flatten")
+
+    for vout_aux in voutp:
+        vds_aux = vout_aux - vtail
+        vgs_aux = vinp - vtail
+
+        vds_sweep.append(vds_aux)
+        vgs_sweep.append(vgs_aux)
+
+    # # matrices 2D alineadas
+    # vds = voutp[:, None] - vtail[None, :]
+    # vgs = vinp[:, None]  - vtail[None, :]
+
+    # vds_sweep = vds.ravel()
+    # vgs_sweep = vgs.ravel()
+
+    vds_sweep = np.asarray(vds_sweep).flatten()
+    vgs_sweep = np.asarray(vgs_sweep).flatten()
 
     print('voutp: ', voutp)
     print('vtail: ', vtail)

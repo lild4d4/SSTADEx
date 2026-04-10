@@ -1,0 +1,3 @@
+.subckt {SUBCKT_NAME} VIN VOUT VDD
+XM1 VOUT VIN VDD VDD sg13_lv_pmos w={W_cos} l={L_cos} ng={ng_cos}
+.ends {SUBCKT_NAME}
