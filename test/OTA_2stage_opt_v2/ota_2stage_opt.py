@@ -40,7 +40,7 @@ RL = Vout/IL
 ## OTA 2stage specifications
 
 efficiency = 0.99
-gain_condition = 80
+gain_condition = 70
 estability_condition = 60
 size_condition = 1e-3 
 
@@ -60,7 +60,7 @@ print(f"R2: {R2:.2f} Ohm")
 ########################## PRIMITIVES #########################################
 
 vs = np.linspace(0.2, Vout-0.1, N_points)
-vout_1stage = np.linspace(Vout-0.8, Vout, N_points)
+vout_1stage = np.linspace(Vref - 0.1, Vout+0.1, N_points)
 
 #Instantiation
 diffpair = lib.get("simplediffpair", il=I_amp_1stage)
@@ -71,16 +71,16 @@ commonsource = lib.get("simplecommonsource", il=I_amp_2stage)
 diffpair.set_port_voltages({
     "VINP":  Vref,
     "VINN":  Vref,
-    "VOUTP": Vout,
-    "VOUTN": Vout,
+    "VOUTP": vout_1stage,
+    "VOUTN": vout_1stage,
     "VTAIL": vs
 })
 
 currentmirror.set_port_voltages({
-    "VINP":  Vout,
-    "VINN":  Vout,
-    "VOUTP": Vout,
-    "VOUTN": Vout,
+    "VINP":  vout_1stage,
+    "VINN":  vout_1stage,
+    "VOUTP": vout_1stage,
+    "VOUTN": vout_1stage,
     "VDD": Vin
 })
 
@@ -94,6 +94,10 @@ commonsource.set_port_voltages({
 diffpair_df = diffpair.build()
 currentmirror_df = currentmirror.build()
 commonsource_df = commonsource.build()
+
+diffpair_df.to_csv("diffpair.csv")
+currentmirror_df.to_csv("currentmirror.csv")
+commonsource_df.to_csv("commonsource.csv")
 
 #Parameters definition
 diffpair.parameters = {
@@ -178,7 +182,7 @@ current_source_macro = Macromodel(
         'Ibias': I_amp_1stage,
         'Vdd': Vin,
     },
-    model="""I{INSTANCE} {VOUT} {VSS} 0""",
+    model="""I{INSTANCE} {VOUT} {VSS} 20e-6""",
     macromodel_parameters = {
         Symbol('Ixcs_macro'): [I_bias_ref]
     }
@@ -200,6 +204,7 @@ OTA_2stage_macro.add_instance(
     netlist_params={
         "W_cos": Symbol("W_cos"),
         "L_cos": Symbol("L_cos"),
+        "ng_cos": Symbol("ng_cos"),
     },
 )
 
@@ -217,6 +222,7 @@ OTA_1stage_macro.add_instance(
     netlist_params={
         "W_diff": Symbol("W_diff"),
         "L_diff": Symbol("L_diff"),
+        "ng_diff": Symbol("ng_diff"),
     },
 )
 
@@ -234,6 +240,7 @@ OTA_1stage_macro.add_instance(
     netlist_params={
         "W_al": Symbol("W_al"),
         "L_al": Symbol("L_al"),
+        "ng_al": Symbol("ng_al"),
     },
 )
 
@@ -268,8 +275,80 @@ OTA_1stage_macro.add_instance(
 
 ########################## Shared Nodes #####################################
 
+currentmirror.interface_variables={
+    'vout_1stage_currentmirror': np.tile(vout_1stage, len(lengths))
+}
+
+diffpair.interface_variables={
+    'vout_1stage_diffpair': np.tile(np.repeat(vout_1stage, N_points), len(lengths))
+}
+
+commonsource.interface_variables={
+    'vout_1stage_commonsource': np.repeat(vout_1stage, len(lengths))
+}
+
+OTA_2stage_macro.interface_variables=[
+    "vout_1stage_commonsource"
+]
+
+OTA_1stage_macro.interface_variables=[
+    "vout_1stage_currentmirror",
+    'vout_1stage_diffpair'
+]
+
+OTA_1stage_macro.shared_nodes = {
+    "IBIAS_node": ["vout_1stage_currentmirror", "vout_1stage_diffpair"],
+}
+
+OTA_2stage_macro.shared_nodes = {
+    "IBIAS_node": ["vout_1stage_diffpair", "vout_1stage_commonsource"],
+}
 
 
+########################## CONDITIONS #####################################
+
+OTA_1stage_macro.derived_metrics = {
+    "gain_1stage_proxy": lambda df: df[Symbol("Ra")] * df[Symbol("ga")],
+}
+
+OTA_2stage_macro.submacro_condition_rules = {
+    OTA_1stage_macro: [
+        {
+            "kind": "range_from_submacro_metric",
+            "metric": "gain_1stage_proxy",
+            "target_column": "gain_1stage",
+            "bound": "min",
+            "margin_factor": 1.0,
+        },
+    ]
+}
+
+OTA_2stage_macro.propagated_conditions = {
+    "direct": [
+        {
+            "kind": "range",
+            "column": Symbol("W_cos"),
+            "condition": {"min": 1e-6, "max": 1000e-6},
+        },
+    ],
+    "derived": [],
+}
+
+OTA_1stage_macro.propagated_conditions = {
+    "direct": [
+        {
+            "kind": "range",
+            "column": Symbol("W_al"),
+            "condition": {"min": 1e-6, "max": 1000e-6},
+        },
+        {
+            "kind": "range",
+            "column": Symbol("W_diff"),
+            "condition": {"min": 1e-6, "max": 1000e-6},
+        },
+    ],
+    "derived": [],
+}
 
 ########################## TEST BENCH #####################################
 
@@ -334,8 +413,24 @@ tb_rout_1stage = Testbench(
 rout_1stage = tb_rout_1stage.make_test(
     name="rout_1stage",
     opt_goal="max",
+    target_param=Symbol("Ra"),
     conditions={"min": [1]},
     lamd=lambda x: x * 1000 / (1 - x),
+)
+
+tb_gm_1stage = Testbench(
+    name="ota_1stage_gm",
+    dut=OTA_1stage_macro,
+    tf=("VOUT", "VINP"),
+)
+
+gm_1stage = tb_gm_1stage.make_test(
+    name="gm_1stage",
+    opt_goal="max",
+    composed=1,
+    out_def = {"divide": [gain_1stage, rout_1stage]},
+    conditions={"min": [1e-10]},
+    target_param=Symbol("ga"),
 )
 
 tb_gain_2stage = Testbench(
@@ -363,12 +458,12 @@ tb_gain_2stage = Testbench(
 gain_2stage = tb_gain_2stage.make_test(
     name="gain_2stage",
     opt_goal="max",
-    conditions={"min": [10 ** (-100 / 20)]},
+    conditions={"min": [10 ** (gain_condition / 20)]},
 )
 
  ######### 
 
-OTA_1stage_macro.specifications = [gain_1stage, rout_1stage]
+OTA_1stage_macro.specifications = [gain_1stage, rout_1stage, gm_1stage]
 OTA_1stage_macro.opt_specifications = [gain_1stage]
 OTA_1stage_macro.primitives = [diffpair, currentmirror]
 OTA_1stage_macro.submacromodels = [current_source_macro]
@@ -382,8 +477,98 @@ OTA_2stage_macro.primitives = [commonsource]
 OTA_2stage_macro.submacromodels = [OTA_1stage_macro]
 OTA_2stage_macro.num_level_exp = -1
 OTA_2stage_macro.is_primitive = 0
-OTA_2stage_macro.run_pareto = False
+OTA_2stage_macro.run_pareto = True
 
 _, _, _, ota_2stage_df, mask = dfs(OTA_2stage_macro, debug = False)
 
+ota_2stage_df["1stage_gain"] = 20*np.log10(ota_2stage_df[Symbol("Ra")] * ota_2stage_df[Symbol("ga")])
+ota_2stage_df["gain"] = 20*np.log10(ota_2stage_df["gain_2stage"])
+
 ota_2stage_df.to_csv('ota_2stage_df.csv')
+
+fig, ax = plt.subplots()
+ax.scatter(ota_2stage_df["area"], ota_2stage_df["gain"])
+ax.set_xscale('log')
+fig.tight_layout()
+fig.savefig("gain.png", dpi=300)
+plt.close(fig)
+
+simulation_wcos = ota_2stage_df[Symbol("W_cos")].to_numpy()
+simulation_wdiff = ota_2stage_df[Symbol("W_diff")].to_numpy()
+simulation_wal = ota_2stage_df[Symbol("W_al")].to_numpy()
+
+wcos_max = 10e-6
+ng_cos = np.ceil(simulation_wcos / wcos_max).astype(int)
+ng_diff = np.ceil(simulation_wdiff / wcos_max).astype(int)
+ng_al = np.ceil(simulation_wal / wcos_max).astype(int)
+
+point = {
+    Symbol("W_diff"): ota_2stage_df[Symbol("W_diff")].to_numpy(),
+    Symbol("L_diff"): ota_2stage_df[Symbol("L_diff")].to_numpy(),
+    Symbol("ng_diff"): ng_diff,
+    Symbol("W_al"): ota_2stage_df[Symbol("W_al")].to_numpy(),
+    Symbol("L_al"): ota_2stage_df[Symbol("L_al")].to_numpy(),
+    Symbol("ng_al"): ng_al,
+    Symbol("W_cos"): ota_2stage_df[Symbol("W_cos")].to_numpy(),
+    Symbol("L_cos"): ota_2stage_df[Symbol("L_cos")].to_numpy(),
+    Symbol("ng_cos"): ng_cos
+}
+
+simulations = OTA_2stage_macro.ngspice_sim(
+    point,
+    variables=["gain", "vout"],
+    extra_spice = {
+        "pre": [
+            "**",
+            "x1 vref vret vout vdd vss OTA_2stage_macro", # VINP VINN VOUTP VDD IBIAS
+            "R1 vfb vout 200000000 m=1",
+            "C2 vfb vss 10 m=1",
+            "R2 vfb vss 900000000 m=1",
+            "V1 vret vfb dc 0 ac 1",
+            "I0 vout vss 20e-6",
+            ".lib /home/daniel/SSTADEX-prev/IHP-Open-PDK/ihp-sg13g2/libs.tech/ngspice/models/cornerMOSlv.lib mos_tt",
+            "Vref vref 0 0.9",
+            "Vdd vdd 0 1.5",
+            "Vss vss 0 0",
+            ".control",
+            "pre_osdi /home/daniel/SSTADEX-prev/IHP-Open-PDK/ihp-sg13g2/libs.tech/ngspice/osdi/psp103_nqs.osdi",
+            "ac dec 10 1 1G",
+            "meas ac gain find vdb(vout) at=1000",
+            "op",
+            "print v(vout)",
+            ".endc",
+            ".end"
+        ]
+    })
+
+print(simulations)
+
+sim_results_df = pd.DataFrame(
+    [
+        {
+            **sim_result["params"],
+            **{
+                f"sim_{name}": value
+                for name, value in sim_result.get("variables", {}).items()
+            },
+            "run_name": sim_result["run_name"],
+            "returncode": sim_result["returncode"],
+        }
+        for sim_result in simulations
+    ]
+)
+
+ota_2stage_comparison_df = pd.concat(
+    [
+        ota_2stage_df.reset_index(drop=True),
+        sim_results_df[
+            ["run_name", "returncode", "sim_gain", "sim_vout"]
+        ].reset_index(drop=True),
+    ],
+    axis=1,
+)
+
+ota_2stage_comparison_df["gain_error"] = 100*np.abs(ota_2stage_comparison_df["gain"] - ota_2stage_comparison_df["sim_gain"])/ota_2stage_comparison_df["gain"]
+
+ota_2stage_comparison_df.to_csv("ota_2stage_comparison.csv", index=False)
+print(ota_2stage_comparison_df)

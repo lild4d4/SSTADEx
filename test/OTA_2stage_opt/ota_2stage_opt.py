@@ -131,6 +131,12 @@ Ga {VOUT} {VDD} {VINP} {VINN} 1""",
         Symbol('ga'): np.logspace(-5, -2, N_points)}
 )
 
+OTA_1stage_macro.derived_metrics = {
+    "gain_1stage": lambda df: 20 * np.log10(
+        df[Symbol("Ra")] * df[Symbol("ga")]
+    ),
+}
+
 OTA_2stage_macro.add_instance(
     "xcos",
     commonsource,
@@ -158,6 +164,21 @@ OTA_2stage_macro.add_instance(
     },
     index=0,
 )
+
+OTA_2stage_macro.submacro_condition_rules = {
+    "OTA_1stage_macro": [
+        {
+            "kind": "allowed_values_from_parent",
+            "source_column": "vout_1stage",
+            "target_column": "vout_1stage",
+        },
+        {
+            "kind": "metric",
+            "metric": "gain_1stage",
+            "condition": {"min": gain_condition},
+        },
+    ]
+}
 
 #################### TESTBENCHES ##########################
 
