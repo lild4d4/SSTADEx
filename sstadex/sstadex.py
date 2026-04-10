@@ -25,6 +25,121 @@ def get_block_output_symbols(block):
     ]
 
 
+def derive_submacro_conditions(parent_macro, parent_df):
+    derived_conditions = {}
+
+    if parent_df is None or len(parent_df.index) == 0:
+        return derived_conditions
+
+    submacro_by_name = {
+        submacro.name: submacro
+        for submacro in getattr(parent_macro, "submacromodels", [])
+    }
+
+    for target, rules in getattr(parent_macro, "submacro_condition_rules", {}).items():
+        target_macro = (
+            target
+            if isinstance(target, Macromodel)
+            else submacro_by_name.get(str(target))
+        )
+        target_name = target.name if isinstance(target, Macromodel) else str(target)
+        target_conditions = {"direct": [], "derived": []}
+
+        for rule in rules:
+            kind = rule.get("kind")
+
+            if kind == "allowed_values_from_parent":
+                source_column = rule.get("source_column", rule.get("column"))
+                target_column = rule.get("target_column", source_column)
+
+                if source_column in parent_df:
+                    target_conditions["direct"].append(
+                        {
+                            "kind": "allowed_values",
+                            "column": target_column,
+                            "values": np.unique(parent_df[source_column].to_numpy()),
+                        }
+                    )
+
+            elif kind == "range_from_parent":
+                source_column = rule.get("source_column", rule.get("column"))
+                target_column = rule.get("target_column", source_column)
+
+                if source_column in parent_df:
+                    target_conditions["direct"].append(
+                        {
+                            "kind": "range",
+                            "column": target_column,
+                            "condition": {
+                                "min": parent_df[source_column].min(),
+                                "max": parent_df[source_column].max(),
+                            },
+                        }
+                    )
+
+            elif kind == "range":
+                target_conditions["direct"].append(
+                    {
+                        "kind": "range",
+                        "column": rule["column"],
+                        "condition": rule.get("condition", {}),
+                    }
+                )
+
+            elif kind == "range_from_submacro_metric":
+                if target_macro is None:
+                    continue
+
+                metric_series = np.asarray(
+                    target_macro.evaluate_derived_metric(rule["metric"], parent_df)
+                )
+                if metric_series.size == 0:
+                    continue
+
+                metric_min = float(np.min(metric_series))
+                metric_max = float(np.max(metric_series))
+                bound = rule.get("bound", "min")
+                margin_factor = rule.get("margin_factor", 1.0)
+                margin_offset = rule.get("margin_offset", 0.0)
+                target_column = rule.get("target_column", rule["metric"])
+
+                condition = {}
+                if bound in ("min", "both"):
+                    condition["min"] = metric_min * margin_factor + margin_offset
+                if bound in ("max", "both"):
+                    condition["max"] = metric_max * margin_factor + margin_offset
+
+                target_conditions["direct"].append(
+                    {
+                        "kind": "range",
+                        "column": target_column,
+                        "condition": condition,
+                    }
+                )
+
+            elif kind == "metric":
+                target_conditions["derived"].append(
+                    {
+                        "kind": "metric",
+                        "metric": rule["metric"],
+                        "condition": rule.get("condition", {}),
+                    }
+                )
+
+            elif kind == "expression":
+                target_conditions["derived"].append(
+                    {
+                        "kind": "expression",
+                        "expr": rule["expr"],
+                        "condition": rule.get("condition", {}),
+                    }
+                )
+
+        derived_conditions[target_name] = target_conditions
+
+    return derived_conditions
+
+
 def dfs(macromodel, debug=False, going_up=0):
     print("############################################")
     print("Starting the exploration of: ", macromodel.name)
@@ -46,6 +161,10 @@ def dfs(macromodel, debug=False, going_up=0):
         macromodel.flattened_params,
         primmods_output,
     )
+
+    if getattr(macromodel, "propagated_conditions", None):
+        filtered_df = macromodel.apply_propagated_conditions(final_df)
+        final_df = filtered_df
 
     for idx, mac in enumerate(macro_results):
         macro_results[idx] = macro_results[idx][mask]
@@ -74,10 +193,30 @@ def dfs(macromodel, debug=False, going_up=0):
     #    print("End of the exploration of: ", macromodel.name)
     #    return macro_results, exploration_axes, primmods_output, final_df
 
+    submacro_conditions = derive_submacro_conditions(macromodel, final_df)
     for submacromodel in macromodel.submacromodels:
         print(macromodel.submacromodels)
         print("Going into the Macromodel: ", submacromodel.name)
         print("Going into the Macromodel with code: ", submacromodel)
+        inherited_conditions = submacro_conditions.get(
+            submacromodel.name,
+            {"direct": [], "derived": []},
+        )
+        local_conditions = getattr(
+            submacromodel,
+            "propagated_conditions",
+            {"direct": [], "derived": []},
+        )
+        submacromodel.propagated_conditions = {
+            "direct": [
+                *list(local_conditions.get("direct", [])),
+                *list(inherited_conditions.get("direct", [])),
+            ],
+            "derived": [
+                *list(local_conditions.get("derived", [])),
+                *list(inherited_conditions.get("derived", [])),
+            ],
+        }
         submacro_results = dfs(submacromodel, debug)
         print(macromodel.submacromodels)
         macro_results = submacro_results[0]
@@ -408,6 +547,11 @@ def build(macromodel, repeat=True, debug=False):
 
     tfs = []
     for spec in macromodel.specifications:
+        if spec.composed == 1:
+            tfs.append(None)
+            MNA_times[spec.name] = 0
+            continue
+
         if getattr(spec, "testbench", None) is not None:
             testbench = spec.testbench
             macromodel.name = testbench.name
@@ -478,11 +622,10 @@ def build(macromodel, repeat=True, debug=False):
 
     result = []
     for idx, exp in enumerate(tfs):
-        proc = specifications[idx].out_def
-        if len(specifications[idx].parametros) != 0:
-            exp = exp.subs(specifications[idx].parametros)
+        spec = specifications[idx]
+        proc = spec.out_def
 
-        if specifications[idx].composed == 1:
+        if spec.composed == 1:
             if list(proc.keys())[0] == "divide":
                 print("in divide")
                 numerator = proc["divide"][0]
@@ -510,6 +653,10 @@ def build(macromodel, repeat=True, debug=False):
                     numerator = result[num_index]
 
                 result.append(numerator / result[den_index])
+            continue
+
+        if len(spec.parametros) != 0:
+            exp = exp.subs(spec.parametros)
 
         if list(proc.keys())[0] == "eval":
             print("in eval")

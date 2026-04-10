@@ -47,6 +47,9 @@ class Macromodel:
         subckt_name=None,
         interface_variables=[],
         shared_nodes=None,
+        propagated_conditions=None,
+        derived_metrics=None,
+        submacro_condition_rules=None,
     ):
         self.name = name
         self.netlist = netlist
@@ -73,6 +76,12 @@ class Macromodel:
         self.subs_expr = subs_expr
         self.use_subs = use_subs
         self.shared_nodes = shared_nodes or {}
+        self.propagated_conditions = propagated_conditions or {
+            "direct": [],
+            "derived": [],
+        }
+        self.derived_metrics = derived_metrics or {}
+        self.submacro_condition_rules = submacro_condition_rules or {}
 
         self.ports = ports or []
         self.instances = instances or []
@@ -134,6 +143,75 @@ class Macromodel:
         self.is_primitive = True
         print("outputs results: ", self.output_results)
         print("macromodel parameters updated: ", self.macromodel_parameters)
+
+    def evaluate_derived_metric(self, metric_name: str, df):
+        if metric_name not in self.derived_metrics:
+            raise KeyError(
+                f"Macromodel '{self.name}' has no derived metric '{metric_name}'."
+            )
+
+        metric_def = self.derived_metrics[metric_name]
+        if callable(metric_def):
+            return metric_def(df)
+
+        if isinstance(metric_def, dict):
+            expr = metric_def.get("expr")
+            if callable(expr):
+                return expr(df)
+
+        raise TypeError(
+            f"Derived metric '{metric_name}' in macromodel '{self.name}' must be callable "
+            "or a dict with a callable 'expr'."
+        )
+
+    def apply_propagated_conditions(self, df):
+        print('[DEBUG] Applying propagated conditions to: ', self.name)
+        if df is None or len(df.index) == 0:
+            return df
+
+        filtered_df = df.copy()
+
+        for condition in self.propagated_conditions.get("direct", []):
+            kind = condition.get("kind", "range")
+            column = condition.get("column")
+
+            if column not in filtered_df:
+                continue
+
+            if kind == "range":
+                limits = condition.get("condition", {})
+                if "min" in limits:
+                    filtered_df = filtered_df[filtered_df[column] >= limits["min"]]
+                if "max" in limits:
+                    filtered_df = filtered_df[filtered_df[column] <= limits["max"]]
+            elif kind == "allowed_values":
+                values = np.asarray(condition.get("values", []))
+                filtered_df = filtered_df[filtered_df[column].isin(values)]
+
+        for condition in self.propagated_conditions.get("derived", []):
+            kind = condition.get("kind", "metric")
+
+            if kind == "metric":
+                series = self.evaluate_derived_metric(condition["metric"], filtered_df)
+            elif kind == "expression":
+                expr = condition.get("expr")
+                if not callable(expr):
+                    raise TypeError(
+                        f"Derived expression condition in macromodel '{self.name}' must "
+                        "provide a callable 'expr'."
+                    )
+                series = expr(filtered_df)
+            else:
+                continue
+
+            limits = condition.get("condition", {})
+            if "min" in limits:
+                filtered_df = filtered_df[series >= limits["min"]]
+                series = series.loc[filtered_df.index]
+            if "max" in limits:
+                filtered_df = filtered_df[series <= limits["max"]]
+
+        return filtered_df
 
     def add_instance(
         self,
