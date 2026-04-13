@@ -39,7 +39,7 @@
   ],
 
   "lut_config": {
-    "lut_w": 10e-6,
+    "lut_w": 5e-6,
     "axes": [
       { "variable": "vds",   "values": [0.1, 1.2], "type": "arange" },
       { "variable": "vgs", "values": [0.1, 1.2], "type": "arange"  }

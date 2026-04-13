@@ -45,7 +45,7 @@ ngspice = NgspiceSimulator(
     # you can specify other parameters such as the number of fingers.
     # The keys are exactly those recognized by the model.
     device_parameters = {
-        "w": 10e-6,
+        "w": 5e-6,
     }
 )
 
@@ -81,4 +81,4 @@ obj = LookupTableGenerator(
 # obj.op_simulation()
 
 # Build and store the table.
-obj.build("../../LUTs/ihp-sg13g2/lv_10w_nmos")
+obj.build("../../LUTs/ihp-sg13g2/lv_5w_nmos")
