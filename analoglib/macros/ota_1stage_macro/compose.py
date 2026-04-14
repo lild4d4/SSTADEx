@@ -82,15 +82,23 @@ def compose(
     )
 
     diffpair.interface_variables={
-    'vs_diff': np.tile(vs, len(lengths))
+    'vs_diff': np.tile(np.tile(vs, len(np.atleast_1d(Vout))), len(lengths)),
+    'vout_1stage_diffpair': np.tile(np.repeat(Vout, N_points), len(lengths))
+    }
+
+    currentmirror.interface_variables={
+    'vout_1stage_currentmirror': np.tile(Vout, len(lengths))
     }
 
     OTA_1stage_macro.interface_variables = [
         "vs_diff",
+        "vout_1stage_currentmirror",
+        "vout_1stage_diffpair"
     ]
 
     OTA_1stage_macro.shared_nodes = {
     "IBIAS_node": ["vs_diff", "vs_cs"],
+    "VOUT_node": ["vout_1stage_currentmirror", "vout_1stage_diffpair"],
     }
 
     OTA_1stage_macro.add_instance(

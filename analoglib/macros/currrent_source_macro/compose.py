@@ -63,11 +63,11 @@ def compose(
     )
 
     currentsource.interface_variables={
-    'vs_cs': np.tile(vs, len(lengths)),
+        'vs_cs': np.tile(vs, len(lengths)),
     }
 
     current_source_macro.interface_variables=[
-    "vs_cs",
+        "vs_cs",
     ]
 
     current_source_macro.add_instance(
