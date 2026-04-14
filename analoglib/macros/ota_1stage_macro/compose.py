@@ -7,6 +7,8 @@ def compose(
     lengths,
     electrical_parameters,
     ROOT,
+    ports,
+    model=None,
     **kwargs,
 ):  
     
@@ -67,7 +69,7 @@ def compose(
 
     OTA_1stage_macro = Macromodel(
     name = 'OTA_1stage_macro',
-    ports=["VINP", "VINN", "VOUT", "VDD", "IBIAS", "Vbias", "VSS"],
+    ports=ports,
     outputs = [
         Symbol("W_diff"), Symbol("L_diff"), 
         Symbol("W_al"), Symbol("L_al")],
@@ -78,7 +80,8 @@ def compose(
         "Il": I_amp},
     macromodel_parameters={
         Symbol('Ra'): np.logspace(3, 7, N_points),
-        Symbol('gma'): np.logspace(-5, -2, N_points)}
+        Symbol('ga'): np.logspace(-5, -2, N_points)},
+    model=model
     )
 
     diffpair.interface_variables={
@@ -213,6 +216,7 @@ def compose(
         name="rout_1stage",
         opt_goal="max",
         conditions={"min": [1]},
+        target_param=Symbol("Ra"),
         lamd=lambda x: x * 1000 / (1 - x),
     )
 
