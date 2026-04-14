@@ -2,6 +2,7 @@ from .mna import mna, mna_solve, mna_tf  # Import the function directly
 from .utils import spice2ptxt
 from .models import (
     Macromodel,
+    MacroLibrary,
     Primitive,
     Library,
     Transistor,
@@ -19,6 +20,7 @@ from .spice_sim import spice_sim
 __all__ = [
     "mna, spice2ptxt",
     "Macromodel",
+    "MacroLibrary",
     "topdown_prim_lookup",
     "bfs",
     "dfs",
