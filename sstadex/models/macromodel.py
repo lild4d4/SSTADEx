@@ -99,15 +99,16 @@ class Macromodel:
     def update(self, macro_results):
         results_df = macro_results[3]
         results_len = len(results_df.index)
+        updated_target_params = []
+        resized_params = []
 
         for param in self.macromodel_parameters:
             updated = False
             for spec in self.specifications:
-                print("param: ", param)
-                print(spec.target_param)
                 if param == spec.target_param and spec.name in results_df:
                     self.macromodel_parameters[param] = results_df[spec.name].values
                     updated = True
+                    updated_target_params.append(str(param))
                     break
 
             if not updated:
@@ -124,6 +125,7 @@ class Macromodel:
                     )
                 else:
                     self.macromodel_parameters[param] = current_values[:results_len]
+                resized_params.append(str(param))
 
             # if param == Symbol("Cin_2stage"):
             #     self.macromodel_parameters[param] = results_df[param].values
@@ -141,8 +143,14 @@ class Macromodel:
             ].values
 
         self.is_primitive = True
-        print("outputs results: ", self.output_results)
-        print("macromodel parameters updated: ", self.macromodel_parameters)
+        print(
+            f"[FLOW] Updated macromodel {self.name}: "
+            f"rows={results_len}, "
+            f"target_params={updated_target_params or ['none']}, "
+            f"resized_params={resized_params or ['none']}, "
+            f"outputs={list(self.output_results.keys())}, "
+            f"interfaces={list(self.interface_results.keys())}"
+        )
 
     def evaluate_derived_metric(self, metric_name: str, df):
         if metric_name not in self.derived_metrics:
@@ -165,7 +173,10 @@ class Macromodel:
         )
 
     def apply_propagated_conditions(self, df):
-        print('[DEBUG] Applying propagated conditions to: ', self.name)
+        print(
+            f"[FLOW] Applying propagated conditions to {self.name}: "
+            f"rows={len(df.index)}"
+        )
         if df is None or len(df.index) == 0:
             return df
 
@@ -176,17 +187,30 @@ class Macromodel:
             column = condition.get("column")
 
             if column not in filtered_df:
+                print(
+                    f"[FLOW] Skipping propagated condition in {self.name}: "
+                    f"column {column} not found"
+                )
                 continue
 
+            rows_before = len(filtered_df.index)
             if kind == "range":
                 limits = condition.get("condition", {})
                 if "min" in limits:
                     filtered_df = filtered_df[filtered_df[column] >= limits["min"]]
                 if "max" in limits:
                     filtered_df = filtered_df[filtered_df[column] <= limits["max"]]
+                print(
+                    f"[FLOW] Propagated range in {self.name}: {column} "
+                    f"{limits} -> {rows_before} -> {len(filtered_df.index)}"
+                )
             elif kind == "allowed_values":
                 values = np.asarray(condition.get("values", []))
                 filtered_df = filtered_df[filtered_df[column].isin(values)]
+                print(
+                    f"[FLOW] Propagated allowed values in {self.name}: {column} "
+                    f"count={values.size} -> {rows_before} -> {len(filtered_df.index)}"
+                )
 
         for condition in self.propagated_conditions.get("derived", []):
             kind = condition.get("kind", "metric")
@@ -205,11 +229,17 @@ class Macromodel:
                 continue
 
             limits = condition.get("condition", {})
+            label = condition.get("metric", "expression")
+            rows_before = len(filtered_df.index)
             if "min" in limits:
                 filtered_df = filtered_df[series >= limits["min"]]
                 series = series.loc[filtered_df.index]
             if "max" in limits:
                 filtered_df = filtered_df[series <= limits["max"]]
+            print(
+                f"[FLOW] Propagated derived condition in {self.name}: {label} "
+                f"{limits} -> {rows_before} -> {len(filtered_df.index)}"
+            )
 
         return filtered_df
 
@@ -246,8 +276,6 @@ class Macromodel:
             raise ValueError(
                 f"Macromodel '{self.name}' has no simplified model defined."
             )
-        print('DEBUG MESSAGE')
-        print(net_map)
         missing = [pin for pin in self.ports if pin not in net_map]
         if missing:
             raise KeyError(
@@ -358,7 +386,6 @@ class Macromodel:
 
         body_lines = []
         for inst in self.instances:
-            print("inst.net_map: ", inst.net_map)
             body_lines.append(
                 inst.block.render_instance(
                     instance_name=inst.name,

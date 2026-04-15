@@ -48,8 +48,6 @@ def get_sizing_symbol_order(flattened_params):
 
 
 def filter_conditions(macromodel, macro_results, sizing):
-    print(sizing)
-
     # if idx < 1:
     #    size_cond = macromodel.area_conditions[idx]
     # else:
@@ -97,7 +95,6 @@ def filter_conditions(macromodel, macro_results, sizing):
 def get_new_conditions(
     macromodel, mask, macro_results, exploration_axes, flattened_params, sizing
 ):
-    print("sizing: ", sizing.shape)
     flattened_submacro_params = []
 
     for model in flattened_params.keys():
@@ -107,8 +104,6 @@ def get_new_conditions(
         else:
             for i in model.parameters.keys():
                 flattened_submacro_params.append(i)
-
-    print(flattened_submacro_params)
 
     final_dict = {}
     for idx, axe in enumerate(exploration_axes):
@@ -121,10 +116,15 @@ def get_new_conditions(
 
     sizing_symbols, output_symbols, _ = get_sizing_symbol_order(flattened_params)
 
+    print(
+        f"[FLOW] Building dataframe for {macromodel.name}: "
+        f"sizing_shape={getattr(sizing, 'shape', None)}, "
+        f"kept_points={int(np.count_nonzero(mask))}/{len(mask)}"
+    )
+
     if len(sizing) != 0:
         area = np.full(sizing[0][mask].shape, 0)
         for idx, output in enumerate(sizing_symbols):
-            print("output name: ", output)
             final_dict[output] = sizing[idx][mask]
             if output in output_symbols:
                 area = area + sizing[idx][mask]
@@ -134,16 +134,24 @@ def get_new_conditions(
     df = pd.DataFrame.from_dict(final_dict)
     df_name = 'conditions_df_'+macromodel.name+'.csv'
     df.to_csv(df_name)
-    print('[DEBUG] conditions df: ', df)
+    print(
+        f"[FLOW] Dataframe built for {macromodel.name}: "
+        f"rows={len(df.index)}, columns={len(df.columns)}"
+    )
 
     for shared_node_variables in getattr(macromodel, "shared_nodes", {}).values():
         if not shared_node_variables:
             continue
 
         if all(variable in df for variable in shared_node_variables):
+            rows_before = len(df.index)
             reference_variable = shared_node_variables[0]
             for variable in shared_node_variables[1:]:
                 df = df[df[reference_variable] == df[variable]]
+            print(
+                f"[FLOW] Shared node filter {macromodel.name} "
+                f"{shared_node_variables}: {rows_before} -> {len(df.index)}"
+            )
 
     # df.sort_values(by=flattened_submacro_params)
 
