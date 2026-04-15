@@ -47,7 +47,7 @@ def compose(
         },
         model="""Ra {VOUT} {VDD} 1
 Ga {VOUT} {VDD} {VINP} {VINN} 1""",
-        ports=["VINP", "VINN", "VOUT", "VDD", "VSS"]
+        ports=["VINP", "VINN", "VOUT", "VBIAS", "VDD", "VSS"]
     )
 
     commonsource = primitive_lib.get("simplecommonsource", il=I_amp_2stage)
@@ -103,8 +103,9 @@ Ga {VOUT} {VDD} {VINP} {VINN} 1""",
             "VINP": "VINP",
             "VINN": "VINN",
             "VOUT": "VOUT_1STAGE",
+            "VBIAS": "VBIAS_1STAGE",
             "VDD": "VDD",
-            "VSS": "VSS"
+            "VSS": "VSS",
         },
         index=0,
     )
