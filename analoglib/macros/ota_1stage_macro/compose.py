@@ -41,6 +41,12 @@ def compose(
         lengths=lengths,
         electrical_parameters=current_source_macro_eparameters,
         ROOT=ROOT,
+        output_symbols={
+            "W_cs_m1": Symbol("W_cs_1stage_m1"),
+            "W_cs_m2": Symbol("W_cs_1stage_m2"),
+            "L_cs": Symbol("L_cs_1stage"),
+            "vs_cs": "vs_cs_1stage",
+        },
     )
 
     diffpair.set_port_voltages({"VINP":  Vref, "VINN":  Vref, "VOUTP": Vout, "VOUTN": Vout, "VTAIL": vs})
@@ -71,8 +77,13 @@ def compose(
     name = 'OTA_1stage_macro',
     ports=ports,
     outputs = [
-        Symbol("W_diff"), Symbol("L_diff"), 
-        Symbol("W_al"), Symbol("L_al")],
+        Symbol("W_diff"),
+        Symbol("L_diff"),
+        Symbol("W_al"),
+        Symbol("L_al"),
+        Symbol("W_cs_1stage_m1"),
+        Symbol("W_cs_1stage_m2"),
+        Symbol("L_cs_1stage"),],
     electrical_parameters = {
         "Vdd": Vdd,
         "Vneg": Vref,
@@ -100,7 +111,7 @@ def compose(
     ]
 
     OTA_1stage_macro.shared_nodes = {
-    "IBIAS_node": ["vs_diff", "vs_cs"],
+    "IBIAS_node": ["vs_diff", "vs_cs_1stage"],
     "VOUT_node": ["vout_1stage_currentmirror", "vout_1stage_diffpair"],
     }
 

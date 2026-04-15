@@ -283,6 +283,7 @@ def explore(macromodel, flatten_params, expr, debug=False):
     values_list = []
     primvalues_list = []
     primmods_list = []
+    primitive_entries = []
     print("#### creating the primods_list ####")
     for mod, i in flatten_params.items():
         # print("mod: ", mod)
@@ -293,6 +294,7 @@ def explore(macromodel, flatten_params, expr, debug=False):
                 Y = list(i.values())
                 primvalues_list.append(Y)
                 primmods_list.append(mod)
+                primitive_entries.append((mod, Y))
             else:
                 values_list.append(list(i.values()))
         else:
@@ -301,6 +303,7 @@ def explore(macromodel, flatten_params, expr, debug=False):
                 print("Y: ", Y)
             primvalues_list.append(Y)
             primmods_list.append(mod)
+            primitive_entries.append((mod, Y))
 
     primmods_outputs_aux = {}
     primmods_outputs = []
@@ -337,13 +340,6 @@ def explore(macromodel, flatten_params, expr, debug=False):
                     ]
 
         
-
-    for i in reversed(new_macromodel_outputs):
-        if i not in macromodel.outputs:
-            macromodel.outputs.insert(0, i)
-    for i in reversed(new_macromodel_interface_variables):
-        if i not in macromodel.interface_variables:
-            macromodel.interface_variables.insert(0, i)
 
     # print("macromodel outputs: ", macromodel.outputs)
     print("primmods_outputs_aux: ", primmods_outputs_aux)
@@ -393,15 +389,15 @@ def explore(macromodel, flatten_params, expr, debug=False):
         elif Y_2.shape[0] > 2:
             pos_list = []
             meshgrid = []
-            for idx, prim in enumerate(primvalues_list):
-                pos_list.append(list(range(len(prim[0]))))
+            for _, prim_values in primitive_entries:
+                pos_list.append(list(range(len(prim_values[0]))))
             print(pos_list)
-            meshgrid = np.meshgrid(*pos_list)
+            meshgrid = np.meshgrid(*pos_list, indexing="ij")
             print(meshgrid)
 
             Y_aux = []
-            for idx, prim in enumerate(primvalues_list):
-                for jdx, prim_in in enumerate(prim):
+            for idx, (_, prim_values) in enumerate(primitive_entries):
+                for prim_in in prim_values:
                     print("prim_in: ", prim_in)
                     Y_aux.append(np.asarray(prim_in)[tuple(meshgrid[idx].flatten()),])
 
@@ -409,11 +405,13 @@ def explore(macromodel, flatten_params, expr, debug=False):
 
             # print("Y_2: ", Y_2)
 
-            for idx, prim in enumerate(primmods_list):
-                for jdx, output in enumerate(get_block_output_symbols(prim)):
+            for idx, (prim, _) in enumerate(primitive_entries):
+                for output in get_block_output_symbols(prim):
                     print("primods outputs: ", output)
                     primmods_outputs.append(
-                        primmods_outputs_aux[output][tuple(meshgrid[idx].flatten()),]
+                        np.asarray(primmods_outputs_aux[output])[
+                            tuple(meshgrid[idx].flatten()),
+                        ]
                     )
 
             # primmods_outputs.append(

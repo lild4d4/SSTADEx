@@ -8,6 +8,11 @@ def compose(
     ROOT,
     **kwargs,
 ):  
+    output_symbols = kwargs.get("output_symbols", {})
+    w_cs_m1_symbol = output_symbols.get("W_cs_m1", Symbol("W_cs_m1"))
+    w_cs_m2_symbol = output_symbols.get("W_cs_m2", Symbol("W_cs_m2"))
+    l_cs_symbol = output_symbols.get("L_cs", Symbol("L_cs"))
+    vs_cs_name = output_symbols.get("vs_cs", "vs_cs")
     
     primitive_lib = Library(
     name      = "ihp_sg13g2",
@@ -38,18 +43,18 @@ def compose(
     }
 
     currentsource.outputs = {
-        Symbol("W_cs_m1"): currentsource_df["width_m1"].values,
-        Symbol("W_cs_m2"): currentsource_df["width_m2"].values,
-        Symbol("L_cs"): currentsource_df["length"].values,
+        w_cs_m1_symbol: currentsource_df["width_m1"].values,
+        w_cs_m2_symbol: currentsource_df["width_m2"].values,
+        l_cs_symbol: currentsource_df["length"].values,
     }
 
     current_source_macro = Macromodel(
         name = 'current_source_macro',
         ports = ['VOUT', 'VSS', 'Vbias'],
         outputs = [
-            Symbol("W_cs_m1"),
-            Symbol("W_cs_m2"),
-            Symbol("L_cs"),
+            w_cs_m1_symbol,
+            w_cs_m2_symbol,
+            l_cs_symbol,
         ],
         electrical_parameters = {
             'Iref': I_amp,
@@ -63,11 +68,11 @@ def compose(
     )
 
     currentsource.interface_variables={
-        'vs_cs': np.tile(vs, len(lengths)),
+        vs_cs_name: np.tile(vs, len(lengths)),
     }
 
     current_source_macro.interface_variables=[
-        "vs_cs",
+        vs_cs_name,
     ]
 
     current_source_macro.add_instance(
@@ -82,9 +87,9 @@ def compose(
     },
     index=0,
     netlist_params={
-        "W_cs_m1": Symbol("W_cs_m1"),
-        "W_cs_m2": Symbol("W_cs_m2"),
-        "L_cs": Symbol("L_cs"),
+        "W_cs_m1": w_cs_m1_symbol,
+        "W_cs_m2": w_cs_m2_symbol,
+        "L_cs": l_cs_symbol,
     }
     )
 
