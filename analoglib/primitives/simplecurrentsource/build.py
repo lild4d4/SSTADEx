@@ -38,7 +38,6 @@ def build(primitive, ref_current=None) -> pd.DataFrame:
         dof               = ["vds", "vgs"],
         dof_values        = [vds_sweep, vgs_sweep],
     )
-    print('[DEBUG] jd: ', tr.jd)
 
     # --- meshgrid for sweep shape ---
     mesh = np.meshgrid(ax0, ax1)

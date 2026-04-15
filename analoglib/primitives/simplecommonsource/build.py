@@ -44,9 +44,6 @@ def build(primitive) -> pd.DataFrame:
 
     for vds in vds_sweep:
 
-        print('[DEBUG] vds: ', vds)
-        print('[DEBUG] vgs: ', vgs_sweep)
-
         tr = Transistor(
         lookup_table_file=primitive.lut_file,
         mos_type=primitive.transistor_type,
@@ -57,8 +54,6 @@ def build(primitive) -> pd.DataFrame:
         dof=["length", "vgs"],
         dof_values=[length_arr, vgs_sweep],
         )
-
-        print('[DEBUG] jd: ', tr.jd.reshape(10,5))
 
         l_col = np.tile(cfg.lengths, np.size(vgs_sweep))
         il = id_
@@ -71,8 +66,6 @@ def build(primitive) -> pd.DataFrame:
         cgg = (w * tr.cgg) / cfg.lut_w
         cgs = (w * tr.cgs) / cfg.lut_w
         cgd = (w * tr.cgd) / cfg.lut_w
-
-        print('[DEBUG] w: ', w.reshape(10,5))
 
         pd_aux["length"].append(np.asarray(l_col).flatten())
         pd_aux["width"].append(np.asarray(w).flatten())
