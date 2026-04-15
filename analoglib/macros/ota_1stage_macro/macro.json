@@ -1,0 +1,8 @@
+{
+  "name": "ota_1stage_macro",
+  "version": "1.0",
+  "description": "Reusable one-stage OTA macromodel",
+  "files": {
+    "compose": "compose.py"
+  }
+}

@@ -1,0 +1,13 @@
+# IHP SG13G2 — PDK configuration
+name: ihp_sg13g2
+
+lut_files:
+  nmos: luts/IHP_LUT_nmos.npy
+  pmos: luts/IHP_LUT_pmos.npy
+
+# supply voltage for this process node
+vdd: 1.2
+
+# supported primitives (must match folder names in analoglib/primitives/)
+primitives:
+  - simplediffpair

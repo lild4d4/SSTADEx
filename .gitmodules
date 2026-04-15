@@ -3,4 +3,4 @@
 	url = https://github.com/IHP-GmbH/IHP-Open-PDK.git
 [submodule "gmid"]
 	path = gmid
-	url = https://github.com/medwatt/gmid.git
+	url = https://github.com/lild4d4/gmid.git

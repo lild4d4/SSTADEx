@@ -17,8 +17,8 @@ mna_project.egg-info/PKG-INFO
 mna_project.egg-info/requires.txt
 mna_project.egg-info/SOURCES.txt
 mna_project.egg-info/top_level.txt
-sstadex.egg-info/dependency_links.txt
-sstadex.egg-info/PKG-INFO
-sstadex.egg-info/requires.txt
-sstadex.egg-info/SOURCES.txt
-sstadex.egg-info/top_level.txt
+sstadex.egg-info/
+.venv
+__pycache__/
+*.pyc
+*.pyo

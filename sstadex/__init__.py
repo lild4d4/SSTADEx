@@ -2,15 +2,17 @@ from .mna import mna, mna_solve, mna_tf  # Import the function directly
 from .utils import spice2ptxt
 from .models import (
     Macromodel,
+    MacroLibrary,
     Primitive,
+    Library,
     Transistor,
-    simplediffpair,
-    cs_pmos,
-    cm_pmos,
-    diffpair_cc,
     Test,
-    current_mirror_cc,
-    common_source,
+    Testbench,
+    BenchElement,
+    VoltageSource,
+    CurrentSource,
+    Resistor,
+    Capacitor,
 )
 from .sstadex import topdown_prim_lookup, bfs, dfs
 from .spice_sim import spice_sim
@@ -18,6 +20,7 @@ from .spice_sim import spice_sim
 __all__ = [
     "mna, spice2ptxt",
     "Macromodel",
+    "MacroLibrary",
     "topdown_prim_lookup",
     "bfs",
     "dfs",
@@ -25,12 +28,13 @@ __all__ = [
     "mna_tf",
     "Transistor",
     "Primitive",
-    "simplediffpair",
-    "cs_pmos",
-    "cm_pmos",
+    "Library",
     "spice_sim",
-    "diffpair_cc",
     "Test",
-    "current_mirror_cc",
-    "common_source",
+    "Testbench",
+    "BenchElement",
+    "VoltageSource",
+    "CurrentSource",
+    "Resistor",
+    "Capacitor",
 ]

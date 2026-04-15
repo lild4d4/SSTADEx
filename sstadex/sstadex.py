@@ -1,4 +1,5 @@
 from collections import deque
+from pathlib import Path
 from sstadex import mna, mna_solve, mna_tf, Macromodel, Primitive
 from .opt import filter_conditions, get_new_conditions, run_pareto
 import sympy as sym
@@ -11,9 +12,176 @@ def bfs():
     pass
 
 
+def _format_condition_entry(condition):
+    kind = condition.get("kind", "range")
+
+    if kind == "range":
+        column = condition.get("column")
+        limits = condition.get("condition", {})
+        parts = []
+        if "min" in limits:
+            parts.append(f"min={limits['min']:.6g}")
+        if "max" in limits:
+            parts.append(f"max={limits['max']:.6g}")
+        return f"{column} ({', '.join(parts)})"
+
+    if kind == "allowed_values":
+        column = condition.get("column")
+        values = np.asarray(condition.get("values", []))
+        return f"{column} (allowed_values={values.size})"
+
+    if kind == "metric":
+        return f"metric={condition.get('metric')}"
+
+    if kind == "expression":
+        return "expression"
+
+    return str(condition)
+
+
+def _format_condition_group(conditions):
+    formatted = []
+    for condition in conditions.get("direct", []):
+        formatted.append(_format_condition_entry(condition))
+    for condition in conditions.get("derived", []):
+        formatted.append(_format_condition_entry(condition))
+    return formatted or ["none"]
+
+
+def get_block_output_symbols(block):
+    if isinstance(block, Macromodel):
+        return [
+            *list(block.outputs),
+            *list(getattr(block, "interface_variables", [])),
+        ]
+
+    return [
+        *list(getattr(block, "outputs", {}).keys()),
+        *list(getattr(block, "interface_variables", {}).keys()),
+    ]
+
+
+def derive_submacro_conditions(parent_macro, parent_df):
+    derived_conditions = {}
+
+    if parent_df is None or len(parent_df.index) == 0:
+        return derived_conditions
+
+    submacro_by_name = {
+        submacro.name: submacro
+        for submacro in getattr(parent_macro, "submacromodels", [])
+    }
+
+    for target, rules in getattr(parent_macro, "submacro_condition_rules", {}).items():
+        target_macro = (
+            target
+            if isinstance(target, Macromodel)
+            else submacro_by_name.get(str(target))
+        )
+        target_name = target.name if isinstance(target, Macromodel) else str(target)
+        target_conditions = {"direct": [], "derived": []}
+
+        for rule in rules:
+            kind = rule.get("kind")
+
+            if kind == "allowed_values_from_parent":
+                source_column = rule.get("source_column", rule.get("column"))
+                target_column = rule.get("target_column", source_column)
+
+                if source_column in parent_df:
+                    target_conditions["direct"].append(
+                        {
+                            "kind": "allowed_values",
+                            "column": target_column,
+                            "values": np.unique(parent_df[source_column].to_numpy()),
+                        }
+                    )
+
+            elif kind == "range_from_parent":
+                source_column = rule.get("source_column", rule.get("column"))
+                target_column = rule.get("target_column", source_column)
+
+                if source_column in parent_df:
+                    target_conditions["direct"].append(
+                        {
+                            "kind": "range",
+                            "column": target_column,
+                            "condition": {
+                                "min": parent_df[source_column].min(),
+                                "max": parent_df[source_column].max(),
+                            },
+                        }
+                    )
+
+            elif kind == "range":
+                target_conditions["direct"].append(
+                    {
+                        "kind": "range",
+                        "column": rule["column"],
+                        "condition": rule.get("condition", {}),
+                    }
+                )
+
+            elif kind == "range_from_submacro_metric":
+                if target_macro is None:
+                    continue
+
+                metric_series = np.asarray(
+                    target_macro.evaluate_derived_metric(rule["metric"], parent_df)
+                )
+                if metric_series.size == 0:
+                    continue
+
+                metric_min = float(np.min(metric_series))
+                metric_max = float(np.max(metric_series))
+                bound = rule.get("bound", "min")
+                margin_factor = rule.get("margin_factor", 1.0)
+                margin_offset = rule.get("margin_offset", 0.0)
+                target_column = rule.get("target_column", rule["metric"])
+
+                condition = {}
+                if bound in ("min", "both"):
+                    condition["min"] = metric_min * margin_factor + margin_offset
+                if bound in ("max", "both"):
+                    condition["max"] = metric_max * margin_factor + margin_offset
+
+                target_conditions["direct"].append(
+                    {
+                        "kind": "range",
+                        "column": target_column,
+                        "condition": condition,
+                    }
+                )
+
+            elif kind == "metric":
+                target_conditions["derived"].append(
+                    {
+                        "kind": "metric",
+                        "metric": rule["metric"],
+                        "condition": rule.get("condition", {}),
+                    }
+                )
+
+            elif kind == "expression":
+                target_conditions["derived"].append(
+                    {
+                        "kind": "expression",
+                        "expr": rule["expr"],
+                        "condition": rule.get("condition", {}),
+                    }
+                )
+
+        derived_conditions[target_name] = target_conditions
+        print(
+            f"[FLOW] Derived conditions {parent_macro.name} -> {target_name}: "
+            + "; ".join(_format_condition_group(target_conditions))
+        )
+
+    return derived_conditions
+
+
 def dfs(macromodel, debug=False, going_up=0):
-    print("############################################")
-    print("Starting the exploration of: ", macromodel.name)
+    print(f"[FLOW] Starting exploration: {macromodel.name}")
 
     macro_results, exploration_axes, primmods_output = build(macromodel)
     # print("exploration axes:", exploration_axes)
@@ -22,7 +190,11 @@ def dfs(macromodel, debug=False, going_up=0):
         mask = filter_conditions(macromodel, macro_results, primmods_output)
     else:
         mask = macromodel.ext_mask
-    # print("Masks: ", mask.shape)
+
+    print(
+        f"[FLOW] Exploration points for {macromodel.name}: "
+        f"{len(mask)} -> {int(np.count_nonzero(mask))} after spec conditions"
+    )
 
     final_df, new_conditions = get_new_conditions(
         macromodel,
@@ -33,6 +205,20 @@ def dfs(macromodel, debug=False, going_up=0):
         primmods_output,
     )
 
+    print(
+        f"[FLOW] Dataframe rows for {macromodel.name}: "
+        f"{len(final_df.index)} after dataframe assembly"
+    )
+
+    if getattr(macromodel, "propagated_conditions", None):
+        rows_before = len(final_df.index)
+        filtered_df = macromodel.apply_propagated_conditions(final_df)
+        final_df = filtered_df
+        print(
+            f"[FLOW] Dataframe rows for {macromodel.name}: "
+            f"{rows_before} -> {len(final_df.index)} after propagated conditions"
+        )
+
     for idx, mac in enumerate(macro_results):
         macro_results[idx] = macro_results[idx][mask]
         # print(macro_results[idx])
@@ -41,7 +227,7 @@ def dfs(macromodel, debug=False, going_up=0):
         print("Macro_results: ", macro_results)
 
     if macromodel.num_level_exp == 1 or going_up == 1:
-        print("End of the exploration of: ", macromodel.name)
+        print(f"[FLOW] Finished exploration: {macromodel.name}")
 
         if macromodel.run_pareto:
             final_df, final_mask = run_pareto(macromodel, final_df)
@@ -60,12 +246,32 @@ def dfs(macromodel, debug=False, going_up=0):
     #    print("End of the exploration of: ", macromodel.name)
     #    return macro_results, exploration_axes, primmods_output, final_df
 
+    submacro_conditions = derive_submacro_conditions(macromodel, final_df)
     for submacromodel in macromodel.submacromodels:
-        print(macromodel.submacromodels)
-        print("Going into the Macromodel: ", submacromodel.name)
-        print("Going into the Macromodel with code: ", submacromodel)
+        inherited_conditions = submacro_conditions.get(
+            submacromodel.name,
+            {"direct": [], "derived": []},
+        )
+        local_conditions = getattr(
+            submacromodel,
+            "propagated_conditions",
+            {"direct": [], "derived": []},
+        )
+        submacromodel.propagated_conditions = {
+            "direct": [
+                *list(local_conditions.get("direct", [])),
+                *list(inherited_conditions.get("direct", [])),
+            ],
+            "derived": [
+                *list(local_conditions.get("derived", [])),
+                *list(inherited_conditions.get("derived", [])),
+            ],
+        }
+        print(
+            f"[FLOW] Descending into {submacromodel.name} with conditions: "
+            + "; ".join(_format_condition_group(submacromodel.propagated_conditions))
+        )
         submacro_results = dfs(submacromodel, debug)
-        print(macromodel.submacromodels)
         macro_results = submacro_results[0]
         exploration_axes = submacro_results[1]
         primmods_output = submacro_results[2]
@@ -130,7 +336,7 @@ def explore(macromodel, flatten_params, expr, debug=False):
     values_list = []
     primvalues_list = []
     primmods_list = []
-    print("#### creating the primods_list ####")
+    primitive_entries = []
     for mod, i in flatten_params.items():
         # print("mod: ", mod)
         Y = []
@@ -140,6 +346,7 @@ def explore(macromodel, flatten_params, expr, debug=False):
                 Y = list(i.values())
                 primvalues_list.append(Y)
                 primmods_list.append(mod)
+                primitive_entries.append((mod, Y))
             else:
                 values_list.append(list(i.values()))
         else:
@@ -148,6 +355,7 @@ def explore(macromodel, flatten_params, expr, debug=False):
                 print("Y: ", Y)
             primvalues_list.append(Y)
             primmods_list.append(mod)
+            primitive_entries.append((mod, Y))
 
     primmods_outputs_aux = {}
     primmods_outputs = []
@@ -156,14 +364,18 @@ def explore(macromodel, flatten_params, expr, debug=False):
     prim_size = 0
 
     new_macromodel_outputs = []
+    new_macromodel_interface_variables = []
     for prim in primmods_list:
         if type(prim) is Macromodel:
-            print("macro as prim")
             primmods_outputs_aux.update(prim.output_results)
+            primmods_outputs_aux.update(prim.interface_results)
             for out in prim.outputs:
                 # primmods_outputs_aux.append(prim.output_results[out])
                 if out not in new_macromodel_outputs:
                     new_macromodel_outputs.append(out)
+            for interface_variable in prim.interface_variables:
+                if interface_variable not in new_macromodel_interface_variables:
+                    new_macromodel_interface_variables.append(interface_variable)
         else:
             for out in macromodel.outputs:
                 # print("all macromodel outputs: ", out)
@@ -172,13 +384,13 @@ def explore(macromodel, flatten_params, expr, debug=False):
                     primmods_outputs_aux[out] = prim.outputs[
                         out
                     ]  ### this could be removed if we elimante the macromodel.outputs completly
-
-    for i in reversed(new_macromodel_outputs):
-        if i not in macromodel.outputs:
-            macromodel.outputs.insert(0, i)
+            for interface_variable in getattr(macromodel, "interface_variables", []):
+                if interface_variable in prim.interface_variables:
+                    primmods_outputs_aux[interface_variable] = prim.interface_variables[
+                        interface_variable
+                    ]
 
     # print("macromodel outputs: ", macromodel.outputs)
-    print("primmods_outputs_aux: ", primmods_outputs_aux)
     # print("primvalues_list: * ", *primvalues_list)
 
     Y_2 = [[]]
@@ -206,7 +418,7 @@ def explore(macromodel, flatten_params, expr, debug=False):
             pos = 0
             for idx, prim in enumerate(primmods_list):
                 if idx == 0:
-                    for jdx, output in enumerate(prim.outputs):
+                    for jdx, output in enumerate(get_block_output_symbols(prim)):
                         primmods_outputs.append(
                             np.tile(
                                 primmods_outputs_aux[output], len(primvalues_list[1][0])
@@ -214,7 +426,7 @@ def explore(macromodel, flatten_params, expr, debug=False):
                         )
                         pos = pos + 1
                 else:
-                    for jdx, output in enumerate(prim.outputs):
+                    for jdx, output in enumerate(get_block_output_symbols(prim)):
                         primmods_outputs.append(
                             np.repeat(
                                 primmods_outputs_aux[output], len(primvalues_list[0][0])
@@ -225,27 +437,25 @@ def explore(macromodel, flatten_params, expr, debug=False):
         elif Y_2.shape[0] > 2:
             pos_list = []
             meshgrid = []
-            for idx, prim in enumerate(primvalues_list):
-                pos_list.append(list(range(len(prim[0]))))
-            print(pos_list)
-            meshgrid = np.meshgrid(*pos_list)
-            print(meshgrid)
+            for _, prim_values in primitive_entries:
+                pos_list.append(list(range(len(prim_values[0]))))
+            meshgrid = np.meshgrid(*pos_list, indexing="ij")
 
             Y_aux = []
-            for idx, prim in enumerate(primvalues_list):
-                for jdx, prim_in in enumerate(prim):
-                    print("prim_in: ", prim_in)
+            for idx, (_, prim_values) in enumerate(primitive_entries):
+                for prim_in in prim_values:
                     Y_aux.append(np.asarray(prim_in)[tuple(meshgrid[idx].flatten()),])
 
             Y_2 = [*Y_aux]
 
             # print("Y_2: ", Y_2)
 
-            for idx, prim in enumerate(primmods_list):
-                for jdx, output in enumerate(prim.outputs):
-                    print("primods outputs: ", output)
+            for idx, (prim, _) in enumerate(primitive_entries):
+                for output in get_block_output_symbols(prim):
                     primmods_outputs.append(
-                        primmods_outputs_aux[output][tuple(meshgrid[idx].flatten()),]
+                        np.asarray(primmods_outputs_aux[output])[
+                            tuple(meshgrid[idx].flatten()),
+                        ]
                     )
 
             # primmods_outputs.append(
@@ -264,7 +474,7 @@ def explore(macromodel, flatten_params, expr, debug=False):
         else:
             Y_2 = Y_2.reshape(len(primvalues_list_aux), -1)
             for idx, prim in enumerate(primmods_list):
-                for jdx, output in enumerate(prim.outputs):
+                for jdx, output in enumerate(get_block_output_symbols(prim)):
                     primmods_outputs.append(primmods_outputs_aux[output])
         # print(np.asarray(Y_2).shape)
         # if len(np.asarray(Y_2))!=1:
@@ -290,7 +500,12 @@ def explore(macromodel, flatten_params, expr, debug=False):
     results_axes = []
     results_2 = []
     primmods_outputs_aux_2 = [[], []]
-    print(len(X[0]))
+    exploration_points = len(X[0]) if len(X) != 0 else 0
+    primitive_points = len(Y_2[0]) if len(Y_2) != 0 else 0
+    print(
+        f"[FLOW] Explore core for {macromodel.name}: "
+        f"macro_points={exploration_points}, primitive_points={primitive_points}"
+    )
     if len(X[0]) != 0 and len(Y_2[0]) != 0:
         # print("here !")
         for idx in range(len(X[0])):
@@ -323,7 +538,6 @@ def explore(macromodel, flatten_params, expr, debug=False):
             #    results_2.append(
             #        (X[:, idx][0] * X[:, idx][3]) / (X[:, idx][0] + X[:, idx][3])
             #    )
-        print("finished for operation")
         primmods_outputs = np.tile(np.asarray(primmods_outputs), len(X[0]))
 
         # primmods_outputs_aux_2[0] = np.asarray(primmods_outputs_aux_2[0]).flatten()
@@ -338,7 +552,6 @@ def explore(macromodel, flatten_params, expr, debug=False):
             result.append(temp)
             # print(temp)
             results_axes.append([*(X[:, idx].reshape(len(X[:, idx]), -1))])
-        print("finished for operation")
         primmods_outputs = np.tile(np.asarray(primmods_outputs), len(X[0]))
     else:
         for idx in range(1):
@@ -360,7 +573,6 @@ def explore(macromodel, flatten_params, expr, debug=False):
     #    )
     # else:
     #    return np.asarray(result), results_axes, primmods_outputs
-    print("starting the return")
     return (
         np.asarray(result).flatten(),
         np.hstack(results_axes),
@@ -379,19 +591,29 @@ def build(macromodel, repeat=True, debug=False):
 
     tfs = []
     for spec in macromodel.specifications:
-        macromodel.name = spec.netlist
-        print("Netlist: ", macromodel.name)
+        if spec.composed == 1:
+            tfs.append(None)
+            MNA_times[spec.name] = 0
+            continue
+
+        if getattr(spec, "testbench", None) is not None:
+            testbench = spec.testbench
+            macromodel.name = testbench.name
+            spice_path = Path(SPICE_DIR) / f"{macromodel.name}.spice"
+            spice_path.parent.mkdir(parents=True, exist_ok=True)
+            spice_path.write_text(testbench.gen_netlist())
+        else:
+            macromodel.name = spec.netlist
+        print(f"[FLOW] Netlist/source for {spec.name}: {macromodel.name}")
 
         start_time = time.time()
         report, df, df2, A, X, Z, nodes = mna(
             XSCHEM_RCFILE, XSCHEM_DIR, SPICE_DIR, OUTPUT_DIR, macromodel
         )
         mna_time = time.time() - start_time
-        print(f"MNA of {spec.name} took: {mna_time}")
+        print(f"[FLOW] MNA {spec.name}: {mna_time:.3f}s")
 
         MNA_times[spec.name] = mna_time
-
-        print(nodes)
 
         sol = mna_solve(macromodel)
         tfs.append(*mna_tf(macromodel, spec))
@@ -401,8 +623,6 @@ def build(macromodel, repeat=True, debug=False):
         # print(sol)
         # print(df)
 
-    print("older order of submacros: ", macromodel.submacromodels)
-
     updated_submacrolist = list(macromodel.submacromodels)
     for submacro in updated_submacrolist:
         if submacro.is_primitive:
@@ -410,8 +630,10 @@ def build(macromodel, repeat=True, debug=False):
                 updated_submacrolist.pop(updated_submacrolist.index(submacro))
             )
 
-    print("new order of submacros: ", updated_submacrolist)
-    print(macromodel.submacromodels)
+    print(
+        f"[FLOW] Flattened hierarchy for {macromodel.name}: "
+        f"submacros={len(updated_submacrolist)}, primitives={len(macromodel.primitives)}"
+    )
 
     flattened_params = params_flatten(macromodel, updated_submacrolist)
     macromodel.flattened_params = flattened_params
@@ -439,13 +661,11 @@ def build(macromodel, repeat=True, debug=False):
 
     result = []
     for idx, exp in enumerate(tfs):
-        proc = specifications[idx].out_def
-        if len(specifications[idx].parametros) != 0:
-            exp = exp.subs(specifications[idx].parametros)
+        spec = specifications[idx]
+        proc = spec.out_def
 
-        if specifications[idx].composed == 1:
+        if spec.composed == 1:
             if list(proc.keys())[0] == "divide":
-                print("in divide")
                 numerator = proc["divide"][0]
                 denominator = proc["divide"][1]
                 if debug:
@@ -459,58 +679,49 @@ def build(macromodel, repeat=True, debug=False):
                         print("Spec name: ", spec.name)
                     try:
                         if spec.name == numerator.name:
-                            print("found numerator with index: ", jdx)
                             num_index = jdx
                     except:
-                        print("numerator equal 1")
+                        pass
                     if spec.name == denominator.name:
-                        print("found denominator with index: ", jdx)
                         den_index = jdx
 
                 if numerator != 1:
                     numerator = result[num_index]
 
                 result.append(numerator / result[den_index])
+                print(
+                    f"[FLOW] Composed spec {specifications[idx].name}: "
+                    f"{getattr(numerator, 'name', 'value')} / {denominator.name}"
+                )
+            continue
+
+        if len(spec.parametros) != 0:
+            exp = exp.subs(spec.parametros)
 
         if list(proc.keys())[0] == "eval":
-            print("in eval")
-            print(exp)
             exp = sym.lambdify(
                 tuple([j for i in flattened_params.values() for j in i.keys()]), exp
-            )
-            print(
-                "lambdify variables:",
-                tuple([j for i in flattened_params.values() for j in i.keys()]),
-                exp,
             )
             start_time = time.time()
             eval, exploration_axes, primmods_output = explore(
                 macromodel, flattened_params, exp, debug
             )
             explore_time = time.time() - start_time
-            print(f"Explore time: {explore_time}")
+            print(f"[FLOW] Explore {specifications[idx].name}: {explore_time:.3f}s")
             explore_times[specifications[idx].name] = explore_time
-            print("finished explore operation")
             eval = np.abs(eval)
             if specifications[idx].lamd != None:
                 eval = specifications[idx].lamd(eval)
-            print("evaluation shape: ", eval.shape)
             if len(eval) == 1:
                 eval = np.repeat(eval[0], exploration_axes.shape[1])
             result.append(np.abs(eval))
-            print("abs done")
         elif list(proc.keys())[0] == "diff":
-            print("in diff")
             variables = specifications[idx].variables
             variable = list(variables.keys())[0]
-            print(variables)
-            print(variable)
 
             exps = []
             for idx, eval in enumerate(variables[variable]):
-                print({variable: eval})
                 exp_new = exp.subs({variable: eval})
-                print(exp_new)
                 exps.append(exp_new)
 
             # exp = np.lamb(exps[0] - exps[1], specifications[idx], macromodel)
@@ -523,13 +734,11 @@ def build(macromodel, repeat=True, debug=False):
                 macromodel, flattened_params, exp, debug
             )
             explore_time = time.time() - start_time
-            print(f"Explore time: {explore_time}")
+            print(f"[FLOW] Explore {specifications[idx].name}: {explore_time:.3f}s")
             explore_times[specifications[idx].name] = explore_time
-            print("evaluation shape: ", eval.shape)
             result.append(np.abs(eval))
 
         elif list(proc.keys())[0] == "frec":
-            print("in frec")
             exp = sym.lambdify(
                 tuple([j for i in flattened_params.values() for j in i.keys()]), exp
             )
@@ -538,10 +747,8 @@ def build(macromodel, repeat=True, debug=False):
                 macromodel, flattened_params, exp, debug
             )
             explore_time = time.time() - start_time
-            print(f"Explore time: {explore_time}")
+            print(f"[FLOW] Explore {specifications[idx].name}: {explore_time:.3f}s")
             explore_times[specifications[idx].name] = explore_time
-
-            print("eval: ", eval)
 
             frec = sym.Symbol("frec")
 
@@ -573,11 +780,9 @@ def build(macromodel, repeat=True, debug=False):
                     phase_final.append(np.angle(raw[cross]) * 180 / (np.pi))
 
             gbw_final = np.asarray(gbw_final)
-            print(gbw_final)
             result.append(gbw_final)
 
         elif list(proc.keys())[0] == "pm":
-            print("in frec")
             exp = sym.lambdify(
                 tuple([j for i in flattened_params.values() for j in i.keys()]), exp
             )
@@ -586,10 +791,8 @@ def build(macromodel, repeat=True, debug=False):
                 macromodel, flattened_params, exp, debug
             )
             explore_time = time.time() - start_time
-            print(f"Explore time: {explore_time}")
+            print(f"[FLOW] Explore {specifications[idx].name}: {explore_time:.3f}s")
             explore_times[specifications[idx].name] = explore_time
-
-            print("eval: ", eval)
 
             frec = sym.Symbol("frec")
 
@@ -621,9 +824,8 @@ def build(macromodel, repeat=True, debug=False):
                     # print("angle:", np.angle(raw[cross]) * 180 / (np.pi))
 
             phase_final = np.asarray(phase_final)
-            print(phase_final)
             result.append(phase_final)
 
-    print(MNA_times)
-    print(explore_times)
+    print(f"[FLOW] MNA timings for {macromodel.name}: {MNA_times}")
+    print(f"[FLOW] Explore timings for {macromodel.name}: {explore_times}")
     return result, exploration_axes, primmods_output

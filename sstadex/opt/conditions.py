@@ -4,9 +4,50 @@ from sstadex import Macromodel
 from sympy import Symbol
 
 
-def filter_conditions(macromodel, macro_results, sizing):
-    print(sizing)
+def get_block_output_symbols(block):
+    if isinstance(block, Macromodel):
+        return [
+            *list(block.outputs),
+            *list(getattr(block, "interface_variables", [])),
+        ]
 
+    return [
+        *list(getattr(block, "outputs", {}).keys()),
+        *list(getattr(block, "interface_variables", {}).keys()),
+    ]
+
+
+def get_sizing_symbol_order(flattened_params):
+    primmods_list = []
+
+    for model in flattened_params.keys():
+        if type(model) is Macromodel and not model.its_final:
+            if model.is_primitive:
+                primmods_list.append(model)
+        else:
+            primmods_list.append(model)
+
+    sizing_symbols = []
+    output_symbols = []
+    interface_symbols = []
+
+    for block in primmods_list:
+        block_output_symbols = get_block_output_symbols(block)
+        sizing_symbols.extend(block_output_symbols)
+
+        if isinstance(block, Macromodel):
+            output_symbols.extend(list(block.outputs))
+            interface_symbols.extend(list(getattr(block, "interface_variables", [])))
+        else:
+            output_symbols.extend(list(getattr(block, "outputs", {}).keys()))
+            interface_symbols.extend(
+                list(getattr(block, "interface_variables", {}).keys())
+            )
+
+    return sizing_symbols, set(output_symbols), set(interface_symbols)
+
+
+def filter_conditions(macromodel, macro_results, sizing):
     # if idx < 1:
     #    size_cond = macromodel.area_conditions[idx]
     # else:
@@ -54,7 +95,6 @@ def filter_conditions(macromodel, macro_results, sizing):
 def get_new_conditions(
     macromodel, mask, macro_results, exploration_axes, flattened_params, sizing
 ):
-    print("sizing: ", sizing.shape)
     flattened_submacro_params = []
 
     for model in flattened_params.keys():
@@ -65,8 +105,6 @@ def get_new_conditions(
             for i in model.parameters.keys():
                 flattened_submacro_params.append(i)
 
-    print(flattened_submacro_params)
-
     final_dict = {}
     for idx, axe in enumerate(exploration_axes):
         final_dict[flattened_submacro_params[idx]] = axe[mask]
@@ -76,36 +114,44 @@ def get_new_conditions(
         spec_names.append(macromodel.specifications[idx].name)
         final_dict[macromodel.specifications[idx].name] = result[mask]
 
+    sizing_symbols, output_symbols, _ = get_sizing_symbol_order(flattened_params)
+
+    print(
+        f"[FLOW] Building dataframe for {macromodel.name}: "
+        f"sizing_shape={getattr(sizing, 'shape', None)}, "
+        f"kept_points={int(np.count_nonzero(mask))}/{len(mask)}"
+    )
+
     if len(sizing) != 0:
         area = np.full(sizing[0][mask].shape, 0)
-        for idx, output in enumerate(macromodel.outputs):
-            print("output name: ", output)
+        for idx, output in enumerate(sizing_symbols):
             final_dict[output] = sizing[idx][mask]
-            if (
-                output != Symbol("vgs_cs")
-                and output != Symbol("vout_1stage")
-                and output != Symbol("vin_2stage")
-                and output != Symbol("vgs_cs_2stage")
-            ):
+            if output in output_symbols:
                 area = area + sizing[idx][mask]
 
         final_dict["area"] = area
 
     df = pd.DataFrame.from_dict(final_dict)
+    df_name = 'conditions_df_'+macromodel.name+'.csv'
+    df.to_csv(df_name)
+    print(
+        f"[FLOW] Dataframe built for {macromodel.name}: "
+        f"rows={len(df.index)}, columns={len(df.columns)}"
+    )
 
-    if Symbol("vs_diff") in df:
-        df = df[df[Symbol("vs_diff")] == df[Symbol("vs_cs")]]
+    for shared_node_variables in getattr(macromodel, "shared_nodes", {}).values():
+        if not shared_node_variables:
+            continue
 
-    if Symbol("vgs_cs") in df and Symbol("vgs_cs_2stage") in df:
-        df = df[df[Symbol("vgs_cs")] == df[Symbol("vgs_cs_2stage")]]
-        df = df[df[Symbol("L_cs")] == df[Symbol("L_cs_2stage")]]
-        df = df[df[Symbol("W_cs")] == df[Symbol("W_cs_2stage")]]
-
-    if Symbol("vout_1stage") in df and Symbol("vin_2stage") in df:
-        df = df[df[Symbol("vout_1stage")] == df[Symbol("vin_2stage")]]
-
-    if Symbol("vout_aload") in df:
-        df = df[df[Symbol("vout_aload")] == df[Symbol("vout_1stage")]]
+        if all(variable in df for variable in shared_node_variables):
+            rows_before = len(df.index)
+            reference_variable = shared_node_variables[0]
+            for variable in shared_node_variables[1:]:
+                df = df[df[reference_variable] == df[variable]]
+            print(
+                f"[FLOW] Shared node filter {macromodel.name} "
+                f"{shared_node_variables}: {rows_before} -> {len(df.index)}"
+            )
 
     # df.sort_values(by=flattened_submacro_params)
 

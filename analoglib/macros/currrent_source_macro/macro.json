@@ -1,0 +1,8 @@
+{
+  "name": "current_source_macro",
+  "version": "1.0",
+  "description": "Reusable current mirror macromodel",
+  "files": {
+    "compose": "compose.py"
+  }
+}

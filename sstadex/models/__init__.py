@@ -1,24 +1,27 @@
 from .macromodel import Macromodel, Test
+from .macrolibrary import MacroLibrary
 from .transistor import Transistor
-from .primitives import (
-    Primitive,
-    simplediffpair,
-    cs_pmos,
-    cm_pmos,
-    diffpair_cc,
-    current_mirror_cc,
-    common_source,
+from .primitives import Primitive, Library
+from .testbench import (
+    Testbench,
+    BenchElement,
+    VoltageSource,
+    CurrentSource,
+    Resistor,
+    Capacitor,
 )
 
 __all__ = [
     "Macromodel",
+    "MacroLibrary",
     "Primitive",
+    "Library",
     "Transistor",
-    "simplediffpair",
-    "cs_pmos",
-    "cm_pmos",
-    "diffpair_cc",
     "Test",
-    "current_mirror_cc",
-    "common_source",
+    "Testbench",
+    "BenchElement",
+    "VoltageSource",
+    "CurrentSource",
+    "Resistor",
+    "Capacitor",
 ]
