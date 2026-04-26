@@ -21,14 +21,14 @@ N -380 30 -340 30 {lab=vg}
 N -380 100 -300 100 {lab=vs}
 C {sg13g2_pr/sg13_lv_nmos.sym} -320 30 0 0 {name=M2
 l=6.4u
-w=10u
+w=5u
 ng=1
 m=1
 model=sg13_lv_nmos
 spiceprefix=X
 }
-C {vsource.sym} -190 30 0 0 {name=V1 value=0.256 savecurrent=false}
-C {vsource.sym} -380 70 0 0 {name=V3 value=0.156 savecurrent=false}
+C {vsource.sym} -190 30 0 0 {name=V1 value=1.1 savecurrent=false}
+C {vsource.sym} -380 70 0 0 {name=V3 value=1.1 savecurrent=false}
 C {code_shown.sym} -120 -300 0 0 {name=NGSPICE only_toplevel=false value="
 
 .lib /opt/pdks/ihp-sg13g2/libs.tech/ngspice/models/cornerMOSlv.lib mos_tt
@@ -45,11 +45,11 @@ let gds = @n.xm2.nsg13_lv_nmos[gds]
 let ids = @n.xm2.nsg13_lv_nmos[ids]
 let i_vds = i(V1)
 
-let jd = ids/10e-6
-let gmid = gm/ids
+let w = 5e-6
+let i = 20e-6
 
-let w = 10e-6
-let i = 10e-6
+let jd = ids/w
+let gmid = gm/ids
 
 print jd gmid ids i_vds
 

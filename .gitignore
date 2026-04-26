@@ -19,6 +19,7 @@ mna_project.egg-info/SOURCES.txt
 mna_project.egg-info/top_level.txt
 sstadex.egg-info/
 .venv
+.venv-sstadex
 __pycache__/
 *.pyc
 *.pyo
