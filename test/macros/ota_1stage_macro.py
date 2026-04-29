@@ -58,7 +58,8 @@ ota_1stage = macro_lib.get(
         "Vout": Vout,
         "I_amp": I_amp,
         "vs": vs
-    }
+    },
+    ports=["VINP", "VINN", "VOUT", "VDD", "VSS"]
 )
 
 from pathlib import Path
