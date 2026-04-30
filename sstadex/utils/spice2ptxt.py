@@ -3,7 +3,7 @@ import pandas as pd
 def spice2ptxt(SPICE_DIR, OUTPUT_DIR, filename):
 
     spice_file = open(SPICE_DIR + filename + ".spice", "r")
-    output_file = open(OUTPUT_DIR + filename + ".txt", "w")
+    output_file = open(OUTPUT_DIR / f"{filename}.txt", "w")
     nodes = {}
     node_num = 1
     for line in spice_file:

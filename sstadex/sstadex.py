@@ -6,7 +6,7 @@ import sympy as sym
 import numpy as np
 import matplotlib.pyplot as plt
 import time
-
+from sstadex.utils.flowsavings import FlowPaths
 
 def bfs():
     pass
@@ -179,9 +179,20 @@ def derive_submacro_conditions(parent_macro, parent_df):
 
     return derived_conditions
 
+def save_csv(macromodel, flowpaths, df, sufix = None):
+    file_path = flowpaths.csv(macromodel.name)
+    df.to_csv(file_path, index=False)
 
 def dfs(macromodel, debug=False, going_up=0):
     print(f"[FLOW] Starting exploration: {macromodel.name}")
+
+    XSCHEM_RCFILE = "/opt/pdks/sky130A/libs.tech/xschem/xschemrc"
+    SPICE_DIR = "./spice/"
+    OUTPUT_DIR = Path("./outputs/")
+    XSCHEM_DIR = "./xschem/"
+    
+    flowpaths = FlowPaths(output_dir = "outputs")
+
 
     macro_results, exploration_axes, primmods_output = build(macromodel)
     # print("exploration axes:", exploration_axes)
@@ -198,6 +209,7 @@ def dfs(macromodel, debug=False, going_up=0):
 
     final_df, new_conditions = get_new_conditions(
         macromodel,
+        flowpaths,
         mask,
         macro_results,
         exploration_axes,
@@ -276,14 +288,14 @@ def dfs(macromodel, debug=False, going_up=0):
         exploration_axes = submacro_results[1]
         primmods_output = submacro_results[2]
         final_df = submacro_results[3]
-        final_df.to_csv(submacromodel.name + ".csv")
+        save_csv(submacromodel, flowpaths, final_df, "going_down")
         submacromodel.update(submacro_results)
         results_2 = dfs(macromodel, going_up=1)
         macro_results = results_2[0]
         exploration_axes = results_2[1]
         primmods_output = results_2[2]
         final_df = results_2[3]
-        final_df.to_csv(submacromodel.name + "_2" + ".csv")
+        save_csv(submacromodel, flowpaths, final_df, "going_up")
 
         if debug:
             print("Macro_results: ", macro_results)
@@ -583,8 +595,10 @@ def explore(macromodel, flatten_params, expr, debug=False):
 def build(macromodel, repeat=True, debug=False):
     XSCHEM_RCFILE = "/opt/pdks/sky130A/libs.tech/xschem/xschemrc"
     SPICE_DIR = "./spice/"
-    OUTPUT_DIR = "./output/"
+    OUTPUT_DIR = Path("./outputs/")
     XSCHEM_DIR = "./xschem/"
+
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     MNA_times = {}
     explore_times = {}

@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 from sstadex import Macromodel
 from sympy import Symbol
-
+from sstadex.utils.flowsavings import FlowPaths
 
 def get_block_output_symbols(block):
     if isinstance(block, Macromodel):
@@ -93,7 +93,7 @@ def filter_conditions(macromodel, macro_results, sizing):
 
 
 def get_new_conditions(
-    macromodel, mask, macro_results, exploration_axes, flattened_params, sizing
+    macromodel, flowpaths, mask, macro_results, exploration_axes, flattened_params, sizing
 ):
     flattened_submacro_params = []
 
@@ -133,7 +133,7 @@ def get_new_conditions(
 
     df = pd.DataFrame.from_dict(final_dict)
     df_name = 'conditions_df_'+macromodel.name+'.csv'
-    df.to_csv(df_name)
+    df.to_csv(flowpaths.csv(df_name))    
     print(
         f"[FLOW] Dataframe built for {macromodel.name}: "
         f"rows={len(df.index)}, columns={len(df.columns)}"

@@ -29,7 +29,7 @@ def mna(XSCHEM_RCFILE, XSCHEM_DIR, SPICE_DIR, OUTPUT_DIR, macromodel):
     nodes = spice2ptxt(SPICE_DIR, OUTPUT_DIR, design_name)
 
     # read the mna input file genereated in the last function
-    mna_input_file = open(OUTPUT_DIR + design_name + ".txt", "r")
+    mna_input_file = open(OUTPUT_DIR / f"{design_name}.txt", "r")
     lines = mna_input_file.readlines()
     content = lines
     report, df, df2, A, X, Z = symmna.smna(content)
