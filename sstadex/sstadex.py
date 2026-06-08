@@ -7,6 +7,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import time
 from sstadex.utils.flowsavings import FlowPaths
+from sstadex.utils.timing import record_timing
 
 def bfs():
     pass
@@ -180,10 +181,13 @@ def derive_submacro_conditions(parent_macro, parent_df):
     return derived_conditions
 
 def save_csv(macromodel, flowpaths, df, sufix = None):
-    file_path = flowpaths.csv(macromodel.name)
+    file_path = flowpaths.csv(macromodel.name+"_"+sufix)
     df.to_csv(file_path, index=False)
 
-def dfs(macromodel, debug=False, going_up=0):
+def dfs(macromodel, debug=False, going_up=0, level=0):
+
+    current_level = level+1
+
     print(f"[FLOW] Starting exploration: {macromodel.name}")
 
     XSCHEM_RCFILE = "/opt/pdks/sky130A/libs.tech/xschem/xschemrc"
@@ -197,16 +201,19 @@ def dfs(macromodel, debug=False, going_up=0):
     macro_results, exploration_axes, primmods_output = build(macromodel)
     # print("exploration axes:", exploration_axes)
 
+    start_time = time.time()
     if macromodel.ext_mask is None:
         mask = filter_conditions(macromodel, macro_results, primmods_output)
     else:
         mask = macromodel.ext_mask
+    record_timing("spec_filter", macromodel.name, time.time() - start_time)
 
     print(
         f"[FLOW] Exploration points for {macromodel.name}: "
         f"{len(mask)} -> {int(np.count_nonzero(mask))} after spec conditions"
     )
 
+    start_time = time.time()
     final_df, new_conditions = get_new_conditions(
         macromodel,
         flowpaths,
@@ -216,6 +223,7 @@ def dfs(macromodel, debug=False, going_up=0):
         macromodel.flattened_params,
         primmods_output,
     )
+    record_timing("dataframe_assembly", macromodel.name, time.time() - start_time)
 
     print(
         f"[FLOW] Dataframe rows for {macromodel.name}: "
@@ -224,8 +232,13 @@ def dfs(macromodel, debug=False, going_up=0):
 
     if getattr(macromodel, "propagated_conditions", None):
         rows_before = len(final_df.index)
+        start_time = time.time()
         filtered_df = macromodel.apply_propagated_conditions(final_df)
+        record_timing(
+            "propagated_filter", macromodel.name, time.time() - start_time
+        )
         final_df = filtered_df
+        save_csv(macromodel, flowpaths, final_df, "after_propagated_conditions")
         print(
             f"[FLOW] Dataframe rows for {macromodel.name}: "
             f"{rows_before} -> {len(final_df.index)} after propagated conditions"
@@ -258,7 +271,9 @@ def dfs(macromodel, debug=False, going_up=0):
     #    print("End of the exploration of: ", macromodel.name)
     #    return macro_results, exploration_axes, primmods_output, final_df
 
+    start_time = time.time()
     submacro_conditions = derive_submacro_conditions(macromodel, final_df)
+    record_timing("condition_derivation", macromodel.name, time.time() - start_time)
     for submacromodel in macromodel.submacromodels:
         inherited_conditions = submacro_conditions.get(
             submacromodel.name,
@@ -283,19 +298,19 @@ def dfs(macromodel, debug=False, going_up=0):
             f"[FLOW] Descending into {submacromodel.name} with conditions: "
             + "; ".join(_format_condition_group(submacromodel.propagated_conditions))
         )
-        submacro_results = dfs(submacromodel, debug)
+        submacro_results = dfs(submacromodel, debug, level=current_level)
         macro_results = submacro_results[0]
         exploration_axes = submacro_results[1]
         primmods_output = submacro_results[2]
         final_df = submacro_results[3]
-        save_csv(submacromodel, flowpaths, final_df, "going_down")
+        save_csv(submacromodel, flowpaths, final_df, "going_down"+str(current_level))
         submacromodel.update(submacro_results)
-        results_2 = dfs(macromodel, going_up=1)
+        results_2 = dfs(macromodel, going_up=1, level=current_level)
         macro_results = results_2[0]
         exploration_axes = results_2[1]
         primmods_output = results_2[2]
         final_df = results_2[3]
-        save_csv(submacromodel, flowpaths, final_df, "going_up")
+        save_csv(submacromodel, flowpaths, final_df, "going_up"+str(current_level))
 
         if debug:
             print("Macro_results: ", macro_results)
@@ -628,9 +643,12 @@ def build(macromodel, repeat=True, debug=False):
         print(f"[FLOW] MNA {spec.name}: {mna_time:.3f}s")
 
         MNA_times[spec.name] = mna_time
+        record_timing("mna_generation", spec.name, mna_time)
 
+        start_time = time.time()
         sol = mna_solve(macromodel)
         tfs.append(*mna_tf(macromodel, spec))
+        record_timing("mna_solve_tf", spec.name, time.time() - start_time)
 
         # print("A: ", A)
         # print(X)
@@ -723,6 +741,7 @@ def build(macromodel, repeat=True, debug=False):
             explore_time = time.time() - start_time
             print(f"[FLOW] Explore {specifications[idx].name}: {explore_time:.3f}s")
             explore_times[specifications[idx].name] = explore_time
+            record_timing("exploration", specifications[idx].name, explore_time)
             eval = np.abs(eval)
             if specifications[idx].lamd != None:
                 eval = specifications[idx].lamd(eval)
@@ -750,6 +769,7 @@ def build(macromodel, repeat=True, debug=False):
             explore_time = time.time() - start_time
             print(f"[FLOW] Explore {specifications[idx].name}: {explore_time:.3f}s")
             explore_times[specifications[idx].name] = explore_time
+            record_timing("exploration", specifications[idx].name, explore_time)
             result.append(np.abs(eval))
 
         elif list(proc.keys())[0] == "frec":
@@ -763,6 +783,7 @@ def build(macromodel, repeat=True, debug=False):
             explore_time = time.time() - start_time
             print(f"[FLOW] Explore {specifications[idx].name}: {explore_time:.3f}s")
             explore_times[specifications[idx].name] = explore_time
+            record_timing("exploration", specifications[idx].name, explore_time)
 
             frec = sym.Symbol("frec")
 
@@ -807,6 +828,7 @@ def build(macromodel, repeat=True, debug=False):
             explore_time = time.time() - start_time
             print(f"[FLOW] Explore {specifications[idx].name}: {explore_time:.3f}s")
             explore_times[specifications[idx].name] = explore_time
+            record_timing("exploration", specifications[idx].name, explore_time)
 
             frec = sym.Symbol("frec")
 

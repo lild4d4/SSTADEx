@@ -61,6 +61,7 @@ class Transistor:
                 self.cgd,
                 self.cgs,
                 self.vth,
+                self.vdsat,
                 self.id,
             ) = self.get_parameters(self.lengths)
         elif mode == 1:
@@ -71,6 +72,7 @@ class Transistor:
             self.cgd = []
             self.cgs = []
             self.vth = []
+            self.vdsat = []
             self.id = []
             for idx, length in enumerate(lengths):
                 parameters = self.get_parameters(length)
@@ -86,6 +88,7 @@ class Transistor:
                             self.cgd,
                             self.cgs,
                             self.vth,
+                            self.vdsat,
                             self.id,
                         ],
                         diagonals,
@@ -101,6 +104,7 @@ class Transistor:
                             self.cgd,
                             self.cgs,
                             self.vth,
+                            self.vdsat,
                             self.id,
                         ],
                         parameters,
@@ -114,6 +118,7 @@ class Transistor:
             self.cgd = np.asarray(self.cgd)
             self.cgs = np.asarray(self.cgs)
             self.vth = np.asarray(self.vth)
+            self.vdsat = np.asarray(self.vdsat)
             self.id = np.asarray(self.id)
 
     def _resolve_mos_key(self, lookup_table, mos_type):
@@ -212,4 +217,11 @@ class Transistor:
             z_expression=self.pt_lutable.id_expression,
         )
 
-        return jd, gmid, gds, cgg, cgd, cgs, vth, id
+        vdsat = self.pt_lutable.interpolate(
+            x_expression=expressions[self.eof[0]],
+            x_value=self.dof_values[0],
+            y_expression=expressions[self.eof[1]],
+            y_value=self.dof_values[1],
+            z_expression=self.pt_lutable.vdsat_expression,
+        )
+        return jd, gmid, gds, cgg, cgd, cgs, vth, vdsat, id

@@ -32,6 +32,7 @@ from __future__ import annotations
 import json
 import importlib.util
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -41,6 +42,7 @@ import numpy as np
 import pandas as pd
 
 from enum import Enum, auto
+from sstadex.utils.timing import record_timing
 
 class PortRole(Enum):
     INPUT   = auto()   # AC/signal input
@@ -202,7 +204,17 @@ class Primitive:
         if self._build_fn is None:
             self._build_fn = self._load_fn("build", "build", required=True)
 
+        start_time = time.time()
         df = self._build_fn(self, **kwargs)
+        build_time = time.time() - start_time
+        rows = len(df.index) if hasattr(df, "index") else 0
+
+        record_timing("primitive_build", self.name, build_time)
+
+        print(
+            f"[FLOW] Primitive build {self.name}: "
+            f"{build_time:.3f}s, rows={rows}"
+        )
 
         # map DataFrame columns -> engine dicts
         self._populate_from_df(df)
