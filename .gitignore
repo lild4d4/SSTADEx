@@ -23,3 +23,8 @@ __pycache__/
 *.pyc
 *.pyo
 LUTs/
+test/**/outputs/*
+test/**/*.csv
+test/**/*.log
+test/**/*.png
+test/**/*.svg
