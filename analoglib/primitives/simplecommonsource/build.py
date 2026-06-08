@@ -40,6 +40,7 @@ def build(primitive) -> pd.DataFrame:
         "cgg": [],
         "cgs": [],
         "cgd": [],
+        "vdsat": [],
     }
 
     for vds in vds_sweep:
@@ -66,6 +67,7 @@ def build(primitive) -> pd.DataFrame:
         cgg = (w * tr.cgg) / cfg.lut_w
         cgs = (w * tr.cgs) / cfg.lut_w
         cgd = (w * tr.cgd) / cfg.lut_w
+        vdsat = tr.vdsat
 
         pd_aux["length"].append(np.asarray(l_col).flatten())
         pd_aux["width"].append(np.asarray(w).flatten())
@@ -76,6 +78,7 @@ def build(primitive) -> pd.DataFrame:
         pd_aux["cgg"].append(np.asarray(cgg).flatten())
         pd_aux["cgs"].append(np.asarray(cgs).flatten())
         pd_aux["cgd"].append(np.asarray(cgd).flatten())
+        pd_aux["vdsat"].append(np.asarray(vdsat).flatten())
 
     return pd.DataFrame(
         {
@@ -88,5 +91,6 @@ def build(primitive) -> pd.DataFrame:
             "cgg": np.asarray(pd_aux["cgg"]).flatten(),
             "cgs": np.asarray(pd_aux["cgs"]).flatten(),
             "cgd": np.asarray(pd_aux["cgd"]).flatten(),
+            "vdsat": np.asarray(pd_aux["vdsat"]).flatten(),
         }
     )

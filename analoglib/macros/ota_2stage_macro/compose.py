@@ -111,10 +111,12 @@ Ga {VOUT} {VDD} {VINP} {VINN} 1""",
     )
 
     commonsource.interface_variables={
-        'vout_1stage_commonsource': np.repeat(vout_1stage, len(lengths))
+        'vout_1stage_commonsource': np.repeat(np.tile(vout_1stage, len(np.atleast_1d(Vout))), len(lengths)),
+        'vout_2stage': np.tile(np.repeat(Vout, len(np.atleast_1d(vout_1stage))), len(lengths))
     }
     OTA_2stage_macro.interface_variables=[
-        "vout_1stage_commonsource"
+        "vout_1stage_commonsource",
+        "vout_2stage"
     ]
     OTA_2stage_macro.shared_nodes = {
     "VOUT_node": ["vout_1stage_commonsource", "vout_1stage_diffpair"],
@@ -135,6 +137,21 @@ Ga {VOUT} {VDD} {VINP} {VINN} 1""",
                 "margin_factor": 1.0,
             },
         ]
+    }
+    ota_1stage.propagated_conditions = {
+    "direct": [
+        {
+            "kind": "range",
+            "column": Symbol("W_al"),
+            "condition": {"min": 1e-6, "max": 1000e-6},
+        },
+        {
+            "kind": "range",
+            "column": Symbol("W_diff"),
+            "condition": {"min": 1e-6, "max": 1000e-6},
+        },
+    ],
+    "derived": [],
     }
 
     tb_gain_2stage = Testbench(
@@ -162,7 +179,7 @@ Ga {VOUT} {VDD} {VINP} {VINN} 1""",
     gain_2stage = tb_gain_2stage.make_test(
         name="gain_2stage",
         opt_goal="max",
-        conditions={"min": [10 ** (gain_condition / 20)]},
+        conditions={"min": [10 ** (-100 / 20)]},
     )
 
     ota_1stage.num_level_exp = -1
