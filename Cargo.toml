@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+
+members = [
+    "libsstadex",
+    "sstadex",
+]
+
+[workspace.package]
+version = "0.1.0"
+license = ""
+categories = ["science"]
+edition = "2024"
+rust-version = "1.92"
+repository = "https://github.com/lild4d4/SSTADEx"
