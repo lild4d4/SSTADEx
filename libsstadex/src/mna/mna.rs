@@ -1,5 +1,7 @@
 use std::fs;
 use std::path::Path;
+use std::collections::HashMap;
+use std::process::Command;
 
 use crate::mna::spice_parser::{spice_parser, NodeMap, SpiceError};
 use crate::mna::symmna::{smna, Matrix, Vector, SmnaError};
@@ -12,11 +14,17 @@ pub struct MnaResult {
       pub nodes: NodeMap,
   }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MnaSolveResult {
+    pub solutions: HashMap<String, String>,
+}
+
 #[derive(Debug)]
 pub enum MnaError {
     Io(std::io::Error),
     SpiceConversion(SpiceError),
     SymMna(SmnaError),
+    PythonSolve(String),
     MissingNode(String),
 }
 
@@ -47,3 +55,97 @@ pub fn mna(
         nodes,
     })
    }
+
+pub fn mna_solve(a: &Matrix, x: &Vector, z: &Vector) -> Result<MnaSolveResult, MnaError> {
+    let output = Command::new("python3")
+        .arg("-c")
+        .arg(SYMPY_SOLVE_SCRIPT)
+        .arg(matrix_to_python_literal(a))
+        .arg(vector_to_python_literal(x))
+        .arg(vector_to_python_literal(z))
+        .output()?;
+
+    if !output.status.success() {
+        return Err(MnaError::PythonSolve(
+            String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut solutions = HashMap::new();
+
+    for line in stdout.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        let Some((name, value)) = line.split_once('\t') else {
+            return Err(MnaError::PythonSolve(format!(
+                "invalid SymPy solver output line: {line}"
+            )));
+        };
+
+        solutions.insert(name.to_string(), value.to_string());
+    }
+
+    Ok(MnaSolveResult { solutions })
+}
+
+fn matrix_to_python_literal(matrix: &Matrix) -> String {
+    let rows = matrix
+        .iter()
+        .map(|row| {
+            let values = row
+                .iter()
+                .map(|expr| python_string_literal(&expr.to_string()))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("[{values}]")
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    format!("[{rows}]")
+}
+
+fn vector_to_python_literal(vector: &Vector) -> String {
+    let values = vector
+        .iter()
+        .map(|expr| python_string_literal(&expr.to_string()))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    format!("[{values}]")
+}
+
+fn python_string_literal(value: &str) -> String {
+    let escaped = value
+        .replace('\\', "\\\\")
+        .replace('\'', "\\'");
+
+    format!("'{escaped}'")
+}
+
+const SYMPY_SOLVE_SCRIPT: &str = r#"
+import ast
+import sys
+import sympy as sym
+
+a_literal = ast.literal_eval(sys.argv[1])
+x_literal = ast.literal_eval(sys.argv[2])
+z_literal = ast.literal_eval(sys.argv[3])
+
+A = sym.Matrix([
+    [sym.sympify(item) for item in row]
+    for row in a_literal
+])
+X = sym.Matrix([sym.sympify(item) for item in x_literal])
+Z = sym.Matrix([sym.sympify(item) for item in z_literal])
+
+equations = list(A * X - Z)
+solutions = sym.solve(equations, list(X), dict=True)
+
+if solutions:
+    for key, value in solutions[0].items():
+        print(f"{key}\t{value}")
+"#;
