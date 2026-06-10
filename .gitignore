@@ -28,3 +28,4 @@ test/**/*.csv
 test/**/*.log
 test/**/*.png
 test/**/*.svg
+target/*
