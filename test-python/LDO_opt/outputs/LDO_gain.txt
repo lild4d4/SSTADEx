@@ -1,0 +1,10 @@
+R_gds_xcos_m1 1 2 1
+
+G_gm_xcos_m1 1 2 3 2 1
+Ra 3 2 1
+
+Ga 3 2 4 5 1
+Vdd 2 6 0
+Vss 6 6 0
+V_n 5 6 0
+V_p 4 6 1

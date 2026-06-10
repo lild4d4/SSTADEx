@@ -1,0 +1,20 @@
+R_gds_xdp_m1 1 2 1
+
+G_gm_xdp_m1 1 2 3 2 1
+R_gds_xdp_m2 4 2 1
+
+G_gm_xdp_m2 4 2 5 2 1
+R_gds_xcm_m1 1 6 1
+
+G_gm_xcm_m1 1 6 4 6 1
+R_gds_xcm_m2 4 6 1
+
+G_gm_xcm_m2 4 6 4 6 1
+Ixcs_macro 2 7 0
+Vdd 6 7 0
+Vss 7 7 0
+V_n 5 7 0
+V_p 3 7 0
+Vr 8 7 1
+Rr 8 1 1000
+

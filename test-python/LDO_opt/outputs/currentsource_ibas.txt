@@ -1,0 +1,9 @@
+R_gds_xcs_m1 1 2 1
+
+G_gm_xcs_m1 1 2 3 2 1
+R_gds_xcs_m2 3 2 1
+
+G_gm_xcs_m2 3 2 3 2 1
+Vdd 4 2 0
+Vss 2 2 0
+I0 3 2 0
