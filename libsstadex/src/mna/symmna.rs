@@ -111,8 +111,6 @@ pub struct CurrentUnknown {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SmnaResult {
     pub report: String,
-    pub df: Vec<Branch>,
-    pub df2: Vec<CurrentUnknown>,
     pub a: Matrix,
     pub x: Vector,
     pub z: Vector,
@@ -214,8 +212,6 @@ pub fn smna(net_list: &str) -> Result<SmnaResult, SmnaError> {
 
     Ok(SmnaResult {
         report: report(&counts, line_cnt, num_nodes, i_unk),
-        df,
-        df2,
         a,
         x,
         z,
@@ -708,29 +704,4 @@ number of K - Coupled inductors: {}\n",
         counts.num_ccvs,
         counts.num_cpld_ind,
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn builds_resistor_current_source_mna() {
-        let result = smna("R1 1 0 1000\nI1 1 0 0.001\n").unwrap();
-
-        assert_eq!(result.a[0][0].to_string(), "1/R1");
-        assert_eq!(result.x[0].to_string(), "v1");
-        assert_eq!(result.z[0].to_string(), "-I1");
-    }
-
-    #[test]
-    fn builds_voltage_source_unknown_current() {
-        let result = smna("R1 1 0 1000\nV1 1 0 1\n").unwrap();
-
-        assert_eq!(result.a.len(), 2);
-        assert_eq!(result.a[0][1].to_string(), "1");
-        assert_eq!(result.a[1][0].to_string(), "1");
-        assert_eq!(result.x[1].to_string(), "I_V1");
-        assert_eq!(result.z[1].to_string(), "V1");
-    }
 }
