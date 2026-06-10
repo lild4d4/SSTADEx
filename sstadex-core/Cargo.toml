@@ -1,5 +1,5 @@
 [package]
-name = "sstadex"
+name = "sstadex-core"
 version.workspace = true
 license.workspace = true
 categories.workspace = true
@@ -9,4 +9,3 @@ repository.workspace = true
 
 [dependencies]
 libsstadex = { path = "../libsstadex", default-features = false }
-
