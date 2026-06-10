@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fs::{File, create_dir_all};
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
+use std::fmt;
 
 #[derive(Debug, Clone)]
 pub struct NodeMap {
@@ -26,7 +27,7 @@ pub fn spice_parser(
     filename: &str,
 ) -> Result<NodeMap, SpiceError> {
     let spice_path = spice_dir.join(format!("{filename}.spice"));
-    let output_path = output_dir.join(format!("{filename}.txt"));
+    let output_path = output_dir.join(format!("{filename}.cir"));
 
     create_dir_all(output_dir)?;
 
@@ -116,4 +117,24 @@ fn replace_node(
     }
 
     params[index] = number.to_string();
+}
+
+impl fmt::Display for NodeMap {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "SPICE parser report")?;
+        writeln!(f, "===================")?;
+        writeln!(f, "Number of nodes: {}", self.nodes.len())?;
+        writeln!(f)?;
+        writeln!(f, "{:<20} {}", "Node name", "Node number")?;
+        writeln!(f, "{:<20} {}", "---------", "-----------")?;
+
+        let mut nodes: Vec<(&String, &usize)> = self.nodes.iter().collect();
+        nodes.sort_by_key(|(_, number)| *number);
+
+        for (name, number) in nodes {
+            writeln!(f, "{:<20} {}", name, number)?;
+        }
+
+        Ok(())
+    }
 }
