@@ -29,3 +29,4 @@ test/**/*.log
 test/**/*.png
 test/**/*.svg
 target/*
+tmp/*
