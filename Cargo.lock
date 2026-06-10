@@ -7,7 +7,7 @@ name = "libsstadex"
 version = "0.1.0"
 
 [[package]]
-name = "sstadex-core"
+name = "sstadex-cli"
 version = "0.1.0"
 dependencies = [
  "libsstadex",
