@@ -11,6 +11,7 @@ use libsstadex::mna::pretty::{pretty_solutions, pretty_system};
 use libsstadex::netlist::{
     NetlistRenderError, SmallSignalRenderError, render_circuit_netlist, render_small_signal_netlist,
 };
+use serde::Serialize;
 
 #[derive(Debug)]
 struct CatalogListArgs {
@@ -47,6 +48,13 @@ struct CircuitMnaArgs {
     circuit: PathBuf,
     output: PathBuf,
     solve: bool,
+    format: CircuitMnaFormat,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CircuitMnaFormat {
+    Text,
+    Json,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,6 +132,7 @@ fn parse_circuit_mna_args(args: Vec<String>) -> Result<CircuitMnaArgs, String> {
     let mut circuit = None;
     let mut output = None;
     let mut solve = false;
+    let mut format = CircuitMnaFormat::Text;
 
     let mut idx = 0;
     while idx < args.len() {
@@ -152,6 +161,13 @@ fn parse_circuit_mna_args(args: Vec<String>) -> Result<CircuitMnaArgs, String> {
             "--solve" => {
                 solve = true;
             }
+            "--format" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| "--format requires a value".to_string())?;
+                format = parse_circuit_mna_format(value)?;
+            }
             flag => {
                 return Err(format!(
                     "unknown circuit mna option '{flag}'\n\nRun `sstadex circuit mna --help` for usage."
@@ -168,7 +184,18 @@ fn parse_circuit_mna_args(args: Vec<String>) -> Result<CircuitMnaArgs, String> {
         circuit: circuit.ok_or_else(|| "missing required option --circuit".to_string())?,
         output: output.ok_or_else(|| "missing required option --output".to_string())?,
         solve,
+        format,
     })
+}
+
+fn parse_circuit_mna_format(value: &str) -> Result<CircuitMnaFormat, String> {
+    match value {
+        "text" => Ok(CircuitMnaFormat::Text),
+        "json" => Ok(CircuitMnaFormat::Json),
+        _ => Err(format!(
+            "unknown circuit mna format '{value}'. Expected: text, json"
+        )),
+    }
 }
 
 fn parse_circuit_render_file_args(args: Vec<String>) -> Result<CircuitRenderFileArgs, String> {
@@ -392,12 +419,22 @@ fn run_circuit_mna(args: CircuitMnaArgs) -> Result<(), String> {
         load_primitive_catalog(&args.primitives_dir).map_err(format_primitive_load_error)?;
     let circuit = load_circuit(&args.circuit).map_err(format_circuit_io_error)?;
 
-    println!("SSTADEx Circuit MNA");
-    println!();
-    println!("Running MNA...");
+    if args.format == CircuitMnaFormat::Text {
+        println!("SSTADEx Circuit MNA");
+        println!();
+        println!("Running MNA...");
+    }
 
     let analysis = analyze_circuit_mna(&circuit, &catalog, &args.output, args.solve)
         .map_err(format_circuit_mna_error)?;
+
+    if args.format == CircuitMnaFormat::Json {
+        let output = CircuitMnaJsonOutput::from_analysis(&analysis);
+        let json = serde_json::to_string_pretty(&output)
+            .map_err(|error| format!("failed to serialize circuit MNA output: {error}"))?;
+        println!("{json}");
+        return Ok(());
+    }
 
     println!("Generated small-signal netlist:");
     println!("  {}", analysis.spice_path.display());
@@ -698,6 +735,157 @@ fn print_node_variable_map(result: &libsstadex::mna::mna::MnaResult) {
     println!();
 }
 
+#[derive(Debug, Serialize)]
+struct CircuitMnaJsonOutput {
+    spice_path: String,
+    cir_path: String,
+    reports: CircuitMnaReportsJsonOutput,
+    nodes: Vec<NodeJsonOutput>,
+    variables: Vec<NodeVariableJsonOutput>,
+    equations: Vec<EquationJsonOutput>,
+    solution: Option<Vec<SolutionJsonOutput>>,
+}
+
+#[derive(Debug, Serialize)]
+struct CircuitMnaReportsJsonOutput {
+    spice_parser: String,
+    netlist: String,
+}
+
+#[derive(Debug, Serialize)]
+struct NodeJsonOutput {
+    name: String,
+    number: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct NodeVariableJsonOutput {
+    variable: String,
+    node_name: String,
+    node_number: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct EquationJsonOutput {
+    index: usize,
+    lhs: String,
+    rhs: String,
+    text: String,
+}
+
+#[derive(Debug, Serialize)]
+struct SolutionJsonOutput {
+    variable: String,
+    expression: String,
+}
+
+impl CircuitMnaJsonOutput {
+    fn from_analysis(analysis: &libsstadex::analysis::CircuitMnaAnalysis) -> Self {
+        let mut nodes = analysis
+            .mna
+            .nodes
+            .nodes
+            .iter()
+            .map(|(name, number)| NodeJsonOutput {
+                name: name.clone(),
+                number: *number,
+            })
+            .collect::<Vec<_>>();
+        nodes.sort_by_key(|node| node.number);
+
+        let variables = analysis
+            .mna
+            .node_variables()
+            .into_iter()
+            .map(|node| NodeVariableJsonOutput {
+                variable: node.variable,
+                node_name: node.node_name,
+                node_number: node.node_number,
+            })
+            .collect();
+
+        let solution = analysis.solution.as_ref().map(|solution| {
+            let mut entries = solution
+                .solutions
+                .iter()
+                .map(|(variable, expression)| SolutionJsonOutput {
+                    variable: variable.clone(),
+                    expression: expression.clone(),
+                })
+                .collect::<Vec<_>>();
+            entries.sort_by(|left, right| left.variable.cmp(&right.variable));
+            entries
+        });
+
+        Self {
+            spice_path: analysis.spice_path.display().to_string(),
+            cir_path: analysis.cir_path.display().to_string(),
+            reports: CircuitMnaReportsJsonOutput {
+                spice_parser: analysis.mna.nodes.to_string(),
+                netlist: analysis.mna.report.clone(),
+            },
+            nodes,
+            variables,
+            equations: mna_equations(&analysis.mna.a, &analysis.mna.x, &analysis.mna.z),
+            solution,
+        }
+    }
+}
+
+fn mna_equations<T>(a: &[Vec<T>], x: &[T], z: &[T]) -> Vec<EquationJsonOutput>
+where
+    T: std::fmt::Display,
+{
+    a.iter()
+        .enumerate()
+        .map(|(row_idx, row)| {
+            let lhs = equation_lhs(row, x);
+            let rhs = z
+                .get(row_idx)
+                .map(|expr| expr.to_string())
+                .unwrap_or_else(|| "<missing rhs>".to_string());
+            let index = row_idx + 1;
+
+            EquationJsonOutput {
+                index,
+                text: format!("eq_{index}: {lhs} = {rhs}"),
+                lhs,
+                rhs,
+            }
+        })
+        .collect()
+}
+
+fn equation_lhs<T>(row: &[T], x: &[T]) -> String
+where
+    T: std::fmt::Display,
+{
+    let terms = row
+        .iter()
+        .enumerate()
+        .filter_map(|(col_idx, coeff)| {
+            let var = x.get(col_idx)?;
+            let coeff_str = coeff.to_string();
+
+            if coeff_str == "0" || coeff_str == "0.0" {
+                None
+            } else if coeff_str == "1" || coeff_str == "1.0" {
+                Some(format!("{var}"))
+            } else if coeff_str == "-1" || coeff_str == "-1.0" {
+                Some(format!("-{var}"))
+            } else {
+                Some(format!("({coeff})·{var}"))
+            }
+        })
+        .collect::<Vec<_>>();
+
+    if terms.is_empty() {
+        "0".to_string()
+    } else {
+        terms.join(" + ")
+    }
+}
+
 fn format_primitive_load_error(error: PrimitiveLoadError) -> String {
     match error {
         PrimitiveLoadError::Io(error) => format!("I/O failure while loading catalog: {error}"),
@@ -794,7 +982,7 @@ Usage:\n\
   sstadex catalog list --primitives-dir <DIR>\n\
   sstadex circuit render --primitives-dir <DIR> --name <NAME> --instance <ID:PRIMITIVE> --connect <INSTANCE.PIN=NET> [--view structural|small-signal] [--output <FILE>]\n\
   sstadex circuit render-file --primitives-dir <DIR> --circuit <FILE> [--view structural|small-signal] [--output <FILE>]\n\
-  sstadex circuit mna --primitives-dir <DIR> --circuit <FILE> --output <DIR> [--solve]\n\
+  sstadex circuit mna --primitives-dir <DIR> --circuit <FILE> --output <DIR> [--solve] [--format text|json]\n\
   sstadex mna --spice-dir <DIR> --design <NAME> --output <DIR> [--solve]\n\
 \n\
 Commands:\n\
@@ -843,7 +1031,7 @@ fn print_circuit_help() {
   sstadex circuit --help\n\
   sstadex circuit render --primitives-dir <DIR> --name <NAME> --instance <ID:PRIMITIVE> --connect <INSTANCE.PIN=NET> [--view structural|small-signal] [--output <FILE>]\n\
   sstadex circuit render-file --primitives-dir <DIR> --circuit <FILE> [--view structural|small-signal] [--output <FILE>]\n\
-  sstadex circuit mna --primitives-dir <DIR> --circuit <FILE> --output <DIR> [--solve]\n\
+  sstadex circuit mna --primitives-dir <DIR> --circuit <FILE> --output <DIR> [--solve] [--format text|json]\n\
 \n\
 Commands:\n\
   render         Render a circuit netlist from instances and connections\n\
@@ -883,13 +1071,14 @@ Options:\n\
 fn print_circuit_mna_help() {
     println!(
         "Usage:\n\
-  sstadex circuit mna --primitives-dir <DIR> --circuit <FILE> --output <DIR> [--solve]\n\
+  sstadex circuit mna --primitives-dir <DIR> --circuit <FILE> --output <DIR> [--solve] [--format text|json]\n\
 \n\
 Options:\n\
   --primitives-dir <DIR>    Directory containing primitive subfolders\n\
   --circuit <FILE>          Circuit JSON file\n\
   --output <DIR>            Directory where generated .spice and .cir files are written\n\
-  --solve                   Solve the symbolic MNA system using Python/SymPy\n"
+  --solve                   Solve the symbolic MNA system using Python/SymPy\n\
+  --format <FORMAT>         Output format: text or json; default text\n"
     );
 }
 

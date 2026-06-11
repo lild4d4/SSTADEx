@@ -167,3 +167,64 @@ fn circuit_mna_generates_small_signal_and_mna_netlists() {
 
     fs::remove_dir_all(output_dir).expect("failed to remove temporary test directory");
 }
+
+#[test]
+fn circuit_mna_json_outputs_structured_result() {
+    let output_dir = std::env::temp_dir().join(format!(
+        "sstadex-cli-circuit-mna-json-test-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&output_dir).expect("failed to create temporary test directory");
+
+    let primitives_dir = primitives_dir();
+    let circuit = ota_circuit_file();
+    let output = sstadex(&[
+        "circuit",
+        "mna",
+        "--primitives-dir",
+        primitives_dir.to_str().expect("valid primitives path"),
+        "--circuit",
+        circuit.to_str().expect("valid circuit path"),
+        "--output",
+        output_dir.to_str().expect("valid output path"),
+        "--format",
+        "json",
+    ]);
+
+    assert_success(&output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains("Running MNA..."));
+
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout).expect("expected valid JSON output");
+
+    assert_eq!(
+        json["spice_path"],
+        output_dir
+            .join("ota_primitives.spice")
+            .display()
+            .to_string()
+    );
+    assert_eq!(
+        json["cir_path"],
+        output_dir.join("ota_primitives.cir").display().to_string()
+    );
+    assert_eq!(json["solution"], serde_json::Value::Null);
+    assert_eq!(json["nodes"][1]["name"], "VOUT");
+    assert_eq!(json["nodes"][1]["number"], 1);
+    assert_eq!(json["variables"][0]["variable"], "v1");
+    assert_eq!(json["variables"][0]["node_name"], "VOUT");
+    assert!(
+        json["equations"]
+            .as_array()
+            .expect("equations should be an array")
+            .iter()
+            .any(|equation| equation["text"]
+                .as_str()
+                .expect("equation text should be a string")
+                .contains("gm__xdp__m1"))
+    );
+
+    fs::remove_dir_all(output_dir).expect("failed to remove temporary test directory");
+}
