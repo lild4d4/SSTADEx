@@ -74,7 +74,7 @@ pub struct Branch {
     pub cp_node: Option<usize>,
     pub cn_node: Option<usize>,
     pub vout: Option<usize>,
-    pub value: Option<f64>,
+    pub value: Option<Expr>,
     pub vname: Option<String>,
     pub lname1: Option<String>,
     pub lname2: Option<String>,
@@ -142,16 +142,16 @@ pub enum SmnaError {
     },
 }
 
-pub fn get_part_values(net_df: &[Branch]) -> HashMap<String, f64> {
+pub fn get_part_values(net_df: &[Branch]) -> HashMap<String, Expr> {
     let mut values = HashMap::new();
 
     for branch in net_df {
-        if let Some(value) = branch.value {
+        if let Some(value) = &branch.value {
             let key = match branch.kind() {
                 'F' | 'E' | 'G' | 'H' => branch.element.to_lowercase(),
                 _ => branch.element.clone(),
             };
-            values.insert(key, value);
+            values.insert(key, value.clone());
         }
     }
 
@@ -403,10 +403,14 @@ fn parse_node(token: &str) -> Result<usize, SmnaError> {
     })
 }
 
-fn parse_value(token: &str) -> Result<f64, SmnaError> {
-    token.parse().map_err(|_| SmnaError::BadValue {
-        token: token.to_string(),
-    })
+fn parse_value(token: &str) -> Result<Expr, SmnaError> {
+    if token.is_empty() {
+        Err(SmnaError::BadValue {
+            token: token.to_string(),
+        })
+    } else {
+        Ok(Expr::symbol(token))
+    }
 }
 
 fn move_voltage_sources_first(df: &mut Vec<Branch>) {
@@ -433,7 +437,16 @@ fn count_nodes(df: &[Branch], line_cnt: usize) -> Result<usize, SmnaError> {
         if branch.kind() == 'K' {
             continue;
         }
-        for node in [branch.p_node, branch.n_node].into_iter().flatten() {
+        for node in [
+            branch.p_node,
+            branch.n_node,
+            branch.cp_node,
+            branch.cn_node,
+            branch.vout,
+        ]
+        .into_iter()
+        .flatten()
+        {
             if node < present.len() {
                 present[node] = true;
             }
@@ -466,11 +479,17 @@ fn zeros(rows: usize, cols: usize) -> Matrix {
 }
 
 fn sym(branch: &Branch) -> Expr {
-    Expr::symbol(branch.element.clone())
+    branch
+        .value
+        .clone()
+        .unwrap_or_else(|| Expr::symbol(branch.element.clone()))
 }
 
 fn controlled_sym(branch: &Branch) -> Expr {
-    Expr::symbol(branch.element.to_lowercase())
+    branch
+        .value
+        .clone()
+        .unwrap_or_else(|| Expr::symbol(branch.element.to_lowercase()))
 }
 
 fn add_cell(matrix: &mut Matrix, row: usize, col: usize, value: Expr) {

@@ -95,7 +95,9 @@ fn replace_node(
 ) {
     let net = params[index].clone();
 
-    let number = if net == "vss" {
+    let is_ground = net.eq_ignore_ascii_case("vss");
+
+    let number = if is_ground {
         0
     } else {
         match nodes.get(&net) {
@@ -109,7 +111,7 @@ fn replace_node(
         }
     };
 
-    if net == "vss" {
+    if is_ground {
         nodes.entry(net).or_insert(0);
     }
 

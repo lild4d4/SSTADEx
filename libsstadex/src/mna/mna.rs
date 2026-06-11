@@ -6,6 +6,7 @@ use std::process::Command;
 use crate::mna::spice_parser::{NodeMap, SpiceError, spice_parser};
 use crate::mna::symmna::{Matrix, SmnaError, Vector, smna};
 
+#[derive(Debug)]
 pub struct MnaResult {
     pub report: String,
     pub a: Matrix,
