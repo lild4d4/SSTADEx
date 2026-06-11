@@ -62,6 +62,7 @@ pub fn analyze_circuit_mna(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis::CircuitMnaOutput;
     use crate::catalog::load_primitive_catalog;
     use crate::circuit::{Connection, Instance, PinRef, load_circuit};
 
@@ -117,6 +118,19 @@ mod tests {
                 ("v6".to_string(), "VDD".to_string()),
                 ("v7".to_string(), "VBIAS".to_string()),
             ]
+        );
+
+        let output = CircuitMnaOutput::from_analysis(&analysis);
+        assert_eq!(output.nodes[1].name, "VOUT");
+        assert_eq!(output.nodes[1].number, 1);
+        assert_eq!(output.variables[0].variable, "v1");
+        assert_eq!(output.variables[0].node_name, "VOUT");
+        assert_eq!(output.solution, None);
+        assert!(
+            output
+                .equations
+                .iter()
+                .any(|equation| equation.text.contains("gm__xdp__m1"))
         );
 
         fs::remove_dir_all(output_dir).unwrap();

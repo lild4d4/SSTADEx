@@ -88,7 +88,6 @@ name = "sstadex-cli"
 version = "0.1.0"
 dependencies = [
  "libsstadex",
- "serde",
  "serde_json",
 ]
 

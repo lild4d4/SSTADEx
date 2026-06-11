@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use libsstadex::analysis::{CircuitMnaAnalysisError, analyze_circuit_mna};
+use libsstadex::analysis::{CircuitMnaAnalysisError, CircuitMnaOutput, analyze_circuit_mna};
 use libsstadex::catalog::{PrimitiveLoadError, load_primitive_catalog};
 use libsstadex::circuit::{Circuit, CircuitIoError, Connection, Instance, PinRef, load_circuit};
 use libsstadex::mna::mna::{MnaError, mna, mna_solve};
@@ -11,7 +11,6 @@ use libsstadex::mna::pretty::{pretty_solutions, pretty_system};
 use libsstadex::netlist::{
     NetlistRenderError, SmallSignalRenderError, render_circuit_netlist, render_small_signal_netlist,
 };
-use serde::Serialize;
 
 #[derive(Debug)]
 struct CatalogListArgs {
@@ -429,7 +428,7 @@ fn run_circuit_mna(args: CircuitMnaArgs) -> Result<(), String> {
         .map_err(format_circuit_mna_error)?;
 
     if args.format == CircuitMnaFormat::Json {
-        let output = CircuitMnaJsonOutput::from_analysis(&analysis);
+        let output = CircuitMnaOutput::from_analysis(&analysis);
         let json = serde_json::to_string_pretty(&output)
             .map_err(|error| format!("failed to serialize circuit MNA output: {error}"))?;
         println!("{json}");
@@ -733,157 +732,6 @@ fn print_node_variable_map(result: &libsstadex::mna::mna::MnaResult) {
     }
 
     println!();
-}
-
-#[derive(Debug, Serialize)]
-struct CircuitMnaJsonOutput {
-    spice_path: String,
-    cir_path: String,
-    reports: CircuitMnaReportsJsonOutput,
-    nodes: Vec<NodeJsonOutput>,
-    variables: Vec<NodeVariableJsonOutput>,
-    equations: Vec<EquationJsonOutput>,
-    solution: Option<Vec<SolutionJsonOutput>>,
-}
-
-#[derive(Debug, Serialize)]
-struct CircuitMnaReportsJsonOutput {
-    spice_parser: String,
-    netlist: String,
-}
-
-#[derive(Debug, Serialize)]
-struct NodeJsonOutput {
-    name: String,
-    number: usize,
-}
-
-#[derive(Debug, Serialize)]
-struct NodeVariableJsonOutput {
-    variable: String,
-    node_name: String,
-    node_number: usize,
-}
-
-#[derive(Debug, Serialize)]
-struct EquationJsonOutput {
-    index: usize,
-    lhs: String,
-    rhs: String,
-    text: String,
-}
-
-#[derive(Debug, Serialize)]
-struct SolutionJsonOutput {
-    variable: String,
-    expression: String,
-}
-
-impl CircuitMnaJsonOutput {
-    fn from_analysis(analysis: &libsstadex::analysis::CircuitMnaAnalysis) -> Self {
-        let mut nodes = analysis
-            .mna
-            .nodes
-            .nodes
-            .iter()
-            .map(|(name, number)| NodeJsonOutput {
-                name: name.clone(),
-                number: *number,
-            })
-            .collect::<Vec<_>>();
-        nodes.sort_by_key(|node| node.number);
-
-        let variables = analysis
-            .mna
-            .node_variables()
-            .into_iter()
-            .map(|node| NodeVariableJsonOutput {
-                variable: node.variable,
-                node_name: node.node_name,
-                node_number: node.node_number,
-            })
-            .collect();
-
-        let solution = analysis.solution.as_ref().map(|solution| {
-            let mut entries = solution
-                .solutions
-                .iter()
-                .map(|(variable, expression)| SolutionJsonOutput {
-                    variable: variable.clone(),
-                    expression: expression.clone(),
-                })
-                .collect::<Vec<_>>();
-            entries.sort_by(|left, right| left.variable.cmp(&right.variable));
-            entries
-        });
-
-        Self {
-            spice_path: analysis.spice_path.display().to_string(),
-            cir_path: analysis.cir_path.display().to_string(),
-            reports: CircuitMnaReportsJsonOutput {
-                spice_parser: analysis.mna.nodes.to_string(),
-                netlist: analysis.mna.report.clone(),
-            },
-            nodes,
-            variables,
-            equations: mna_equations(&analysis.mna.a, &analysis.mna.x, &analysis.mna.z),
-            solution,
-        }
-    }
-}
-
-fn mna_equations<T>(a: &[Vec<T>], x: &[T], z: &[T]) -> Vec<EquationJsonOutput>
-where
-    T: std::fmt::Display,
-{
-    a.iter()
-        .enumerate()
-        .map(|(row_idx, row)| {
-            let lhs = equation_lhs(row, x);
-            let rhs = z
-                .get(row_idx)
-                .map(|expr| expr.to_string())
-                .unwrap_or_else(|| "<missing rhs>".to_string());
-            let index = row_idx + 1;
-
-            EquationJsonOutput {
-                index,
-                text: format!("eq_{index}: {lhs} = {rhs}"),
-                lhs,
-                rhs,
-            }
-        })
-        .collect()
-}
-
-fn equation_lhs<T>(row: &[T], x: &[T]) -> String
-where
-    T: std::fmt::Display,
-{
-    let terms = row
-        .iter()
-        .enumerate()
-        .filter_map(|(col_idx, coeff)| {
-            let var = x.get(col_idx)?;
-            let coeff_str = coeff.to_string();
-
-            if coeff_str == "0" || coeff_str == "0.0" {
-                None
-            } else if coeff_str == "1" || coeff_str == "1.0" {
-                Some(format!("{var}"))
-            } else if coeff_str == "-1" || coeff_str == "-1.0" {
-                Some(format!("-{var}"))
-            } else {
-                Some(format!("({coeff})·{var}"))
-            }
-        })
-        .collect::<Vec<_>>();
-
-    if terms.is_empty() {
-        "0".to_string()
-    } else {
-        terms.join(" + ")
-    }
 }
 
 fn format_primitive_load_error(error: PrimitiveLoadError) -> String {
