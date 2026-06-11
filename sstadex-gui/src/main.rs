@@ -1,7 +1,10 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use eframe::egui;
+use libsstadex::analysis::{CircuitMnaOutput, analyze_circuit_mna};
 use libsstadex::catalog::{load_primitive_catalog, PrimitiveCatalog};
+use libsstadex::circuit::{Circuit, Connection, Instance, PinRef, save_circuit};
 use libsstadex::primitive::manifest::{PinRole, PrimitiveManifest};
 
 fn main() -> eframe::Result {
@@ -20,11 +23,14 @@ struct SstadexApp {
     selected_primitive: Option<String>,
     load_error: Option<String>,
     canvas_instances: Vec<CanvasInstance>,
+    label_pins: Vec<CanvasLabelPin>,
     selected_instance_id: Option<usize>,
-    selected_pin: Option<SelectedPin>,
-    pending_connection: Option<SelectedPin>,
+    selected_endpoint: Option<CanvasEndpoint>,
+    pending_connection: Option<CanvasEndpoint>,
     connections: Vec<CanvasConnection>,
+    output_log: String,
     next_instance_id: usize,
+    next_label_pin_id: usize,
 }
 
 struct CanvasInstance {
@@ -33,15 +39,21 @@ struct CanvasInstance {
     position: egui::Pos2,
 }
 
-#[derive(Clone, PartialEq, Eq)]
-struct SelectedPin {
-    instance_id: usize,
-    pin_name: String,
+#[derive(Clone, Hash, PartialEq, Eq)]
+enum CanvasEndpoint {
+    PrimitivePin { instance_id: usize, pin_name: String },
+    LabelPin { label_id: usize },
+}
+
+struct CanvasLabelPin {
+    id: usize,
+    name: String,
+    position: egui::Pos2,
 }
 
 struct CanvasConnection {
-    from: SelectedPin,
-    to: SelectedPin,
+    from: CanvasEndpoint,
+    to: CanvasEndpoint,
 }
 
 struct CanvasView {
@@ -68,11 +80,14 @@ impl Default for SstadexApp {
             selected_primitive: None,
             load_error,
             canvas_instances: Vec::new(),
+            label_pins: Vec::new(),
             selected_instance_id: None,
-            selected_pin: None,
+            selected_endpoint: None,
             pending_connection: None,
             connections: Vec::new(),
+            output_log: "Logs, netlists, and MNA results will appear here".to_string(),
             next_instance_id: 1,
+            next_label_pin_id: 1,
         }
     }
 }
@@ -83,7 +98,12 @@ impl eframe::App for SstadexApp {
             ui.horizontal(|ui| {
                 let _ = ui.button("Open circuit");
                 let _ = ui.button("Save circuit");
-                let _ = ui.button("Run MNA");
+                if ui.button("Add lab pin").clicked() {
+                    self.add_label_pin();
+                }
+                if ui.button("Run MNA").clicked() {
+                    self.output_log = self.run_mna_from_canvas();
+                }
             });
         });
 
@@ -110,7 +130,7 @@ impl eframe::App for SstadexApp {
 
                         if response.clicked() {
                             self.selected_instance_id = None;
-                            self.selected_pin = None;
+                            self.selected_endpoint = None;
                             self.pending_connection = None;
                         }
                     }
@@ -126,8 +146,10 @@ impl eframe::App for SstadexApp {
                 ui.heading("Details");
                 ui.separator();
 
-                if let Some(instance) = self.selected_instance() {
-                    show_instance_details(ui, instance, self.selected_pin.as_ref());
+                if let Some(label_pin) = self.selected_label_pin_mut() {
+                    show_label_pin_details(ui, label_pin);
+                } else if let Some(instance) = self.selected_instance() {
+                    show_instance_details(ui, instance, self.selected_endpoint.as_ref());
                 } else if let Some(primitive) = self.selected_primitive().cloned() {
                     show_primitive_details(ui, &primitive);
 
@@ -157,21 +179,24 @@ impl eframe::App for SstadexApp {
                         .unwrap_or_else(|| "none".to_string())
                 ));
                 ui.label(format!(
-                    "Selected pin: {}",
-                    self.selected_pin
+                    "Selected endpoint: {}",
+                    self.selected_endpoint
                         .as_ref()
-                        .map(|pin| pin.pin_name.as_str())
-                        .unwrap_or("none")
+                        .map(format_endpoint)
+                        .unwrap_or_else(|| "none".to_string())
                 ));
                 ui.label(format!(
                     "Pending connection: {}",
                     self.pending_connection
                         .as_ref()
-                        .map(format_selected_pin)
+                        .map(format_endpoint)
                         .unwrap_or_else(|| "none".to_string())
                 ));
                 ui.label(format!("Connections: {}", self.connections.len()));
-                ui.label("Logs, netlists, and MNA results will appear here");
+                ui.separator();
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    ui.label(&self.output_log);
+                });
             });
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -192,6 +217,7 @@ impl eframe::App for SstadexApp {
                 &painter,
                 &canvas,
                 &self.canvas_instances,
+                &self.label_pins,
                 self.catalog.as_ref(),
                 &self.connections,
             );
@@ -221,17 +247,17 @@ impl eframe::App for SstadexApp {
                         let response = ui.allocate_rect(hit_rect, egui::Sense::click());
 
                         if response.clicked() {
-                            let selected_pin = SelectedPin {
+                            let selected_endpoint = CanvasEndpoint::PrimitivePin {
                                 instance_id: instance.id,
                                 pin_name: pin_view.name.clone(),
                             };
 
                             self.selected_instance_id = Some(instance.id);
-                            self.selected_pin = Some(selected_pin.clone());
+                            self.selected_endpoint = Some(selected_endpoint.clone());
                             update_pending_connection(
                                 &mut self.pending_connection,
                                 &mut self.connections,
-                                selected_pin,
+                                selected_endpoint,
                             );
                         }
                     }
@@ -242,9 +268,43 @@ impl eframe::App for SstadexApp {
                     rect,
                     instance,
                     primitive,
-                    self.selected_pin.as_ref(),
+                    self.selected_endpoint.as_ref(),
                     selected,
                 );
+            }
+
+            for label_pin in &mut self.label_pins {
+                let position = canvas.to_screen(label_pin.position);
+                let hit_rect = egui::Rect::from_center_size(position, egui::vec2(18.0, 18.0));
+                let response = ui.allocate_rect(hit_rect, egui::Sense::click_and_drag());
+
+                if response.clicked() || response.dragged() {
+                    self.selected_instance_id = None;
+                    self.selected_endpoint = Some(CanvasEndpoint::LabelPin {
+                        label_id: label_pin.id,
+                    });
+                }
+
+                if response.clicked() {
+                    let selected_endpoint = CanvasEndpoint::LabelPin {
+                        label_id: label_pin.id,
+                    };
+                    update_pending_connection(
+                        &mut self.pending_connection,
+                        &mut self.connections,
+                        selected_endpoint,
+                    );
+                }
+
+                if response.dragged() {
+                    label_pin.position += response.drag_delta();
+                }
+
+                let selected = self.selected_endpoint.as_ref()
+                    == Some(&CanvasEndpoint::LabelPin {
+                        label_id: label_pin.id,
+                    });
+                draw_label_pin(&painter, position, label_pin, selected);
             }
         });
     }
@@ -266,6 +326,17 @@ impl SstadexApp {
             .find(|instance| instance.id == id)
     }
 
+    fn selected_label_pin_mut(&mut self) -> Option<&mut CanvasLabelPin> {
+        let Some(CanvasEndpoint::LabelPin { label_id }) = self.selected_endpoint.as_ref() else {
+            return None;
+        };
+        let label_id = *label_id;
+
+        self.label_pins
+            .iter_mut()
+            .find(|label_pin| label_pin.id == label_id)
+    }
+
     fn add_canvas_instance(&mut self, primitive_name: &str) {
         let offset = 28.0 * self.canvas_instances.len() as f32;
         let id = self.next_instance_id;
@@ -277,9 +348,112 @@ impl SstadexApp {
         });
 
         self.selected_instance_id = Some(id);
-        self.selected_pin = None;
+        self.selected_endpoint = None;
         self.pending_connection = None;
         self.next_instance_id += 1;
+    }
+
+    fn add_label_pin(&mut self) {
+        let offset = 24.0 * self.label_pins.len() as f32;
+        let id = self.next_label_pin_id;
+
+        self.label_pins.push(CanvasLabelPin {
+            id,
+            name: format!("NET{id}"),
+            position: egui::pos2(80.0 + offset, 80.0 + offset),
+        });
+
+        self.selected_instance_id = None;
+        self.selected_endpoint = Some(CanvasEndpoint::LabelPin { label_id: id });
+        self.pending_connection = None;
+        self.next_label_pin_id += 1;
+    }
+
+    fn run_mna_from_canvas(&self) -> String {
+        let Some(catalog) = &self.catalog else {
+            return "Cannot run MNA: primitive catalog is not loaded".to_string();
+        };
+
+        if self.canvas_instances.is_empty() {
+            return "Cannot run MNA: the canvas has no instances".to_string();
+        }
+
+        let circuit = self.build_circuit_from_canvas();
+        let output_dir = std::env::temp_dir().join("sstadex-gui-mna");
+        let circuit_path = output_dir.join("gui_canvas.json");
+
+        if let Err(error) = std::fs::create_dir_all(&output_dir) {
+            return format!(
+                "Cannot run MNA: failed to create output directory '{}'\n\n{error}",
+                output_dir.display()
+            );
+        }
+
+        if let Err(error) = save_circuit(&circuit_path, &circuit) {
+            return format!(
+                "Cannot run MNA: failed to save generated circuit JSON '{}'\n\n{error:?}",
+                circuit_path.display()
+            );
+        }
+
+        match analyze_circuit_mna(&circuit, catalog, &output_dir, false) {
+            Ok(analysis) => format_mna_output(&CircuitMnaOutput::from_analysis(&analysis), &circuit_path),
+            Err(error) => format!(
+                "MNA failed for circuit '{}'\n\nCircuit JSON: {}\n\n{error:?}\n\nGenerated circuit summary:\n{}",
+                circuit.name,
+                circuit_path.display(),
+                format_circuit_summary(&circuit)
+            ),
+        }
+    }
+
+    fn build_circuit_from_canvas(&self) -> Circuit {
+        let mut circuit = Circuit::new("gui_canvas");
+
+        for instance in &self.canvas_instances {
+            circuit.add_instance(Instance::new(
+                circuit_instance_id(instance.id),
+                instance.primitive_name.clone(),
+            ));
+        }
+
+        for (net_index, endpoints) in connected_endpoint_groups(&self.connections)
+            .into_iter()
+            .enumerate()
+        {
+            let net = self
+                .label_net_name(&endpoints)
+                .unwrap_or_else(|| format!("N{}", net_index + 1));
+
+            for endpoint in endpoints {
+                if let CanvasEndpoint::PrimitivePin {
+                    instance_id,
+                    pin_name,
+                } = endpoint
+                {
+                    circuit.connect(Connection::new(
+                        PinRef::new(circuit_instance_id(instance_id), pin_name),
+                        net.clone(),
+                    ));
+                }
+            }
+        }
+
+        circuit
+    }
+
+    fn label_net_name(&self, endpoints: &[CanvasEndpoint]) -> Option<String> {
+        endpoints
+            .iter()
+            .filter_map(|endpoint| match endpoint {
+                CanvasEndpoint::LabelPin { label_id } => self
+                    .label_pins
+                    .iter()
+                    .find(|label_pin| label_pin.id == *label_id)
+                    .map(|label_pin| label_pin.name.trim().to_string()),
+                CanvasEndpoint::PrimitivePin { .. } => None,
+            })
+            .find(|name| !name.is_empty())
     }
 }
 
@@ -314,7 +488,7 @@ fn show_primitive_details(ui: &mut egui::Ui, primitive: &PrimitiveManifest) {
 fn show_instance_details(
     ui: &mut egui::Ui,
     instance: &CanvasInstance,
-    selected_pin: Option<&SelectedPin>,
+    selected_endpoint: Option<&CanvasEndpoint>,
 ) {
     ui.heading(format!("{}_{}", instance.primitive_name, instance.id));
     ui.label(format!("Primitive: {}", instance.primitive_name));
@@ -323,26 +497,46 @@ fn show_instance_details(
         instance.position.x, instance.position.y
     ));
 
-    if let Some(pin) = selected_pin.filter(|pin| pin.instance_id == instance.id) {
+    if let Some(CanvasEndpoint::PrimitivePin {
+        instance_id,
+        pin_name,
+    }) = selected_endpoint.filter(|endpoint| match endpoint {
+        CanvasEndpoint::PrimitivePin { instance_id, .. } => *instance_id == instance.id,
+        CanvasEndpoint::LabelPin { .. } => false,
+    }) {
+        let _ = instance_id;
         ui.separator();
-        ui.label(format!("Selected pin: {}", pin.pin_name));
+        ui.label(format!("Selected pin: {pin_name}"));
     }
 }
 
+fn show_label_pin_details(ui: &mut egui::Ui, label_pin: &mut CanvasLabelPin) {
+    ui.heading("Lab pin");
+    ui.label(format!("ID: {}", label_pin.id));
+    ui.horizontal(|ui| {
+        ui.label("Net:");
+        ui.text_edit_singleline(&mut label_pin.name);
+    });
+    ui.label(format!(
+        "Position: {:.0}, {:.0}",
+        label_pin.position.x, label_pin.position.y
+    ));
+}
+
 fn update_pending_connection(
-    pending_connection: &mut Option<SelectedPin>,
+    pending_connection: &mut Option<CanvasEndpoint>,
     connections: &mut Vec<CanvasConnection>,
-    selected_pin: SelectedPin,
+    selected_endpoint: CanvasEndpoint,
 ) {
     match pending_connection.take() {
-        Some(from) if from != selected_pin => {
+        Some(from) if from != selected_endpoint => {
             connections.push(CanvasConnection {
                 from,
-                to: selected_pin,
+                to: selected_endpoint,
             });
         }
         _ => {
-            *pending_connection = Some(selected_pin);
+            *pending_connection = Some(selected_endpoint);
         }
     }
 }
@@ -351,15 +545,16 @@ fn draw_canvas_connections(
     painter: &egui::Painter,
     canvas: &CanvasView,
     instances: &[CanvasInstance],
+    label_pins: &[CanvasLabelPin],
     catalog: Option<&PrimitiveCatalog>,
     connections: &[CanvasConnection],
 ) {
     for connection in connections {
-        let Some(from) = pin_view_for_selected_pin(canvas, instances, catalog, &connection.from)
+        let Some(from) = endpoint_view(canvas, instances, label_pins, catalog, &connection.from)
         else {
             continue;
         };
-        let Some(to) = pin_view_for_selected_pin(canvas, instances, catalog, &connection.to) else {
+        let Some(to) = endpoint_view(canvas, instances, label_pins, catalog, &connection.to) else {
             continue;
         };
 
@@ -367,25 +562,44 @@ fn draw_canvas_connections(
     }
 }
 
-fn pin_view_for_selected_pin(
+fn endpoint_view(
     canvas: &CanvasView,
     instances: &[CanvasInstance],
+    label_pins: &[CanvasLabelPin],
     catalog: Option<&PrimitiveCatalog>,
-    selected_pin: &SelectedPin,
-) -> Option<PinView> {
-    let catalog = catalog?;
-    let instance = instances
-        .iter()
-        .find(|instance| instance.id == selected_pin.instance_id)?;
-    let primitive = catalog.get(&instance.primitive_name)?;
-    let rect = canvas.instance_rect(instance);
+    endpoint: &CanvasEndpoint,
+) -> Option<EndpointView> {
+    match endpoint {
+        CanvasEndpoint::PrimitivePin {
+            instance_id,
+            pin_name,
+        } => {
+            let catalog = catalog?;
+            let instance = instances
+                .iter()
+                .find(|instance| instance.id == *instance_id)?;
+            let primitive = catalog.get(&instance.primitive_name)?;
+            let rect = canvas.instance_rect(instance);
 
-    pin_views(rect, primitive)
-        .into_iter()
-        .find(|pin| pin.name == selected_pin.pin_name)
+            pin_views(rect, primitive)
+                .into_iter()
+                .find(|pin| pin.name == *pin_name)
+                .map(EndpointView::from_pin_view)
+        }
+        CanvasEndpoint::LabelPin { label_id } => {
+            let label_pin = label_pins
+                .iter()
+                .find(|label_pin| label_pin.id == *label_id)?;
+
+            Some(EndpointView {
+                position: canvas.to_screen(label_pin.position),
+                side: PinSide::Left,
+            })
+        }
+    }
 }
 
-fn draw_manhattan_connection(painter: &egui::Painter, from: &PinView, to: &PinView) {
+fn draw_manhattan_connection(painter: &egui::Painter, from: &EndpointView, to: &EndpointView) {
     let stroke = egui::Stroke::new(2.0, egui::Color32::from_rgb(120, 210, 150));
     let from_escape = pin_escape_position(from);
     let to_escape = pin_escape_position(to);
@@ -404,7 +618,7 @@ fn draw_manhattan_connection(painter: &egui::Painter, from: &PinView, to: &PinVi
     }
 }
 
-fn pin_escape_position(pin: &PinView) -> egui::Pos2 {
+fn pin_escape_position(pin: &EndpointView) -> egui::Pos2 {
     let escape = 24.0;
 
     match pin.side {
@@ -415,8 +629,122 @@ fn pin_escape_position(pin: &PinView) -> egui::Pos2 {
     }
 }
 
-fn format_selected_pin(pin: &SelectedPin) -> String {
-    format!("{}:{}", pin.instance_id, pin.pin_name)
+fn format_endpoint(endpoint: &CanvasEndpoint) -> String {
+    match endpoint {
+        CanvasEndpoint::PrimitivePin {
+            instance_id,
+            pin_name,
+        } => format!("{instance_id}:{pin_name}"),
+        CanvasEndpoint::LabelPin { label_id } => format!("lab:{label_id}"),
+    }
+}
+
+fn circuit_instance_id(instance_id: usize) -> String {
+    format!("x{instance_id}")
+}
+
+fn connected_endpoint_groups(connections: &[CanvasConnection]) -> Vec<Vec<CanvasEndpoint>> {
+    let mut adjacency: HashMap<CanvasEndpoint, Vec<CanvasEndpoint>> = HashMap::new();
+
+    for connection in connections {
+        adjacency
+            .entry(connection.from.clone())
+            .or_default()
+            .push(connection.to.clone());
+        adjacency
+            .entry(connection.to.clone())
+            .or_default()
+            .push(connection.from.clone());
+    }
+
+    let mut groups = Vec::new();
+    let mut visited: HashMap<CanvasEndpoint, bool> = HashMap::new();
+
+    for pin in adjacency.keys() {
+        if visited.contains_key(pin) {
+            continue;
+        }
+
+        let mut group = Vec::new();
+        let mut stack = vec![pin.clone()];
+
+        while let Some(current) = stack.pop() {
+            if visited.insert(current.clone(), true).is_some() {
+                continue;
+            }
+
+            group.push(current.clone());
+
+            if let Some(neighbors) = adjacency.get(&current) {
+                for neighbor in neighbors {
+                    stack.push(neighbor.clone());
+                }
+            }
+        }
+
+        group.sort_by(|left, right| {
+            endpoint_sort_key(left).cmp(&endpoint_sort_key(right))
+        });
+        groups.push(group);
+    }
+
+    groups
+}
+
+fn endpoint_sort_key(endpoint: &CanvasEndpoint) -> String {
+    match endpoint {
+        CanvasEndpoint::PrimitivePin {
+            instance_id,
+            pin_name,
+        } => format!("p:{instance_id}:{pin_name}"),
+        CanvasEndpoint::LabelPin { label_id } => format!("l:{label_id}"),
+    }
+}
+
+fn format_mna_output(output: &CircuitMnaOutput, circuit_path: &std::path::Path) -> String {
+    let mut lines = Vec::new();
+
+    lines.push("MNA completed".to_string());
+    lines.push(format!("Circuit JSON: {}", circuit_path.display()));
+    lines.push(format!("SPICE: {}", output.spice_path));
+    lines.push(format!("CIR: {}", output.cir_path));
+    lines.push(String::new());
+    lines.push("Variables:".to_string());
+
+    for variable in &output.variables {
+        lines.push(format!(
+            "  {} -> {} ({})",
+            variable.variable, variable.node_name, variable.node_number
+        ));
+    }
+
+    lines.push(String::new());
+    lines.push("Equations:".to_string());
+
+    for equation in &output.equations {
+        lines.push(format!("  {}", equation.text));
+    }
+
+    lines.join("\n")
+}
+
+fn format_circuit_summary(circuit: &Circuit) -> String {
+    let mut lines = Vec::new();
+
+    lines.push(format!("instances: {}", circuit.instances.len()));
+    for instance in &circuit.instances {
+        lines.push(format!("  {}: {}", instance.id, instance.primitive));
+    }
+
+    lines.push(format!("connections: {}", circuit.connections.len()));
+    for connection in &circuit.connections {
+        lines.push(format!(
+            "  {}.{} = {}",
+            connection.from.instance, connection.from.pin, connection.net
+        ));
+    }
+
+    lines.join("\n")
 }
 
 fn draw_canvas_instance(
@@ -424,7 +752,7 @@ fn draw_canvas_instance(
     rect: egui::Rect,
     instance: &CanvasInstance,
     primitive: Option<&PrimitiveManifest>,
-    selected_pin: Option<&SelectedPin>,
+    selected_endpoint: Option<&CanvasEndpoint>,
     selected: bool,
 ) {
     let stroke_color = if selected {
@@ -459,8 +787,30 @@ fn draw_canvas_instance(
     );
 
     if let Some(primitive) = primitive {
-        draw_instance_pins(painter, rect, instance.id, primitive, selected_pin);
+        draw_instance_pins(painter, rect, instance.id, primitive, selected_endpoint);
     }
+}
+
+fn draw_label_pin(
+    painter: &egui::Painter,
+    position: egui::Pos2,
+    label_pin: &CanvasLabelPin,
+    selected: bool,
+) {
+    let color = if selected {
+        egui::Color32::from_rgb(240, 210, 90)
+    } else {
+        egui::Color32::from_rgb(120, 210, 150)
+    };
+
+    painter.circle_filled(position, if selected { 5.5 } else { 4.5 }, color);
+    painter.text(
+        position + egui::vec2(8.0, 0.0),
+        egui::Align2::LEFT_CENTER,
+        &label_pin.name,
+        egui::FontId::proportional(12.0),
+        egui::Color32::from_gray(230),
+    );
 }
 
 fn draw_instance_pins(
@@ -468,11 +818,15 @@ fn draw_instance_pins(
     rect: egui::Rect,
     instance_id: usize,
     primitive: &PrimitiveManifest,
-    selected_pin: Option<&SelectedPin>,
+    selected_endpoint: Option<&CanvasEndpoint>,
 ) {
     for pin_view in pin_views(rect, primitive) {
-        let selected = selected_pin.is_some_and(|selected_pin| {
-            selected_pin.instance_id == instance_id && selected_pin.pin_name == pin_view.name
+        let selected = selected_endpoint.is_some_and(|endpoint| {
+            *endpoint
+                == CanvasEndpoint::PrimitivePin {
+                    instance_id,
+                    pin_name: pin_view.name.clone(),
+                }
         });
         let pin_color = if selected {
             egui::Color32::from_rgb(240, 210, 90)
@@ -490,6 +844,20 @@ fn draw_instance_pins(
             egui::FontId::proportional(10.0),
             egui::Color32::from_gray(210),
         );
+    }
+}
+
+struct EndpointView {
+    position: egui::Pos2,
+    side: PinSide,
+}
+
+impl EndpointView {
+    fn from_pin_view(pin_view: PinView) -> Self {
+        Self {
+            position: pin_view.position,
+            side: pin_view.side,
+        }
     }
 }
 
