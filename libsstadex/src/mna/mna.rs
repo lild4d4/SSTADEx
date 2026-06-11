@@ -36,8 +36,6 @@ impl From<std::io::Error> for MnaError {
 }
 
 pub fn mna(spice_dir: &Path, output_dir: &Path, design_name: &str) -> Result<MnaResult, MnaError> {
-    println!("Running MNA...");
-
     let nodes =
         spice_parser(spice_dir, output_dir, design_name).map_err(MnaError::SpiceConversion)?;
     let input_path = output_dir.join(format!("{design_name}.cir"));
