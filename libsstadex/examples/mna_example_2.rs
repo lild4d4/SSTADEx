@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 
 use libsstadex::mna::mna::{mna, mna_solve};
-use libsstadex::mna::pretty::{pretty_system, pretty_solutions};
+use libsstadex::mna::pretty::{pretty_solutions, pretty_system};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let spice_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/spice");
@@ -16,7 +16,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("MNA report");
     println!("==========");
     println!("{}", mna_sys.report);
-    
+
     println!();
     println!("{}", pretty_system(&mna_sys.a, &mna_sys.x, &mna_sys.z));
 

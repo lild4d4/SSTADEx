@@ -118,17 +118,28 @@ pub struct SmnaResult {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SmnaError {
-    UnknownElement { line: usize, content: String },
+    UnknownElement {
+        line: usize,
+        content: String,
+    },
     BadTokenCount {
         line: usize,
         content: String,
         expected: usize,
         actual: usize,
     },
-    BadNode { token: String },
-    BadValue { token: String },
-    MissingNode { node: usize },
-    MissingBranch { name: String },
+    BadNode {
+        token: String,
+    },
+    BadValue {
+        token: String,
+    },
+    MissingNode {
+        node: usize,
+    },
+    MissingBranch {
+        name: String,
+    },
 }
 
 pub fn get_part_values(net_df: &[Branch]) -> HashMap<String, f64> {
@@ -319,7 +330,12 @@ fn count_elements(content: &[String]) -> Result<Counts, SmnaError> {
     Ok(counts)
 }
 
-fn expect_tokens(line: usize, content: &str, actual: usize, expected: usize) -> Result<(), SmnaError> {
+fn expect_tokens(
+    line: usize,
+    content: &str,
+    actual: usize,
+    expected: usize,
+) -> Result<(), SmnaError> {
     if actual == expected {
         Ok(())
     } else {
@@ -520,7 +536,12 @@ fn stamp_b(df: &[Branch], b: &mut Matrix, i_unk: usize) -> Result<(), SmnaError>
     for branch in df {
         match branch.kind() {
             'V' | 'H' | 'F' | 'E' | 'L' => {
-                stamp_current_column(b, sn, branch.p_node.unwrap_or(0), branch.n_node.unwrap_or(0));
+                stamp_current_column(
+                    b,
+                    sn,
+                    branch.p_node.unwrap_or(0),
+                    branch.n_node.unwrap_or(0),
+                );
                 sn += 1;
             }
             'O' => {
@@ -547,20 +568,35 @@ fn stamp_current_column(matrix: &mut Matrix, col: usize, n1: usize, n2: usize) {
     }
 }
 
-fn stamp_c(df: &[Branch], df2: &[CurrentUnknown], c: &mut Matrix, i_unk: usize) -> Result<(), SmnaError> {
+fn stamp_c(
+    df: &[Branch],
+    df2: &[CurrentUnknown],
+    c: &mut Matrix,
+    i_unk: usize,
+) -> Result<(), SmnaError> {
     let mut sn = 0;
 
     for branch in df {
         match branch.kind() {
             'V' | 'O' | 'H' | 'L' => {
-                stamp_current_row(c, sn, branch.p_node.unwrap_or(0), branch.n_node.unwrap_or(0));
+                stamp_current_row(
+                    c,
+                    sn,
+                    branch.p_node.unwrap_or(0),
+                    branch.n_node.unwrap_or(0),
+                );
                 sn += 1;
             }
             'F' => {
                 sn += 1;
             }
             'E' => {
-                stamp_current_row(c, sn, branch.p_node.unwrap_or(0), branch.n_node.unwrap_or(0));
+                stamp_current_row(
+                    c,
+                    sn,
+                    branch.p_node.unwrap_or(0),
+                    branch.n_node.unwrap_or(0),
+                );
                 let gain = controlled_sym(branch);
                 if let Some(cn1) = branch.cp_node {
                     if cn1 != 0 {
@@ -591,7 +627,12 @@ fn stamp_current_row(matrix: &mut Matrix, row: usize, n1: usize, n2: usize) {
     }
 }
 
-fn stamp_d(df: &[Branch], df2: &[CurrentUnknown], d: &mut Matrix, i_unk: usize) -> Result<(), SmnaError> {
+fn stamp_d(
+    df: &[Branch],
+    df2: &[CurrentUnknown],
+    d: &mut Matrix,
+    i_unk: usize,
+) -> Result<(), SmnaError> {
     let mut sn = 0;
 
     for branch in df {
@@ -615,8 +656,14 @@ fn stamp_d(df: &[Branch], df2: &[CurrentUnknown], d: &mut Matrix, i_unk: usize) 
             'K' => {
                 let ind1 = find_vname(df2, branch.lname1.as_deref().unwrap_or(""))?;
                 let ind2 = find_vname(df2, branch.lname2.as_deref().unwrap_or(""))?;
-                let suffix = branch.element.to_lowercase().trim_start_matches('k').to_string();
-                let mutual = Expr::symbol("s").mul(&Expr::symbol(format!("M{suffix}"))).neg();
+                let suffix = branch
+                    .element
+                    .to_lowercase()
+                    .trim_start_matches('k')
+                    .to_string();
+                let mutual = Expr::symbol("s")
+                    .mul(&Expr::symbol(format!("M{suffix}")))
+                    .neg();
                 add_cell(d, ind1, ind2, mutual.clone());
                 add_cell(d, ind2, ind1, mutual);
             }

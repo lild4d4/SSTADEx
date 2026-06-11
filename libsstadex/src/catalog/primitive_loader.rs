@@ -15,13 +15,8 @@ use super::PrimitiveCatalog;
 pub enum PrimitiveLoadError {
     Io(std::io::Error),
     Json(serde_json::Error),
-    MissingPort {
-        primitive: String,
-        pin: String,
-    },
-    MissingNetlistFile {
-        primitive: String,
-    },
+    MissingPort { primitive: String, pin: String },
+    MissingNetlistFile { primitive: String },
 }
 
 impl From<std::io::Error> for PrimitiveLoadError {
@@ -42,7 +37,9 @@ pub fn load_primitive_manifest(path: &Path) -> Result<PrimitiveManifest, Primiti
     raw.into_manifest()
 }
 
-pub fn load_primitive_catalog(primitives_dir: &Path) -> Result<PrimitiveCatalog, PrimitiveLoadError> {
+pub fn load_primitive_catalog(
+    primitives_dir: &Path,
+) -> Result<PrimitiveCatalog, PrimitiveLoadError> {
     let mut catalog = PrimitiveCatalog::new();
 
     for entry in fs::read_dir(primitives_dir)? {
@@ -84,13 +81,13 @@ impl RawPrimitiveManifest {
 
         let mut pins = Vec::with_capacity(pin_order.len());
         for pin_name in pin_order {
-            let port = self
-                .ports
-                .get(&pin_name)
-                .ok_or_else(|| PrimitiveLoadError::MissingPort {
-                    primitive: self.name.clone(),
-                    pin: pin_name.clone(),
-                })?;
+            let port =
+                self.ports
+                    .get(&pin_name)
+                    .ok_or_else(|| PrimitiveLoadError::MissingPort {
+                        primitive: self.name.clone(),
+                        pin: pin_name.clone(),
+                    })?;
 
             pins.push(Pin {
                 name: port.name.clone().unwrap_or(pin_name),
@@ -98,11 +95,12 @@ impl RawPrimitiveManifest {
             });
         }
 
-        let netlist = self.files.netlist.ok_or_else(|| {
-            PrimitiveLoadError::MissingNetlistFile {
+        let netlist = self
+            .files
+            .netlist
+            .ok_or_else(|| PrimitiveLoadError::MissingNetlistFile {
                 primitive: self.name.clone(),
-            }
-        })?;
+            })?;
 
         Ok(PrimitiveManifest {
             subckt_name: self.subckt_name.unwrap_or_else(|| self.name.clone()),

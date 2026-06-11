@@ -15,7 +15,10 @@ fn test_mna_solve() {
 
     println!("{:?}", solution.solutions);
 
-    assert_eq!(solution.solutions.get("v1").map(String::as_str), Some("-I1*R1"));
+    assert_eq!(
+        solution.solutions.get("v1").map(String::as_str),
+        Some("-I1*R1")
+    );
 }
 
 fn sympy_is_available() -> bool {

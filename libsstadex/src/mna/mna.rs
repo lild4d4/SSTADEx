@@ -1,18 +1,18 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use std::collections::HashMap;
 use std::process::Command;
 
-use crate::mna::spice_parser::{spice_parser, NodeMap, SpiceError};
-use crate::mna::symmna::{smna, Matrix, Vector, SmnaError};
+use crate::mna::spice_parser::{NodeMap, SpiceError, spice_parser};
+use crate::mna::symmna::{Matrix, SmnaError, Vector, smna};
 
 pub struct MnaResult {
-      pub report: String,
-      pub a: Matrix,
-      pub x: Vector,
-      pub z: Vector,
-      pub nodes: NodeMap,
-  }
+    pub report: String,
+    pub a: Matrix,
+    pub x: Vector,
+    pub z: Vector,
+    pub nodes: NodeMap,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MnaSolveResult {
@@ -34,14 +34,11 @@ impl From<std::io::Error> for MnaError {
     }
 }
 
-pub fn mna(
-    spice_dir: &Path,
-    output_dir: &Path,
-    design_name: &str,
-    ) -> Result<MnaResult, MnaError> {
+pub fn mna(spice_dir: &Path, output_dir: &Path, design_name: &str) -> Result<MnaResult, MnaError> {
     println!("Running MNA...");
 
-    let nodes = spice_parser(spice_dir, output_dir, design_name).map_err(MnaError::SpiceConversion)?;
+    let nodes =
+        spice_parser(spice_dir, output_dir, design_name).map_err(MnaError::SpiceConversion)?;
     let input_path = output_dir.join(format!("{design_name}.cir"));
     let content = fs::read_to_string(input_path)?;
 
@@ -54,7 +51,7 @@ pub fn mna(
         z: symmna_output.z,
         nodes,
     })
-   }
+}
 
 pub fn mna_solve(a: &Matrix, x: &Vector, z: &Vector) -> Result<MnaSolveResult, MnaError> {
     let output = Command::new("python3")
@@ -119,9 +116,7 @@ fn vector_to_python_literal(vector: &Vector) -> String {
 }
 
 fn python_string_literal(value: &str) -> String {
-    let escaped = value
-        .replace('\\', "\\\\")
-        .replace('\'', "\\'");
+    let escaped = value.replace('\\', "\\\\").replace('\'', "\\'");
 
     format!("'{escaped}'")
 }

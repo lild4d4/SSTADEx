@@ -36,9 +36,7 @@ impl PrimitiveCatalog {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::primitive::manifest::{
-        Pin, PinRole, PrimitiveFiles, PrimitiveShape, PrimitiveUi,
-    };
+    use crate::primitive::manifest::{Pin, PinRole, PrimitiveFiles, PrimitiveShape, PrimitiveUi};
 
     #[test]
     fn registers_and_lists_primitives() {
@@ -70,7 +68,9 @@ mod tests {
 
         assert!(catalog.contains("simplediffpair"));
         assert_eq!(
-            catalog.get("simplediffpair").map(|primitive| primitive.subckt_name.as_str()),
+            catalog
+                .get("simplediffpair")
+                .map(|primitive| primitive.subckt_name.as_str()),
             Some("simplediffpair")
         );
         assert_eq!(catalog.list().len(), 1);

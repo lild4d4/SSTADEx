@@ -31,11 +31,11 @@ pub fn render_small_signal_netlist(
     lines.push(format!("* Small-signal circuit: {}", circuit.name));
 
     for instance in &circuit.instances {
-        let primitive = catalog
-            .get(&instance.primitive)
-            .ok_or_else(|| SmallSignalRenderError::MissingPrimitive {
+        let primitive = catalog.get(&instance.primitive).ok_or_else(|| {
+            SmallSignalRenderError::MissingPrimitive {
                 primitive: instance.primitive.clone(),
-            })?;
+            }
+        })?;
         let small_signal = primitive.small_signal.as_ref().ok_or_else(|| {
             SmallSignalRenderError::MissingSmallSignalModel {
                 primitive: primitive.name.clone(),

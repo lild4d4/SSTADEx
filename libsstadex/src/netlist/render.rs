@@ -4,13 +4,8 @@ use crate::circuit::{Circuit, CircuitValidationError, validate_circuit};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NetlistRenderError {
     InvalidCircuit(Vec<CircuitValidationError>),
-    UnconnectedPin {
-        instance: String,
-        pin: String,
-    },
-    MissingPrimitive {
-        primitive: String,
-    },
+    UnconnectedPin { instance: String, pin: String },
+    MissingPrimitive { primitive: String },
 }
 
 pub fn render_circuit_netlist(
@@ -26,11 +21,11 @@ pub fn render_circuit_netlist(
     lines.push(format!("* Circuit: {}", circuit.name));
 
     for instance in &circuit.instances {
-        let primitive = catalog
-            .get(&instance.primitive)
-            .ok_or_else(|| NetlistRenderError::MissingPrimitive {
+        let primitive = catalog.get(&instance.primitive).ok_or_else(|| {
+            NetlistRenderError::MissingPrimitive {
                 primitive: instance.primitive.clone(),
-            })?;
+            }
+        })?;
 
         let mut nets = Vec::new();
         for pin in &primitive.pins {

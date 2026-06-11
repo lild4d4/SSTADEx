@@ -1,11 +1,7 @@
-use std::fmt::Display;
 use std::collections::HashMap;
+use std::fmt::Display;
 
-pub fn pretty_system<T>(
-    a: &[Vec<T>],
-    x: &[T],
-    z: &[T],
-) -> String
+pub fn pretty_system<T>(a: &[Vec<T>], x: &[T], z: &[T]) -> String
 where
     T: Display,
 {

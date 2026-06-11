@@ -4,7 +4,6 @@ use std::path::Path;
 
 #[test]
 fn test_spice_parser() {
-
     let spice_dir = Path::new("src/tests/spice");
     let output_dir = std::env::temp_dir().join("mna_output");
 

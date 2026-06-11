@@ -4,7 +4,6 @@ use std::path::Path;
 
 #[test]
 fn test_symmna() {
-    
     let netlist = Path::new("src/tests/netlist/ota.cir");
     let output_dir = std::env::temp_dir().join("symmna_output");
 

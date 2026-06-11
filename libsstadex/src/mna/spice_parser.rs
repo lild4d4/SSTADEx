@@ -1,8 +1,8 @@
 use std::collections::HashMap;
+use std::fmt;
 use std::fs::{File, create_dir_all};
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
-use std::fmt;
 
 #[derive(Debug, Clone)]
 pub struct NodeMap {
@@ -52,10 +52,7 @@ pub fn spice_parser(
             continue;
         }
 
-        let mut params: Vec<String> = line
-            .split_whitespace()
-            .map(|s| s.to_string())
-            .collect();
+        let mut params: Vec<String> = line.split_whitespace().map(|s| s.to_string()).collect();
 
         match first_char {
             'R' | 'C' | 'L' => {

@@ -1,8 +1,4 @@
-pub fn small_signal_param_name(
-    param: &str,
-    instance: &str,
-    branch: &str,
-) -> String {
+pub fn small_signal_param_name(param: &str, instance: &str, branch: &str) -> String {
     format!(
         "{}__{}__{}",
         sanitize_name(param),
