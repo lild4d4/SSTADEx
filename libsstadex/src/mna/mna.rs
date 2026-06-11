@@ -15,6 +15,56 @@ pub struct MnaResult {
     pub nodes: NodeMap,
 }
 
+impl MnaResult {
+    pub fn node_name_for_variable(&self, variable: &str) -> Option<&str> {
+        let node_number = variable.strip_prefix('v')?.parse::<usize>().ok()?;
+
+        self.nodes
+            .nodes
+            .iter()
+            .find_map(|(name, number)| (*number == node_number).then_some(name.as_str()))
+    }
+
+    pub fn variable_for_node_name(&self, node_name: &str) -> Option<String> {
+        let node_number = self.nodes.nodes.get(node_name)?;
+
+        if *node_number == 0 {
+            None
+        } else {
+            Some(format!("v{node_number}"))
+        }
+    }
+
+    pub fn node_variables(&self) -> Vec<NodeVariable> {
+        let mut variables = self
+            .nodes
+            .nodes
+            .iter()
+            .filter_map(|(node_name, node_number)| {
+                if *node_number == 0 {
+                    None
+                } else {
+                    Some(NodeVariable {
+                        variable: format!("v{node_number}"),
+                        node_name: node_name.clone(),
+                        node_number: *node_number,
+                    })
+                }
+            })
+            .collect::<Vec<_>>();
+
+        variables.sort_by_key(|variable| variable.node_number);
+        variables
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NodeVariable {
+    pub variable: String,
+    pub node_name: String,
+    pub node_number: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MnaSolveResult {
     pub solutions: HashMap<String, String>,

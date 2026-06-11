@@ -405,6 +405,7 @@ fn run_circuit_mna(args: CircuitMnaArgs) -> Result<(), String> {
     println!("  {}", analysis.cir_path.display());
     println!();
     println!("{}", analysis.mna.nodes);
+    print_node_variable_map(&analysis.mna);
     println!("{}", analysis.mna.report);
     println!(
         "{}",
@@ -666,6 +667,7 @@ fn run_mna(args: MnaArgs) -> Result<(), String> {
     println!("  {}", generated_netlist.display());
     println!();
     println!("{}", result.nodes);
+    print_node_variable_map(&result);
     println!("{}", result.report);
     println!("{}", pretty_system(&result.a, &result.x, &result.z));
 
@@ -675,6 +677,25 @@ fn run_mna(args: MnaArgs) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn print_node_variable_map(result: &libsstadex::mna::mna::MnaResult) {
+    let node_variables = result.node_variables();
+    if node_variables.is_empty() {
+        return;
+    }
+
+    println!("MNA variable map");
+    println!("================");
+    println!();
+    println!("{:<12} {}", "Variable", "Node name");
+    println!("{:<12} {}", "--------", "---------");
+
+    for node in node_variables {
+        println!("{:<12} {}", node.variable, node.node_name);
+    }
+
+    println!();
 }
 
 fn format_primitive_load_error(error: PrimitiveLoadError) -> String {

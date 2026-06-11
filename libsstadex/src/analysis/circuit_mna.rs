@@ -96,6 +96,28 @@ mod tests {
                 .flatten()
                 .any(|expr| expr.to_string().contains("gm__xdp__m1"))
         );
+        assert_eq!(
+            analysis.mna.variable_for_node_name("VOUT").as_deref(),
+            Some("v1")
+        );
+        assert_eq!(analysis.mna.node_name_for_variable("v3"), Some("VINP"));
+        assert_eq!(
+            analysis
+                .mna
+                .node_variables()
+                .into_iter()
+                .map(|node| (node.variable, node.node_name))
+                .collect::<Vec<_>>(),
+            vec![
+                ("v1".to_string(), "VOUT".to_string()),
+                ("v2".to_string(), "IBIAS".to_string()),
+                ("v3".to_string(), "VINP".to_string()),
+                ("v4".to_string(), "N1".to_string()),
+                ("v5".to_string(), "VINN".to_string()),
+                ("v6".to_string(), "VDD".to_string()),
+                ("v7".to_string(), "VBIAS".to_string()),
+            ]
+        );
 
         fs::remove_dir_all(output_dir).unwrap();
     }

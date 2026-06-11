@@ -152,8 +152,9 @@ fn circuit_mna_generates_small_signal_and_mna_netlists() {
     assert!(stdout.contains("Generated small-signal netlist:"));
     assert!(stdout.contains("Generated MNA netlist:"));
     assert!(stdout.contains("SPICE parser report"));
-    assert!(stdout.contains("VOUT"));
-    assert!(stdout.contains("VINP"));
+    assert!(stdout.contains("MNA variable map"));
+    assert!(stdout.contains("v1           VOUT"));
+    assert!(stdout.contains("v3           VINP"));
     assert!(stdout.contains("gm__xdp__m1"));
 
     let spice = fs::read_to_string(output_dir.join("ota_primitives.spice"))
