@@ -391,16 +391,20 @@ fn run_circuit_mna(args: CircuitMnaArgs) -> Result<(), String> {
     let catalog =
         load_primitive_catalog(&args.primitives_dir).map_err(format_primitive_load_error)?;
     let circuit = load_circuit(&args.circuit).map_err(format_circuit_io_error)?;
-    let analysis = analyze_circuit_mna(&circuit, &catalog, &args.output, args.solve)
-        .map_err(format_circuit_mna_error)?;
 
     println!("SSTADEx Circuit MNA");
     println!();
+    println!("Running MNA...");
+
+    let analysis = analyze_circuit_mna(&circuit, &catalog, &args.output, args.solve)
+        .map_err(format_circuit_mna_error)?;
+
     println!("Generated small-signal netlist:");
     println!("  {}", analysis.spice_path.display());
     println!("Generated MNA netlist:");
     println!("  {}", analysis.cir_path.display());
     println!();
+    println!("{}", analysis.mna.nodes);
     println!("{}", analysis.mna.report);
     println!(
         "{}",
@@ -651,14 +655,17 @@ fn parse_mna_args(args: Vec<String>) -> Result<MnaArgs, String> {
 }
 
 fn run_mna(args: MnaArgs) -> Result<(), String> {
+    println!("SSTADEx MNA");
+    println!();
+    println!("Running MNA...");
+
     let result = mna(&args.spice_dir, &args.output, &args.design).map_err(format_mna_error)?;
     let generated_netlist = args.output.join(format!("{}.cir", args.design));
 
-    println!("SSTADEx MNA");
-    println!();
     println!("Generated netlist:");
     println!("  {}", generated_netlist.display());
     println!();
+    println!("{}", result.nodes);
     println!("{}", result.report);
     println!("{}", pretty_system(&result.a, &result.x, &result.z));
 
