@@ -94,6 +94,10 @@ impl Default for SstadexApp {
 
 impl eframe::App for SstadexApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if ctx.input(|input| input.key_pressed(egui::Key::Delete)) {
+            self.delete_selected_instance();
+        }
+
         egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 let _ = ui.button("Open circuit");
@@ -369,6 +373,35 @@ impl SstadexApp {
         self.next_label_pin_id += 1;
     }
 
+    fn delete_selected_instance(&mut self) {
+        let Some(instance_id) = self.selected_instance_id else {
+            return;
+        };
+
+        self.canvas_instances
+            .retain(|instance| instance.id != instance_id);
+        self.connections
+            .retain(|connection| !connection.references_instance(instance_id));
+
+        if self
+            .selected_endpoint
+            .as_ref()
+            .is_some_and(|endpoint| endpoint.references_instance(instance_id))
+        {
+            self.selected_endpoint = None;
+        }
+
+        if self
+            .pending_connection
+            .as_ref()
+            .is_some_and(|endpoint| endpoint.references_instance(instance_id))
+        {
+            self.pending_connection = None;
+        }
+
+        self.selected_instance_id = None;
+    }
+
     fn run_mna_from_canvas(&self) -> String {
         let Some(catalog) = &self.catalog else {
             return "Cannot run MNA: primitive catalog is not loaded".to_string();
@@ -460,6 +493,24 @@ impl SstadexApp {
 impl CanvasView {
     fn instance_rect(&self, instance: &CanvasInstance) -> egui::Rect {
         egui::Rect::from_min_size(self.to_screen(instance.position), egui::vec2(160.0, 72.0))
+    }
+}
+
+impl CanvasConnection {
+    fn references_instance(&self, instance_id: usize) -> bool {
+        self.from.references_instance(instance_id) || self.to.references_instance(instance_id)
+    }
+}
+
+impl CanvasEndpoint {
+    fn references_instance(&self, instance_id: usize) -> bool {
+        match self {
+            CanvasEndpoint::PrimitivePin {
+                instance_id: endpoint_instance_id,
+                ..
+            } => *endpoint_instance_id == instance_id,
+            CanvasEndpoint::LabelPin { .. } => false,
+        }
     }
 }
 
