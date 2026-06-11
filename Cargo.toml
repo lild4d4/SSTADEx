@@ -3,7 +3,8 @@ resolver = "2"
 
 members = [
     "libsstadex",
-    "sstadex-cli",
+    "sstadex-cli", 
+    "sstadex-gui",
 ]
 
 [workspace.package]
