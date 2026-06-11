@@ -5,7 +5,8 @@ use std::path::Path;
 use serde::Deserialize;
 
 use crate::primitive::manifest::{
-    Pin, PinRole, PrimitiveFiles, PrimitiveManifest, PrimitiveShape, PrimitiveUi,
+    Pin, PinRole, PrimitiveFiles, PrimitiveManifest, PrimitiveShape, PrimitiveSymbol, PrimitiveUi,
+    SymbolPin,
 };
 use crate::primitive::small_signal::SmallSignalModel;
 
@@ -70,6 +71,7 @@ struct RawPrimitiveManifest {
     pin_order: Option<Vec<String>>,
     ports: HashMap<String, RawPort>,
     files: RawPrimitiveFiles,
+    ui: Option<RawPrimitiveUi>,
     small_signal: Option<SmallSignalModel>,
 }
 
@@ -111,10 +113,44 @@ impl RawPrimitiveManifest {
             files: PrimitiveFiles { netlist },
             ui: PrimitiveUi {
                 shape: PrimitiveShape::Box,
+                symbol: self.ui.and_then(RawPrimitiveUi::into_symbol),
             },
             small_signal: self.small_signal,
         })
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct RawPrimitiveUi {
+    symbol: Option<RawPrimitiveSymbol>,
+}
+
+impl RawPrimitiveUi {
+    fn into_symbol(self) -> Option<PrimitiveSymbol> {
+        self.symbol.map(|symbol| PrimitiveSymbol {
+            pins: symbol
+                .pins
+                .into_iter()
+                .map(|pin| SymbolPin {
+                    name: pin.name,
+                    side: pin.side,
+                    offset: pin.offset,
+                })
+                .collect(),
+        })
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RawPrimitiveSymbol {
+    pins: Vec<RawSymbolPin>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawSymbolPin {
+    name: String,
+    side: crate::primitive::manifest::SymbolPinSide,
+    offset: f32,
 }
 
 #[derive(Debug, Deserialize)]

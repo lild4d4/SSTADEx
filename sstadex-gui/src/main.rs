@@ -5,7 +5,7 @@ use eframe::egui;
 use libsstadex::analysis::{CircuitMnaOutput, analyze_circuit_mna};
 use libsstadex::catalog::{load_primitive_catalog, PrimitiveCatalog};
 use libsstadex::circuit::{Circuit, Connection, Instance, PinRef, save_circuit};
-use libsstadex::primitive::manifest::{PinRole, PrimitiveManifest};
+use libsstadex::primitive::manifest::{PinRole, PrimitiveManifest, SymbolPinSide};
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions::default();
@@ -922,6 +922,36 @@ struct PinView {
 }
 
 fn pin_views(rect: egui::Rect, primitive: &PrimitiveManifest) -> Vec<PinView> {
+    if let Some(symbol) = &primitive.ui.symbol {
+        let mut views = Vec::new();
+
+        for symbol_pin in &symbol.pins {
+            let Some(pin) = primitive
+                .pins
+                .iter()
+                .find(|pin| pin.name == symbol_pin.name)
+            else {
+                continue;
+            };
+            let side = match symbol_pin.side {
+                SymbolPinSide::Left => PinSide::Left,
+                SymbolPinSide::Right => PinSide::Right,
+                SymbolPinSide::Top => PinSide::Top,
+                SymbolPinSide::Bottom => PinSide::Bottom,
+            };
+
+            views.push(pin_view_at(
+                rect,
+                side,
+                symbol_pin.offset.clamp(0.0, 1.0),
+                &pin.name,
+                &pin.role,
+            ));
+        }
+
+        return views;
+    }
+
     let mut inputs = Vec::new();
     let mut outputs = Vec::new();
     let mut supplies = Vec::new();
@@ -964,49 +994,59 @@ fn append_pin_group(
 
     for (index, pin) in pins.iter().enumerate() {
         let t = (index + 1) as f32 / (pins.len() + 1) as f32;
-        let (position, label_position, align) = match side {
-            PinSide::Left => {
-                let y = egui::lerp(rect.top() + 14.0..=rect.bottom() - 14.0, t);
-                (
-                    egui::pos2(rect.left(), y),
-                    egui::pos2(rect.left() + 8.0, y),
-                    egui::Align2::LEFT_CENTER,
-                )
-            }
-            PinSide::Right => {
-                let y = egui::lerp(rect.top() + 14.0..=rect.bottom() - 14.0, t);
-                (
-                    egui::pos2(rect.right(), y),
-                    egui::pos2(rect.right() - 8.0, y),
-                    egui::Align2::RIGHT_CENTER,
-                )
-            }
-            PinSide::Top => {
-                let x = egui::lerp(rect.left() + 18.0..=rect.right() - 18.0, t);
-                (
-                    egui::pos2(x, rect.top()),
-                    egui::pos2(x, rect.top() + 8.0),
-                    egui::Align2::CENTER_TOP,
-                )
-            }
-            PinSide::Bottom => {
-                let x = egui::lerp(rect.left() + 18.0..=rect.right() - 18.0, t);
-                (
-                    egui::pos2(x, rect.bottom()),
-                    egui::pos2(x, rect.bottom() - 8.0),
-                    egui::Align2::CENTER_BOTTOM,
-                )
-            }
-        };
+        views.push(pin_view_at(rect, side, t, &pin.name, &pin.role));
+    }
+}
 
-        views.push(PinView {
-            name: pin.name.clone(),
-            role: pin.role.clone(),
-            side,
-            position,
-            label_position,
-            align,
-        });
+fn pin_view_at(
+    rect: egui::Rect,
+    side: PinSide,
+    offset: f32,
+    name: &str,
+    role: &PinRole,
+) -> PinView {
+    let (position, label_position, align) = match side {
+        PinSide::Left => {
+            let y = egui::lerp(rect.top() + 14.0..=rect.bottom() - 14.0, offset);
+            (
+                egui::pos2(rect.left(), y),
+                egui::pos2(rect.left() + 8.0, y),
+                egui::Align2::LEFT_CENTER,
+            )
+        }
+        PinSide::Right => {
+            let y = egui::lerp(rect.top() + 14.0..=rect.bottom() - 14.0, offset);
+            (
+                egui::pos2(rect.right(), y),
+                egui::pos2(rect.right() - 8.0, y),
+                egui::Align2::RIGHT_CENTER,
+            )
+        }
+        PinSide::Top => {
+            let x = egui::lerp(rect.left() + 18.0..=rect.right() - 18.0, offset);
+            (
+                egui::pos2(x, rect.top()),
+                egui::pos2(x, rect.top() + 8.0),
+                egui::Align2::CENTER_TOP,
+            )
+        }
+        PinSide::Bottom => {
+            let x = egui::lerp(rect.left() + 18.0..=rect.right() - 18.0, offset);
+            (
+                egui::pos2(x, rect.bottom()),
+                egui::pos2(x, rect.bottom() - 8.0),
+                egui::Align2::CENTER_BOTTOM,
+            )
+        }
+    };
+
+    PinView {
+        name: name.to_string(),
+        role: role.clone(),
+        side,
+        position,
+        label_position,
+        align,
     }
 }
 

@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::small_signal::SmallSignalModel;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PrimitiveManifest {
     pub name: String,
     pub version: String,
@@ -35,15 +35,37 @@ pub struct PrimitiveFiles {
     pub netlist: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PrimitiveUi {
     pub shape: PrimitiveShape,
+    pub symbol: Option<PrimitiveSymbol>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PrimitiveShape {
     Box,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PrimitiveSymbol {
+    pub pins: Vec<SymbolPin>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SymbolPin {
+    pub name: String,
+    pub side: SymbolPinSide,
+    pub offset: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SymbolPinSide {
+    Left,
+    Right,
+    Top,
+    Bottom,
 }
 
 #[cfg(test)]
@@ -84,6 +106,7 @@ mod tests {
             },
             ui: PrimitiveUi {
                 shape: PrimitiveShape::Box,
+                symbol: None,
             },
             small_signal: Some(SmallSignalModel {
                 branches: Vec::new(),

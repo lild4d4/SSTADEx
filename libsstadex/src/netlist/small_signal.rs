@@ -134,6 +134,7 @@ mod tests {
             },
             ui: PrimitiveUi {
                 shape: PrimitiveShape::Box,
+                symbol: None,
             },
             small_signal: None,
         });
@@ -170,6 +171,7 @@ mod tests {
             },
             ui: PrimitiveUi {
                 shape: PrimitiveShape::Box,
+                symbol: None,
             },
             small_signal: Some(SmallSignalModel {
                 branches: vec![

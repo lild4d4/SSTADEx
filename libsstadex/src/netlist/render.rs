@@ -136,6 +136,7 @@ mod tests {
             },
             ui: PrimitiveUi {
                 shape: PrimitiveShape::Box,
+                symbol: None,
             },
             small_signal: None,
         });
