@@ -56,6 +56,17 @@ fn render_file_help_exits_successfully() {
 }
 
 #[test]
+fn circuit_mna_help_exits_successfully() {
+    let output = sstadex(&["circuit", "mna", "--help"]);
+
+    assert_success(&output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("sstadex circuit mna"));
+    assert!(stdout.contains("--solve"));
+}
+
+#[test]
 fn render_file_writes_netlist_to_stdout_by_default() {
     let primitives_dir = primitives_dir();
     let circuit = ota_circuit_file();
@@ -108,6 +119,46 @@ fn render_file_output_writes_netlist_to_file() {
     let netlist = fs::read_to_string(&output_file).expect("failed to read generated netlist");
     assert!(netlist.contains("* Small-signal circuit: ota_primitives"));
     assert!(netlist.contains("R_ro__xcs__m1 IBIAS VSS ro__xcs__m1"));
+
+    fs::remove_dir_all(output_dir).expect("failed to remove temporary test directory");
+}
+
+#[test]
+fn circuit_mna_generates_small_signal_and_mna_netlists() {
+    let output_dir = std::env::temp_dir().join(format!(
+        "sstadex-cli-circuit-mna-test-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&output_dir).expect("failed to create temporary test directory");
+
+    let primitives_dir = primitives_dir();
+    let circuit = ota_circuit_file();
+    let output = sstadex(&[
+        "circuit",
+        "mna",
+        "--primitives-dir",
+        primitives_dir.to_str().expect("valid primitives path"),
+        "--circuit",
+        circuit.to_str().expect("valid circuit path"),
+        "--output",
+        output_dir.to_str().expect("valid output path"),
+    ]);
+
+    assert_success(&output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("SSTADEx Circuit MNA"));
+    assert!(stdout.contains("Generated small-signal netlist:"));
+    assert!(stdout.contains("Generated MNA netlist:"));
+    assert!(stdout.contains("gm__xdp__m1"));
+
+    let spice = fs::read_to_string(output_dir.join("ota_primitives.spice"))
+        .expect("failed to read generated small-signal netlist");
+    let cir = fs::read_to_string(output_dir.join("ota_primitives.cir"))
+        .expect("failed to read MNA netlist");
+
+    assert!(spice.contains("G_gm__xdp__m1 VOUT IBIAS VINP IBIAS gm__xdp__m1"));
+    assert!(cir.contains("G_gm__xdp__m1"));
 
     fs::remove_dir_all(output_dir).expect("failed to remove temporary test directory");
 }

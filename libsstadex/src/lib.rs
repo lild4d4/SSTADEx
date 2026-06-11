@@ -1,3 +1,4 @@
+pub mod analysis;
 pub mod catalog;
 pub mod circuit;
 pub mod mna;

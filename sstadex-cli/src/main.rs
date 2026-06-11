@@ -3,6 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use libsstadex::analysis::{CircuitMnaAnalysisError, analyze_circuit_mna};
 use libsstadex::catalog::{PrimitiveLoadError, load_primitive_catalog};
 use libsstadex::circuit::{Circuit, CircuitIoError, Connection, Instance, PinRef, load_circuit};
 use libsstadex::mna::mna::{MnaError, mna, mna_solve};
@@ -38,6 +39,14 @@ struct CircuitRenderFileArgs {
     circuit: PathBuf,
     view: CircuitView,
     output: Option<PathBuf>,
+}
+
+#[derive(Debug)]
+struct CircuitMnaArgs {
+    primitives_dir: PathBuf,
+    circuit: PathBuf,
+    output: PathBuf,
+    solve: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,6 +103,7 @@ fn run_circuit(args: Vec<String>) -> Result<(), String> {
         Some("render-file") => {
             run_circuit_render_file(parse_circuit_render_file_args(args.collect())?)
         }
+        Some("mna") => run_circuit_mna(parse_circuit_mna_args(args.collect())?),
         Some("--help") | Some("-h") | None => {
             print_circuit_help();
             Ok(())
@@ -102,6 +112,63 @@ fn run_circuit(args: Vec<String>) -> Result<(), String> {
             "unknown circuit command '{command}'\n\nRun `sstadex circuit --help` for usage."
         )),
     }
+}
+
+fn parse_circuit_mna_args(args: Vec<String>) -> Result<CircuitMnaArgs, String> {
+    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+        print_circuit_mna_help();
+        return Err("circuit mna help requested".to_string());
+    }
+
+    let mut primitives_dir = None;
+    let mut circuit = None;
+    let mut output = None;
+    let mut solve = false;
+
+    let mut idx = 0;
+    while idx < args.len() {
+        match args[idx].as_str() {
+            "--primitives-dir" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| "--primitives-dir requires a value".to_string())?;
+                primitives_dir = Some(PathBuf::from(value));
+            }
+            "--circuit" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| "--circuit requires a value".to_string())?;
+                circuit = Some(PathBuf::from(value));
+            }
+            "--output" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| "--output requires a value".to_string())?;
+                output = Some(PathBuf::from(value));
+            }
+            "--solve" => {
+                solve = true;
+            }
+            flag => {
+                return Err(format!(
+                    "unknown circuit mna option '{flag}'\n\nRun `sstadex circuit mna --help` for usage."
+                ));
+            }
+        }
+
+        idx += 1;
+    }
+
+    Ok(CircuitMnaArgs {
+        primitives_dir: primitives_dir
+            .ok_or_else(|| "missing required option --primitives-dir".to_string())?,
+        circuit: circuit.ok_or_else(|| "missing required option --circuit".to_string())?,
+        output: output.ok_or_else(|| "missing required option --output".to_string())?,
+        solve,
+    })
 }
 
 fn parse_circuit_render_file_args(args: Vec<String>) -> Result<CircuitRenderFileArgs, String> {
@@ -318,6 +385,33 @@ fn run_circuit_render_file(args: CircuitRenderFileArgs) -> Result<(), String> {
     let netlist = render_circuit_view(&circuit, &catalog, args.view)?;
 
     emit_output(&netlist, args.output.as_ref())
+}
+
+fn run_circuit_mna(args: CircuitMnaArgs) -> Result<(), String> {
+    let catalog =
+        load_primitive_catalog(&args.primitives_dir).map_err(format_primitive_load_error)?;
+    let circuit = load_circuit(&args.circuit).map_err(format_circuit_io_error)?;
+    let analysis = analyze_circuit_mna(&circuit, &catalog, &args.output, args.solve)
+        .map_err(format_circuit_mna_error)?;
+
+    println!("SSTADEx Circuit MNA");
+    println!();
+    println!("Generated small-signal netlist:");
+    println!("  {}", analysis.spice_path.display());
+    println!("Generated MNA netlist:");
+    println!("  {}", analysis.cir_path.display());
+    println!();
+    println!("{}", analysis.mna.report);
+    println!(
+        "{}",
+        pretty_system(&analysis.mna.a, &analysis.mna.x, &analysis.mna.z)
+    );
+
+    if let Some(solution) = analysis.solution {
+        println!("{}", pretty_solutions(&solution.solutions));
+    }
+
+    Ok(())
 }
 
 fn emit_output(content: &str, output: Option<&PathBuf>) -> Result<(), String> {
@@ -639,6 +733,14 @@ fn format_small_signal_error(error: SmallSignalRenderError) -> String {
     }
 }
 
+fn format_circuit_mna_error(error: CircuitMnaAnalysisError) -> String {
+    match error {
+        CircuitMnaAnalysisError::Io(error) => format!("I/O failure during circuit MNA: {error}"),
+        CircuitMnaAnalysisError::SmallSignalRender(error) => format_small_signal_error(error),
+        CircuitMnaAnalysisError::Mna(error) => format_mna_error(error),
+    }
+}
+
 fn format_mna_error(error: MnaError) -> String {
     match error {
         MnaError::Io(error) => format!("I/O failure: {error}"),
@@ -664,6 +766,7 @@ Usage:\n\
   sstadex catalog list --primitives-dir <DIR>\n\
   sstadex circuit render --primitives-dir <DIR> --name <NAME> --instance <ID:PRIMITIVE> --connect <INSTANCE.PIN=NET> [--view structural|small-signal] [--output <FILE>]\n\
   sstadex circuit render-file --primitives-dir <DIR> --circuit <FILE> [--view structural|small-signal] [--output <FILE>]\n\
+  sstadex circuit mna --primitives-dir <DIR> --circuit <FILE> --output <DIR> [--solve]\n\
   sstadex mna --spice-dir <DIR> --design <NAME> --output <DIR> [--solve]\n\
 \n\
 Commands:\n\
@@ -712,10 +815,12 @@ fn print_circuit_help() {
   sstadex circuit --help\n\
   sstadex circuit render --primitives-dir <DIR> --name <NAME> --instance <ID:PRIMITIVE> --connect <INSTANCE.PIN=NET> [--view structural|small-signal] [--output <FILE>]\n\
   sstadex circuit render-file --primitives-dir <DIR> --circuit <FILE> [--view structural|small-signal] [--output <FILE>]\n\
+  sstadex circuit mna --primitives-dir <DIR> --circuit <FILE> --output <DIR> [--solve]\n\
 \n\
 Commands:\n\
   render         Render a circuit netlist from instances and connections\n\
-  render-file    Render a circuit netlist from a circuit JSON file\n"
+  render-file    Render a circuit netlist from a circuit JSON file\n\
+  mna            Analyze a circuit JSON file with small-signal MNA\n"
     );
 }
 
@@ -744,6 +849,19 @@ Options:\n\
   --circuit <FILE>          Circuit JSON file\n\
   --view <VIEW>             Render view: structural or small-signal; default structural\n\
   --output <FILE>           Write rendered netlist to a file; stdout if omitted\n"
+    );
+}
+
+fn print_circuit_mna_help() {
+    println!(
+        "Usage:\n\
+  sstadex circuit mna --primitives-dir <DIR> --circuit <FILE> --output <DIR> [--solve]\n\
+\n\
+Options:\n\
+  --primitives-dir <DIR>    Directory containing primitive subfolders\n\
+  --circuit <FILE>          Circuit JSON file\n\
+  --output <DIR>            Directory where generated .spice and .cir files are written\n\
+  --solve                   Solve the symbolic MNA system using Python/SymPy\n"
     );
 }
 
