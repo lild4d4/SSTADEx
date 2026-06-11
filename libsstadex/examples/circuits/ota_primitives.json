@@ -1,0 +1,124 @@
+{
+  "name": "ota_primitives",
+  "instances": [
+    {
+      "id": "xdp",
+      "primitive": "simplediffpair"
+    },
+    {
+      "id": "xcm",
+      "primitive": "simplecurrentmirror"
+    },
+    {
+      "id": "xcs",
+      "primitive": "simplecurrentsource"
+    }
+  ],
+  "connections": [
+    {
+      "from": {
+        "instance": "xdp",
+        "pin": "VINP"
+      },
+      "net": "VINP"
+    },
+    {
+      "from": {
+        "instance": "xdp",
+        "pin": "VINN"
+      },
+      "net": "VINN"
+    },
+    {
+      "from": {
+        "instance": "xdp",
+        "pin": "VOUTP"
+      },
+      "net": "VOUT"
+    },
+    {
+      "from": {
+        "instance": "xdp",
+        "pin": "VOUTN"
+      },
+      "net": "N1"
+    },
+    {
+      "from": {
+        "instance": "xdp",
+        "pin": "VTAIL"
+      },
+      "net": "IBIAS"
+    },
+    {
+      "from": {
+        "instance": "xcm",
+        "pin": "VINP"
+      },
+      "net": "N1"
+    },
+    {
+      "from": {
+        "instance": "xcm",
+        "pin": "VINN"
+      },
+      "net": "N1"
+    },
+    {
+      "from": {
+        "instance": "xcm",
+        "pin": "VOUTP"
+      },
+      "net": "VOUT"
+    },
+    {
+      "from": {
+        "instance": "xcm",
+        "pin": "VOUTN"
+      },
+      "net": "N1"
+    },
+    {
+      "from": {
+        "instance": "xcm",
+        "pin": "VDD"
+      },
+      "net": "VDD"
+    },
+    {
+      "from": {
+        "instance": "xcs",
+        "pin": "VINP"
+      },
+      "net": "VBIAS"
+    },
+    {
+      "from": {
+        "instance": "xcs",
+        "pin": "VINN"
+      },
+      "net": "VBIAS"
+    },
+    {
+      "from": {
+        "instance": "xcs",
+        "pin": "VOUTP"
+      },
+      "net": "IBIAS"
+    },
+    {
+      "from": {
+        "instance": "xcs",
+        "pin": "VOUTN"
+      },
+      "net": "IBIAS"
+    },
+    {
+      "from": {
+        "instance": "xcs",
+        "pin": "VSS"
+      },
+      "net": "VSS"
+    }
+  ]
+}
