@@ -1,14 +1,14 @@
 use std::env;
+use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use libsstadex::catalog::{PrimitiveLoadError, load_primitive_catalog};
 use libsstadex::circuit::{Circuit, CircuitIoError, Connection, Instance, PinRef, load_circuit};
-use libsstadex::mna::mna::{mna, mna_solve, MnaError};
+use libsstadex::mna::mna::{MnaError, mna, mna_solve};
 use libsstadex::mna::pretty::{pretty_solutions, pretty_system};
 use libsstadex::netlist::{
-    NetlistRenderError, SmallSignalRenderError, render_circuit_netlist,
-    render_small_signal_netlist,
+    NetlistRenderError, SmallSignalRenderError, render_circuit_netlist, render_small_signal_netlist,
 };
 
 #[derive(Debug)]
@@ -29,6 +29,7 @@ struct CircuitRenderArgs {
     instances: Vec<Instance>,
     connections: Vec<Connection>,
     view: CircuitView,
+    output: Option<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -36,6 +37,7 @@ struct CircuitRenderFileArgs {
     primitives_dir: PathBuf,
     circuit: PathBuf,
     view: CircuitView,
+    output: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,11 +57,16 @@ struct MnaArgs {
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
+        Err(error) if is_help_requested_error(&error) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("error: {error}");
             ExitCode::FAILURE
         }
     }
+}
+
+fn is_help_requested_error(error: &str) -> bool {
+    error.ends_with("help requested")
 }
 
 fn run() -> Result<(), String> {
@@ -106,6 +113,7 @@ fn parse_circuit_render_file_args(args: Vec<String>) -> Result<CircuitRenderFile
     let mut primitives_dir = None;
     let mut circuit = None;
     let mut view = CircuitView::Structural;
+    let mut output = None;
 
     let mut idx = 0;
     while idx < args.len() {
@@ -131,6 +139,13 @@ fn parse_circuit_render_file_args(args: Vec<String>) -> Result<CircuitRenderFile
                     .ok_or_else(|| "--view requires a value".to_string())?;
                 view = parse_circuit_view(value)?;
             }
+            "--output" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| "--output requires a value".to_string())?;
+                output = Some(PathBuf::from(value));
+            }
             flag => {
                 return Err(format!(
                     "unknown circuit render-file option '{flag}'\n\nRun `sstadex circuit render-file --help` for usage."
@@ -146,6 +161,7 @@ fn parse_circuit_render_file_args(args: Vec<String>) -> Result<CircuitRenderFile
             .ok_or_else(|| "missing required option --primitives-dir".to_string())?,
         circuit: circuit.ok_or_else(|| "missing required option --circuit".to_string())?,
         view,
+        output,
     })
 }
 
@@ -160,6 +176,7 @@ fn parse_circuit_render_args(args: Vec<String>) -> Result<CircuitRenderArgs, Str
     let mut instances = Vec::new();
     let mut connections = Vec::new();
     let mut view = CircuitView::Structural;
+    let mut output = None;
 
     let mut idx = 0;
     while idx < args.len() {
@@ -199,6 +216,13 @@ fn parse_circuit_render_args(args: Vec<String>) -> Result<CircuitRenderArgs, Str
                     .ok_or_else(|| "--view requires a value".to_string())?;
                 view = parse_circuit_view(value)?;
             }
+            "--output" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| "--output requires a value".to_string())?;
+                output = Some(PathBuf::from(value));
+            }
             flag => {
                 return Err(format!(
                     "unknown circuit render option '{flag}'\n\nRun `sstadex circuit render --help` for usage."
@@ -220,6 +244,7 @@ fn parse_circuit_render_args(args: Vec<String>) -> Result<CircuitRenderArgs, Str
         instances,
         connections,
         view,
+        output,
     })
 }
 
@@ -283,9 +308,7 @@ fn run_circuit_render(args: CircuitRenderArgs) -> Result<(), String> {
     }
 
     let netlist = render_circuit_view(&circuit, &catalog, args.view)?;
-    print!("{netlist}");
-
-    Ok(())
+    emit_output(&netlist, args.output.as_ref())
 }
 
 fn run_circuit_render_file(args: CircuitRenderFileArgs) -> Result<(), String> {
@@ -294,9 +317,33 @@ fn run_circuit_render_file(args: CircuitRenderFileArgs) -> Result<(), String> {
     let circuit = load_circuit(&args.circuit).map_err(format_circuit_io_error)?;
     let netlist = render_circuit_view(&circuit, &catalog, args.view)?;
 
-    print!("{netlist}");
+    emit_output(&netlist, args.output.as_ref())
+}
 
-    Ok(())
+fn emit_output(content: &str, output: Option<&PathBuf>) -> Result<(), String> {
+    let Some(output) = output else {
+        print!("{content}");
+        return Ok(());
+    };
+
+    if let Some(parent) = output
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "failed to create output directory '{}': {error}",
+                parent.display()
+            )
+        })?;
+    }
+
+    fs::write(output, content).map_err(|error| {
+        format!(
+            "failed to write output file '{}': {error}",
+            output.display()
+        )
+    })
 }
 
 fn render_circuit_view(
@@ -615,8 +662,8 @@ fn print_help() {
 Usage:\n\
   sstadex --help\n\
   sstadex catalog list --primitives-dir <DIR>\n\
-  sstadex circuit render --primitives-dir <DIR> --name <NAME> --instance <ID:PRIMITIVE> --connect <INSTANCE.PIN=NET> [--view structural|small-signal]\n\
-  sstadex circuit render-file --primitives-dir <DIR> --circuit <FILE> [--view structural|small-signal]\n\
+  sstadex circuit render --primitives-dir <DIR> --name <NAME> --instance <ID:PRIMITIVE> --connect <INSTANCE.PIN=NET> [--view structural|small-signal] [--output <FILE>]\n\
+  sstadex circuit render-file --primitives-dir <DIR> --circuit <FILE> [--view structural|small-signal] [--output <FILE>]\n\
   sstadex mna --spice-dir <DIR> --design <NAME> --output <DIR> [--solve]\n\
 \n\
 Commands:\n\
@@ -663,8 +710,8 @@ fn print_circuit_help() {
     println!(
         "Usage:\n\
   sstadex circuit --help\n\
-  sstadex circuit render --primitives-dir <DIR> --name <NAME> --instance <ID:PRIMITIVE> --connect <INSTANCE.PIN=NET> [--view structural|small-signal]\n\
-  sstadex circuit render-file --primitives-dir <DIR> --circuit <FILE> [--view structural|small-signal]\n\
+  sstadex circuit render --primitives-dir <DIR> --name <NAME> --instance <ID:PRIMITIVE> --connect <INSTANCE.PIN=NET> [--view structural|small-signal] [--output <FILE>]\n\
+  sstadex circuit render-file --primitives-dir <DIR> --circuit <FILE> [--view structural|small-signal] [--output <FILE>]\n\
 \n\
 Commands:\n\
   render         Render a circuit netlist from instances and connections\n\
@@ -675,26 +722,28 @@ Commands:\n\
 fn print_circuit_render_help() {
     println!(
         "Usage:\n\
-  sstadex circuit render --primitives-dir <DIR> --name <NAME> --instance <ID:PRIMITIVE> --connect <INSTANCE.PIN=NET> [--view structural|small-signal]\n\
+  sstadex circuit render --primitives-dir <DIR> --name <NAME> --instance <ID:PRIMITIVE> --connect <INSTANCE.PIN=NET> [--view structural|small-signal] [--output <FILE>]\n\
 \n\
 Options:\n\
   --primitives-dir <DIR>       Directory containing primitive subfolders\n\
   --name <NAME>                Circuit name\n\
   --instance <ID:PRIMITIVE>    Primitive instance; can be repeated\n\
   --connect <INSTANCE.PIN=NET> Pin-to-net connection; can be repeated\n\
-  --view <VIEW>                Render view: structural or small-signal; default structural\n"
+  --view <VIEW>                Render view: structural or small-signal; default structural\n\
+  --output <FILE>              Write rendered netlist to a file; stdout if omitted\n"
     );
 }
 
 fn print_circuit_render_file_help() {
     println!(
         "Usage:\n\
-  sstadex circuit render-file --primitives-dir <DIR> --circuit <FILE> [--view structural|small-signal]\n\
+  sstadex circuit render-file --primitives-dir <DIR> --circuit <FILE> [--view structural|small-signal] [--output <FILE>]\n\
 \n\
 Options:\n\
   --primitives-dir <DIR>    Directory containing primitive subfolders\n\
   --circuit <FILE>          Circuit JSON file\n\
-  --view <VIEW>             Render view: structural or small-signal; default structural\n"
+  --view <VIEW>             Render view: structural or small-signal; default structural\n\
+  --output <FILE>           Write rendered netlist to a file; stdout if omitted\n"
     );
 }
 
