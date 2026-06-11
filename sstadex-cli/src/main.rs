@@ -2,8 +2,47 @@ use std::env;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use libsstadex::catalog::{PrimitiveLoadError, load_primitive_catalog};
+use libsstadex::circuit::{Circuit, CircuitIoError, Connection, Instance, PinRef, load_circuit};
 use libsstadex::mna::mna::{mna, mna_solve, MnaError};
 use libsstadex::mna::pretty::{pretty_solutions, pretty_system};
+use libsstadex::netlist::{
+    NetlistRenderError, SmallSignalRenderError, render_circuit_netlist,
+    render_small_signal_netlist,
+};
+
+#[derive(Debug)]
+struct CatalogListArgs {
+    primitives_dir: PathBuf,
+}
+
+#[derive(Debug)]
+struct CatalogShowArgs {
+    primitive: String,
+    primitives_dir: PathBuf,
+}
+
+#[derive(Debug)]
+struct CircuitRenderArgs {
+    primitives_dir: PathBuf,
+    name: String,
+    instances: Vec<Instance>,
+    connections: Vec<Connection>,
+    view: CircuitView,
+}
+
+#[derive(Debug)]
+struct CircuitRenderFileArgs {
+    primitives_dir: PathBuf,
+    circuit: PathBuf,
+    view: CircuitView,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CircuitView {
+    Structural,
+    SmallSignal,
+}
 
 #[derive(Debug)]
 struct MnaArgs {
@@ -31,11 +70,387 @@ fn run() -> Result<(), String> {
             print_help();
             Ok(())
         }
+        Some("catalog") => run_catalog(args.collect()),
+        Some("circuit") => run_circuit(args.collect()),
         Some("mna") => run_mna(parse_mna_args(args.collect())?),
         Some(command) => Err(format!(
             "unknown command '{command}'\n\nRun `sstadex --help` for usage."
         )),
     }
+}
+
+fn run_circuit(args: Vec<String>) -> Result<(), String> {
+    let mut args = args.into_iter();
+
+    match args.next().as_deref() {
+        Some("render") => run_circuit_render(parse_circuit_render_args(args.collect())?),
+        Some("render-file") => {
+            run_circuit_render_file(parse_circuit_render_file_args(args.collect())?)
+        }
+        Some("--help") | Some("-h") | None => {
+            print_circuit_help();
+            Ok(())
+        }
+        Some(command) => Err(format!(
+            "unknown circuit command '{command}'\n\nRun `sstadex circuit --help` for usage."
+        )),
+    }
+}
+
+fn parse_circuit_render_file_args(args: Vec<String>) -> Result<CircuitRenderFileArgs, String> {
+    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+        print_circuit_render_file_help();
+        return Err("circuit render-file help requested".to_string());
+    }
+
+    let mut primitives_dir = None;
+    let mut circuit = None;
+    let mut view = CircuitView::Structural;
+
+    let mut idx = 0;
+    while idx < args.len() {
+        match args[idx].as_str() {
+            "--primitives-dir" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| "--primitives-dir requires a value".to_string())?;
+                primitives_dir = Some(PathBuf::from(value));
+            }
+            "--circuit" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| "--circuit requires a value".to_string())?;
+                circuit = Some(PathBuf::from(value));
+            }
+            "--view" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| "--view requires a value".to_string())?;
+                view = parse_circuit_view(value)?;
+            }
+            flag => {
+                return Err(format!(
+                    "unknown circuit render-file option '{flag}'\n\nRun `sstadex circuit render-file --help` for usage."
+                ));
+            }
+        }
+
+        idx += 1;
+    }
+
+    Ok(CircuitRenderFileArgs {
+        primitives_dir: primitives_dir
+            .ok_or_else(|| "missing required option --primitives-dir".to_string())?,
+        circuit: circuit.ok_or_else(|| "missing required option --circuit".to_string())?,
+        view,
+    })
+}
+
+fn parse_circuit_render_args(args: Vec<String>) -> Result<CircuitRenderArgs, String> {
+    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+        print_circuit_render_help();
+        return Err("circuit render help requested".to_string());
+    }
+
+    let mut primitives_dir = None;
+    let mut name = None;
+    let mut instances = Vec::new();
+    let mut connections = Vec::new();
+    let mut view = CircuitView::Structural;
+
+    let mut idx = 0;
+    while idx < args.len() {
+        match args[idx].as_str() {
+            "--primitives-dir" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| "--primitives-dir requires a value".to_string())?;
+                primitives_dir = Some(PathBuf::from(value));
+            }
+            "--name" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| "--name requires a value".to_string())?;
+                name = Some(value.clone());
+            }
+            "--instance" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| "--instance requires a value".to_string())?;
+                instances.push(parse_instance(value)?);
+            }
+            "--connect" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| "--connect requires a value".to_string())?;
+                connections.push(parse_connection(value)?);
+            }
+            "--view" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| "--view requires a value".to_string())?;
+                view = parse_circuit_view(value)?;
+            }
+            flag => {
+                return Err(format!(
+                    "unknown circuit render option '{flag}'\n\nRun `sstadex circuit render --help` for usage."
+                ));
+            }
+        }
+
+        idx += 1;
+    }
+
+    if instances.is_empty() {
+        return Err("at least one --instance is required".to_string());
+    }
+
+    Ok(CircuitRenderArgs {
+        primitives_dir: primitives_dir
+            .ok_or_else(|| "missing required option --primitives-dir".to_string())?,
+        name: name.ok_or_else(|| "missing required option --name".to_string())?,
+        instances,
+        connections,
+        view,
+    })
+}
+
+fn parse_circuit_view(value: &str) -> Result<CircuitView, String> {
+    match value {
+        "structural" => Ok(CircuitView::Structural),
+        "small-signal" => Ok(CircuitView::SmallSignal),
+        _ => Err(format!(
+            "unknown circuit view '{value}'. Expected: structural, small-signal"
+        )),
+    }
+}
+
+fn parse_instance(value: &str) -> Result<Instance, String> {
+    let Some((id, primitive)) = value.split_once(':') else {
+        return Err(format!(
+            "invalid --instance '{value}', expected format <ID>:<PRIMITIVE>"
+        ));
+    };
+
+    if id.is_empty() || primitive.is_empty() {
+        return Err(format!(
+            "invalid --instance '{value}', instance id and primitive are required"
+        ));
+    }
+
+    Ok(Instance::new(id, primitive))
+}
+
+fn parse_connection(value: &str) -> Result<Connection, String> {
+    let Some((pin_ref, net)) = value.split_once('=') else {
+        return Err(format!(
+            "invalid --connect '{value}', expected format <INSTANCE>.<PIN>=<NET>"
+        ));
+    };
+    let Some((instance, pin)) = pin_ref.split_once('.') else {
+        return Err(format!(
+            "invalid --connect '{value}', expected format <INSTANCE>.<PIN>=<NET>"
+        ));
+    };
+
+    if instance.is_empty() || pin.is_empty() || net.is_empty() {
+        return Err(format!(
+            "invalid --connect '{value}', instance, pin, and net are required"
+        ));
+    }
+
+    Ok(Connection::new(PinRef::new(instance, pin), net))
+}
+
+fn run_circuit_render(args: CircuitRenderArgs) -> Result<(), String> {
+    let catalog =
+        load_primitive_catalog(&args.primitives_dir).map_err(format_primitive_load_error)?;
+
+    let mut circuit = Circuit::new(args.name);
+    for instance in args.instances {
+        circuit.add_instance(instance);
+    }
+    for connection in args.connections {
+        circuit.connect(connection);
+    }
+
+    let netlist = render_circuit_view(&circuit, &catalog, args.view)?;
+    print!("{netlist}");
+
+    Ok(())
+}
+
+fn run_circuit_render_file(args: CircuitRenderFileArgs) -> Result<(), String> {
+    let catalog =
+        load_primitive_catalog(&args.primitives_dir).map_err(format_primitive_load_error)?;
+    let circuit = load_circuit(&args.circuit).map_err(format_circuit_io_error)?;
+    let netlist = render_circuit_view(&circuit, &catalog, args.view)?;
+
+    print!("{netlist}");
+
+    Ok(())
+}
+
+fn render_circuit_view(
+    circuit: &Circuit,
+    catalog: &libsstadex::catalog::PrimitiveCatalog,
+    view: CircuitView,
+) -> Result<String, String> {
+    match view {
+        CircuitView::Structural => {
+            render_circuit_netlist(circuit, catalog).map_err(format_netlist_error)
+        }
+        CircuitView::SmallSignal => {
+            render_small_signal_netlist(circuit, catalog).map_err(format_small_signal_error)
+        }
+    }
+}
+
+fn run_catalog(args: Vec<String>) -> Result<(), String> {
+    let mut args = args.into_iter();
+
+    match args.next().as_deref() {
+        Some("list") => run_catalog_list(parse_catalog_list_args(args.collect())?),
+        Some("show") => run_catalog_show(parse_catalog_show_args(args.collect())?),
+        Some("--help") | Some("-h") | None => {
+            print_catalog_help();
+            Ok(())
+        }
+        Some(command) => Err(format!(
+            "unknown catalog command '{command}'\n\nRun `sstadex catalog --help` for usage."
+        )),
+    }
+}
+
+fn parse_catalog_show_args(args: Vec<String>) -> Result<CatalogShowArgs, String> {
+    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+        print_catalog_show_help();
+        return Err("catalog show help requested".to_string());
+    }
+
+    let mut primitive = None;
+    let mut primitives_dir = None;
+    let mut idx = 0;
+
+    while idx < args.len() {
+        match args[idx].as_str() {
+            "--primitives-dir" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| "--primitives-dir requires a value".to_string())?;
+                primitives_dir = Some(PathBuf::from(value));
+            }
+            value if value.starts_with("--") => {
+                return Err(format!(
+                    "unknown catalog show option '{value}'\n\nRun `sstadex catalog show --help` for usage."
+                ));
+            }
+            value => {
+                if primitive.is_some() {
+                    return Err(format!(
+                        "unexpected extra argument '{value}'\n\nRun `sstadex catalog show --help` for usage."
+                    ));
+                }
+                primitive = Some(value.to_string());
+            }
+        }
+
+        idx += 1;
+    }
+
+    Ok(CatalogShowArgs {
+        primitive: primitive.ok_or_else(|| "missing primitive name".to_string())?,
+        primitives_dir: primitives_dir
+            .ok_or_else(|| "missing required option --primitives-dir".to_string())?,
+    })
+}
+
+fn parse_catalog_list_args(args: Vec<String>) -> Result<CatalogListArgs, String> {
+    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+        print_catalog_list_help();
+        return Err("catalog list help requested".to_string());
+    }
+
+    let mut primitives_dir = None;
+    let mut idx = 0;
+
+    while idx < args.len() {
+        match args[idx].as_str() {
+            "--primitives-dir" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| "--primitives-dir requires a value".to_string())?;
+                primitives_dir = Some(PathBuf::from(value));
+            }
+            flag => {
+                return Err(format!(
+                    "unknown catalog list option '{flag}'\n\nRun `sstadex catalog list --help` for usage."
+                ));
+            }
+        }
+
+        idx += 1;
+    }
+
+    Ok(CatalogListArgs {
+        primitives_dir: primitives_dir
+            .ok_or_else(|| "missing required option --primitives-dir".to_string())?,
+    })
+}
+
+fn run_catalog_list(args: CatalogListArgs) -> Result<(), String> {
+    let catalog =
+        load_primitive_catalog(&args.primitives_dir).map_err(format_primitive_load_error)?;
+
+    println!("Primitive catalog");
+    println!("=================");
+    println!();
+
+    for primitive in catalog.list() {
+        println!(
+            "{:<24} pins={:<3} subckt={}",
+            primitive.name,
+            primitive.pins.len(),
+            primitive.subckt_name
+        );
+    }
+
+    Ok(())
+}
+
+fn run_catalog_show(args: CatalogShowArgs) -> Result<(), String> {
+    let catalog =
+        load_primitive_catalog(&args.primitives_dir).map_err(format_primitive_load_error)?;
+    let primitive = catalog
+        .get(&args.primitive)
+        .ok_or_else(|| format!("primitive '{}' not found in catalog", args.primitive))?;
+
+    println!("Primitive: {}", primitive.name);
+    println!("Version: {}", primitive.version);
+    println!("Subckt: {}", primitive.subckt_name);
+    if let Some(description) = &primitive.description {
+        println!("Description: {description}");
+    }
+    println!("Netlist: {}", primitive.files.netlist);
+    println!("UI: {:?}", primitive.ui.shape);
+    println!();
+    println!("Pins:");
+
+    for pin in &primitive.pins {
+        println!("  {:<12} {:?}", pin.name, pin.role);
+    }
+
+    Ok(())
 }
 
 fn parse_mna_args(args: Vec<String>) -> Result<MnaArgs, String> {
@@ -114,6 +529,69 @@ fn run_mna(args: MnaArgs) -> Result<(), String> {
     Ok(())
 }
 
+fn format_primitive_load_error(error: PrimitiveLoadError) -> String {
+    match error {
+        PrimitiveLoadError::Io(error) => format!("I/O failure while loading catalog: {error}"),
+        PrimitiveLoadError::Json(error) => format!("invalid primitive JSON: {error}"),
+        PrimitiveLoadError::MissingPort { primitive, pin } => {
+            format!("primitive '{primitive}' pin_order references missing port '{pin}'")
+        }
+        PrimitiveLoadError::MissingNetlistFile { primitive } => {
+            format!("primitive '{primitive}' is missing files.netlist")
+        }
+    }
+}
+
+fn format_circuit_io_error(error: CircuitIoError) -> String {
+    match error {
+        CircuitIoError::Io(error) => format!("I/O failure while loading circuit: {error}"),
+        CircuitIoError::Json(error) => format!("invalid circuit JSON: {error}"),
+    }
+}
+
+fn format_netlist_error(error: NetlistRenderError) -> String {
+    match error {
+        NetlistRenderError::InvalidCircuit(errors) => {
+            let mut message = String::from("invalid circuit:");
+            for error in errors {
+                message.push_str(&format!("\n  - {error:?}"));
+            }
+            message
+        }
+        NetlistRenderError::UnconnectedPin { instance, pin } => {
+            format!("instance '{instance}' pin '{pin}' is not connected")
+        }
+        NetlistRenderError::MissingPrimitive { primitive } => {
+            format!("primitive '{primitive}' is missing from catalog")
+        }
+    }
+}
+
+fn format_small_signal_error(error: SmallSignalRenderError) -> String {
+    match error {
+        SmallSignalRenderError::InvalidCircuit(errors) => {
+            let mut message = String::from("invalid circuit:");
+            for error in errors {
+                message.push_str(&format!("\n  - {error:?}"));
+            }
+            message
+        }
+        SmallSignalRenderError::MissingPrimitive { primitive } => {
+            format!("primitive '{primitive}' is missing from catalog")
+        }
+        SmallSignalRenderError::MissingSmallSignalModel { primitive } => {
+            format!("primitive '{primitive}' has no small-signal model")
+        }
+        SmallSignalRenderError::MissingBranchPin {
+            instance,
+            branch,
+            pin,
+        } => {
+            format!("instance '{instance}' branch '{branch}' references missing pin '{pin}'")
+        }
+    }
+}
+
 fn format_mna_error(error: MnaError) -> String {
     match error {
         MnaError::Io(error) => format!("I/O failure: {error}"),
@@ -136,10 +614,87 @@ fn print_help() {
 \n\
 Usage:\n\
   sstadex --help\n\
+  sstadex catalog list --primitives-dir <DIR>\n\
+  sstadex circuit render --primitives-dir <DIR> --name <NAME> --instance <ID:PRIMITIVE> --connect <INSTANCE.PIN=NET> [--view structural|small-signal]\n\
+  sstadex circuit render-file --primitives-dir <DIR> --circuit <FILE> [--view structural|small-signal]\n\
   sstadex mna --spice-dir <DIR> --design <NAME> --output <DIR> [--solve]\n\
 \n\
 Commands:\n\
-  mna    Generate and print a symbolic MNA system from a SPICE netlist\n"
+  catalog    Inspect primitive catalogs\n\
+  circuit    Build and render circuits from primitives\n\
+  mna        Generate and print a symbolic MNA system from a SPICE netlist\n"
+    );
+}
+
+fn print_catalog_help() {
+    println!(
+        "Usage:\n\
+  sstadex catalog --help\n\
+  sstadex catalog list --primitives-dir <DIR>\n\
+  sstadex catalog show <PRIMITIVE> --primitives-dir <DIR>\n\
+\n\
+Commands:\n\
+  list    List primitives found in a primitives directory\n\
+  show    Show details for one primitive\n"
+    );
+}
+
+fn print_catalog_list_help() {
+    println!(
+        "Usage:\n\
+  sstadex catalog list --primitives-dir <DIR>\n\
+\n\
+Options:\n\
+  --primitives-dir <DIR>    Directory containing primitive subfolders\n"
+    );
+}
+
+fn print_catalog_show_help() {
+    println!(
+        "Usage:\n\
+  sstadex catalog show <PRIMITIVE> --primitives-dir <DIR>\n\
+\n\
+Options:\n\
+  --primitives-dir <DIR>    Directory containing primitive subfolders\n"
+    );
+}
+
+fn print_circuit_help() {
+    println!(
+        "Usage:\n\
+  sstadex circuit --help\n\
+  sstadex circuit render --primitives-dir <DIR> --name <NAME> --instance <ID:PRIMITIVE> --connect <INSTANCE.PIN=NET> [--view structural|small-signal]\n\
+  sstadex circuit render-file --primitives-dir <DIR> --circuit <FILE> [--view structural|small-signal]\n\
+\n\
+Commands:\n\
+  render         Render a circuit netlist from instances and connections\n\
+  render-file    Render a circuit netlist from a circuit JSON file\n"
+    );
+}
+
+fn print_circuit_render_help() {
+    println!(
+        "Usage:\n\
+  sstadex circuit render --primitives-dir <DIR> --name <NAME> --instance <ID:PRIMITIVE> --connect <INSTANCE.PIN=NET> [--view structural|small-signal]\n\
+\n\
+Options:\n\
+  --primitives-dir <DIR>       Directory containing primitive subfolders\n\
+  --name <NAME>                Circuit name\n\
+  --instance <ID:PRIMITIVE>    Primitive instance; can be repeated\n\
+  --connect <INSTANCE.PIN=NET> Pin-to-net connection; can be repeated\n\
+  --view <VIEW>                Render view: structural or small-signal; default structural\n"
+    );
+}
+
+fn print_circuit_render_file_help() {
+    println!(
+        "Usage:\n\
+  sstadex circuit render-file --primitives-dir <DIR> --circuit <FILE> [--view structural|small-signal]\n\
+\n\
+Options:\n\
+  --primitives-dir <DIR>    Directory containing primitive subfolders\n\
+  --circuit <FILE>          Circuit JSON file\n\
+  --view <VIEW>             Render view: structural or small-signal; default structural\n"
     );
 }
 
