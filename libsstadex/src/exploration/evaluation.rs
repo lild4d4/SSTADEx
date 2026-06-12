@@ -1,5 +1,6 @@
 use super::candidate::CandidatePoint;
 use super::conditions::{RangeCondition, SpecificationResult};
+use super::prepare::PreparedSpec;
 use super::table::ExplorationColumn;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -60,12 +61,44 @@ where
     Ok(CandidateEvaluation::new(name, values))
 }
 
+pub fn evaluate_prepared_candidate_spec<F>(
+    candidates: &[CandidatePoint],
+    prepared: &PreparedSpec,
+    evaluator: F,
+) -> Result<SpecificationResult, CandidateEvaluationError>
+where
+    F: Fn(usize, &CandidatePoint) -> Result<f64, CandidateEvaluationError>,
+{
+    Ok(evaluate_candidates(candidates, prepared.name.clone(), evaluator)?
+        .with_condition(prepared.condition))
+}
+
+pub fn evaluate_prepared_candidate_specs<F>(
+    candidates: &[CandidatePoint],
+    prepared_specs: &[PreparedSpec],
+    evaluator: F,
+) -> Result<Vec<SpecificationResult>, CandidateEvaluationError>
+where
+    F: Fn(&PreparedSpec, usize, &CandidatePoint) -> Result<f64, CandidateEvaluationError>,
+{
+    let mut results = Vec::with_capacity(prepared_specs.len());
+
+    for prepared in prepared_specs {
+        results.push(evaluate_prepared_candidate_spec(candidates, prepared, |idx, candidate| {
+            evaluator(prepared, idx, candidate)
+        })?);
+    }
+
+    Ok(results)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::exploration::{
         CandidateAxis, CandidatePoint, CandidateSet, assemble_filtered_table,
-        build_filtered_candidates, filter_conditions, shared_node_filter,
+        build_filtered_candidates, filter_conditions, prepare_candidate_expression_spec,
+        shared_node_filter, SpecOutput, SpecSource,
     };
 
     #[test]
@@ -153,6 +186,229 @@ mod tests {
         let gain_spec = gain.with_condition(RangeCondition::min(40.0));
 
         assert_eq!(filter_conditions(&[gain_spec]).unwrap(), vec![false, true, true]);
+    }
+
+    #[test]
+    fn evaluates_prepared_candidate_spec() {
+        let candidates = vec![
+            CandidatePoint::new(vec![
+                ("xdp.gm".to_string(), 5.0),
+                ("xcm.ro".to_string(), 10.0),
+            ]),
+            CandidatePoint::new(vec![
+                ("xdp.gm".to_string(), 10.0),
+                ("xcm.ro".to_string(), 10.0),
+            ]),
+        ];
+        let spec = crate::exploration::ExplorationSpec::new(
+            "gain",
+            RangeCondition::min(40.0),
+            SpecSource::CandidateExpression {
+                expression: "xdp.gm * xcm.ro".to_string(),
+            },
+            SpecOutput::Eval,
+        );
+        let prepared = prepare_candidate_expression_spec(&spec).unwrap();
+
+        let result = evaluate_prepared_candidate_spec(&candidates, &prepared, |idx, candidate| {
+            let gm = required_candidate_value(candidate, idx, "xdp.gm")?;
+            let ro = required_candidate_value(candidate, idx, "xcm.ro")?;
+            Ok(gm * ro)
+        })
+        .unwrap();
+
+        assert_eq!(
+            result,
+            SpecificationResult::new("gain", vec![50.0, 100.0], RangeCondition::min(40.0))
+        );
+    }
+
+    #[test]
+    fn reports_missing_value_when_evaluating_prepared_candidate_spec() {
+        let candidates = vec![CandidatePoint::new(vec![("xdp.gm".to_string(), 5.0)])];
+        let spec = crate::exploration::ExplorationSpec::new(
+            "gain",
+            RangeCondition::min(40.0),
+            SpecSource::CandidateExpression {
+                expression: "xdp.gm * xcm.ro".to_string(),
+            },
+            SpecOutput::Eval,
+        );
+        let prepared = prepare_candidate_expression_spec(&spec).unwrap();
+
+        assert_eq!(
+            evaluate_prepared_candidate_spec(&candidates, &prepared, |idx, candidate| {
+                let gm = required_candidate_value(candidate, idx, "xdp.gm")?;
+                let ro = required_candidate_value(candidate, idx, "xcm.ro")?;
+                Ok(gm * ro)
+            }),
+            Err(CandidateEvaluationError::MissingValue {
+                candidate: 0,
+                column: "xcm.ro".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn filters_evaluated_prepared_candidate_spec() {
+        let candidates = vec![
+            CandidatePoint::new(vec![
+                ("xdp.gm".to_string(), 1.0),
+                ("xcm.ro".to_string(), 10.0),
+            ]),
+            CandidatePoint::new(vec![
+                ("xdp.gm".to_string(), 5.0),
+                ("xcm.ro".to_string(), 10.0),
+            ]),
+            CandidatePoint::new(vec![
+                ("xdp.gm".to_string(), 10.0),
+                ("xcm.ro".to_string(), 10.0),
+            ]),
+        ];
+        let spec = crate::exploration::ExplorationSpec::new(
+            "gain",
+            RangeCondition::min(40.0),
+            SpecSource::CandidateExpression {
+                expression: "xdp.gm * xcm.ro".to_string(),
+            },
+            SpecOutput::Eval,
+        );
+        let prepared = prepare_candidate_expression_spec(&spec).unwrap();
+        let result = evaluate_prepared_candidate_spec(&candidates, &prepared, |idx, candidate| {
+            let gm = required_candidate_value(candidate, idx, "xdp.gm")?;
+            let ro = required_candidate_value(candidate, idx, "xcm.ro")?;
+            Ok(gm * ro)
+        })
+        .unwrap();
+
+        assert_eq!(filter_conditions(&[result]).unwrap(), vec![false, true, true]);
+    }
+
+    #[test]
+    fn evaluates_prepared_candidate_specs_in_order() {
+        let candidates = vec![
+            CandidatePoint::new(vec![
+                ("xdp.gm".to_string(), 5.0),
+                ("xcm.ro".to_string(), 10.0),
+                ("vdd".to_string(), 1.8),
+                ("ibias".to_string(), 1e-4),
+            ]),
+            CandidatePoint::new(vec![
+                ("xdp.gm".to_string(), 10.0),
+                ("xcm.ro".to_string(), 10.0),
+                ("vdd".to_string(), 1.8),
+                ("ibias".to_string(), 2e-4),
+            ]),
+        ];
+        let specs = vec![
+            crate::exploration::ExplorationSpec::new(
+                "gain",
+                RangeCondition::min(40.0),
+                SpecSource::CandidateExpression {
+                    expression: "xdp.gm * xcm.ro".to_string(),
+                },
+                SpecOutput::Eval,
+            ),
+            crate::exploration::ExplorationSpec::new(
+                "power",
+                RangeCondition::max(5e-4),
+                SpecSource::CandidateExpression {
+                    expression: "vdd * ibias".to_string(),
+                },
+                SpecOutput::Eval,
+            ),
+        ];
+        let prepared = crate::exploration::prepare_candidate_expression_specs(&specs).unwrap();
+
+        let results = evaluate_prepared_candidate_specs(
+            &candidates,
+            &prepared,
+            |prepared, idx, candidate| match prepared.name.as_str() {
+                "gain" => {
+                    let gm = required_candidate_value(candidate, idx, "xdp.gm")?;
+                    let ro = required_candidate_value(candidate, idx, "xcm.ro")?;
+                    Ok(gm * ro)
+                }
+                "power" => {
+                    let vdd = required_candidate_value(candidate, idx, "vdd")?;
+                    let ibias = required_candidate_value(candidate, idx, "ibias")?;
+                    Ok(vdd * ibias)
+                }
+                _ => unreachable!("unexpected prepared spec"),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            results,
+            vec![
+                SpecificationResult::new("gain", vec![50.0, 100.0], RangeCondition::min(40.0)),
+                SpecificationResult::new("power", vec![1.8e-4, 3.6e-4], RangeCondition::max(5e-4)),
+            ]
+        );
+    }
+
+    #[test]
+    fn filters_multiple_evaluated_prepared_candidate_specs() {
+        let candidates = vec![
+            CandidatePoint::new(vec![
+                ("xdp.gm".to_string(), 1.0),
+                ("xcm.ro".to_string(), 10.0),
+                ("vdd".to_string(), 1.8),
+                ("ibias".to_string(), 1e-4),
+            ]),
+            CandidatePoint::new(vec![
+                ("xdp.gm".to_string(), 5.0),
+                ("xcm.ro".to_string(), 10.0),
+                ("vdd".to_string(), 1.8),
+                ("ibias".to_string(), 1e-4),
+            ]),
+            CandidatePoint::new(vec![
+                ("xdp.gm".to_string(), 10.0),
+                ("xcm.ro".to_string(), 10.0),
+                ("vdd".to_string(), 1.8),
+                ("ibias".to_string(), 5e-4),
+            ]),
+        ];
+        let specs = vec![
+            crate::exploration::ExplorationSpec::new(
+                "gain",
+                RangeCondition::min(40.0),
+                SpecSource::CandidateExpression {
+                    expression: "xdp.gm * xcm.ro".to_string(),
+                },
+                SpecOutput::Eval,
+            ),
+            crate::exploration::ExplorationSpec::new(
+                "power",
+                RangeCondition::max(5e-4),
+                SpecSource::CandidateExpression {
+                    expression: "vdd * ibias".to_string(),
+                },
+                SpecOutput::Eval,
+            ),
+        ];
+        let prepared = crate::exploration::prepare_candidate_expression_specs(&specs).unwrap();
+        let results = evaluate_prepared_candidate_specs(
+            &candidates,
+            &prepared,
+            |prepared, idx, candidate| match prepared.name.as_str() {
+                "gain" => {
+                    let gm = required_candidate_value(candidate, idx, "xdp.gm")?;
+                    let ro = required_candidate_value(candidate, idx, "xcm.ro")?;
+                    Ok(gm * ro)
+                }
+                "power" => {
+                    let vdd = required_candidate_value(candidate, idx, "vdd")?;
+                    let ibias = required_candidate_value(candidate, idx, "ibias")?;
+                    Ok(vdd * ibias)
+                }
+                _ => unreachable!("unexpected prepared spec"),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(filter_conditions(&results).unwrap(), vec![false, true, false]);
     }
 
     #[test]
