@@ -1,5 +1,7 @@
 pub mod candidate;
 pub mod conditions;
+pub mod evaluation;
+pub mod spec;
 pub mod table;
 
 pub use candidate::{
@@ -13,6 +15,13 @@ pub use conditions::{
     ExplorationFilter, FilterEqualColumnsError, FilterKnownColumnsError, FilterPhase,
     RangeCondition, SpecificationResult, filter_conditions, filter_equal_columns,
     filter_known_columns, shared_node_filter,
+};
+pub use evaluation::{
+    CandidateEvaluation, CandidateEvaluationError, evaluate_candidates, required_candidate_value,
+};
+pub use spec::{
+    CircuitView, ExplorationSpec, FrequencySweep, SpecOutput, SpecParameter, SpecSource,
+    SpecVariable, TestbenchElement, TestbenchSpec,
 };
 pub use table::{
     ExplorationColumn, ExplorationTable, ExplorationTableError, assemble_filtered_table,
