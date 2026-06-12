@@ -68,6 +68,20 @@ impl CandidateSet {
     }
 }
 
+pub fn candidate_column_name(prefix: &str, column: &str) -> String {
+    format!("{prefix}.{column}")
+}
+
+pub fn candidate_column_names<'a>(
+    prefix: &str,
+    columns: impl IntoIterator<Item = &'a str>,
+) -> Vec<String> {
+    columns
+        .into_iter()
+        .map(|column| candidate_column_name(prefix, column))
+        .collect()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CandidateGenerationError {
     EmptyAxis { axis: String },
@@ -117,6 +131,22 @@ pub fn candidate_set_from_columns(
     Ok(CandidateSet::new(name, points))
 }
 
+pub fn candidate_set_from_prefixed_columns(
+    name: impl Into<String>,
+    prefix: &str,
+    columns: &[ExplorationColumn],
+) -> Result<CandidateSet, CandidateSetBuildError> {
+    let prefixed_columns = columns
+        .iter()
+        .map(|column| ExplorationColumn {
+            name: candidate_column_name(prefix, &column.name),
+            values: column.values.clone(),
+        })
+        .collect::<Vec<_>>();
+
+    candidate_set_from_columns(name, &prefixed_columns)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AxisFilterError {
     EmptyAxis { axis: String },
@@ -131,6 +161,31 @@ pub enum CandidateFilterError {
 impl From<FilterEqualColumnsError> for CandidateFilterError {
     fn from(error: FilterEqualColumnsError) -> Self {
         Self::EqualColumns(error)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CandidatePipelineError {
+    AxisFilter(AxisFilterError),
+    CandidateGeneration(CandidateGenerationError),
+    CandidateFilter(CandidateFilterError),
+}
+
+impl From<AxisFilterError> for CandidatePipelineError {
+    fn from(error: AxisFilterError) -> Self {
+        Self::AxisFilter(error)
+    }
+}
+
+impl From<CandidateGenerationError> for CandidatePipelineError {
+    fn from(error: CandidateGenerationError) -> Self {
+        Self::CandidateGeneration(error)
+    }
+}
+
+impl From<CandidateFilterError> for CandidatePipelineError {
+    fn from(error: CandidateFilterError) -> Self {
+        Self::CandidateFilter(error)
     }
 }
 
@@ -292,9 +347,28 @@ pub fn generate_candidate_combinations(
     Ok(candidates)
 }
 
+pub fn build_filtered_candidates(
+    axes: &[CandidateAxis],
+    sets: &[CandidateSet],
+    filters: &[ExplorationFilter],
+) -> Result<Vec<CandidatePoint>, CandidatePipelineError> {
+    let filtered_axes = filter_candidate_axes(axes, filters)?;
+    let axis_candidates = generate_candidate_grid(&filtered_axes)?;
+
+    let mut all_sets = Vec::with_capacity(sets.len() + 1);
+    if !axis_candidates.is_empty() {
+        all_sets.push(CandidateSet::new("axes", axis_candidates));
+    }
+    all_sets.extend(sets.iter().cloned());
+
+    let candidates = generate_candidate_combinations(&all_sets)?;
+    Ok(filter_candidate_points(&candidates, filters)?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::conditions::shared_node_filter;
 
     #[test]
     fn creates_candidate_axis() {
@@ -390,6 +464,19 @@ mod tests {
     }
 
     #[test]
+    fn builds_candidate_column_name() {
+        assert_eq!(candidate_column_name("xdp", "gm"), "xdp.gm");
+    }
+
+    #[test]
+    fn builds_candidate_column_names() {
+        assert_eq!(
+            candidate_column_names("xdp", ["gm", "gds", "vs"]),
+            vec!["xdp.gm".to_string(), "xdp.gds".to_string(), "xdp.vs".to_string()]
+        );
+    }
+
+    #[test]
     fn generates_candidate_combinations_from_sets() {
         let xdp = CandidateSet::new(
             "xdp",
@@ -480,6 +567,36 @@ mod tests {
     }
 
     #[test]
+    fn builds_candidate_set_from_prefixed_columns() {
+        let columns = vec![
+            ExplorationColumn::new("gm", vec![1.0, 2.0]),
+            ExplorationColumn::new("gds", vec![0.1, 0.2]),
+            ExplorationColumn::new("vs", vec![0.3, 0.4]),
+        ];
+
+        let set = candidate_set_from_prefixed_columns("diffpair", "xdp", &columns).unwrap();
+
+        assert_eq!(
+            set,
+            CandidateSet::new(
+                "diffpair",
+                vec![
+                    CandidatePoint::new(vec![
+                        ("xdp.gm".to_string(), 1.0),
+                        ("xdp.gds".to_string(), 0.1),
+                        ("xdp.vs".to_string(), 0.3),
+                    ]),
+                    CandidatePoint::new(vec![
+                        ("xdp.gm".to_string(), 2.0),
+                        ("xdp.gds".to_string(), 0.2),
+                        ("xdp.vs".to_string(), 0.4),
+                    ]),
+                ],
+            )
+        );
+    }
+
+    #[test]
     fn reports_empty_columns_when_building_candidate_set() {
         assert_eq!(
             candidate_set_from_columns("xdp", &[]),
@@ -502,6 +619,227 @@ mod tests {
                 actual: 1,
             })
         );
+    }
+
+    #[test]
+    fn builds_filtered_candidates_from_axes_and_sets() {
+        let axes = vec![CandidateAxis::new("Ra", vec![1.0, 2.0])];
+        let primitive_set = CandidateSet::new(
+            "xdp",
+            vec![
+                CandidatePoint::new(vec![("vs_diff".to_string(), 0.2)]),
+                CandidatePoint::new(vec![("vs_diff".to_string(), 0.3)]),
+            ],
+        );
+
+        let candidates = build_filtered_candidates(&axes, &[primitive_set], &[]).unwrap();
+
+        assert_eq!(
+            candidates,
+            vec![
+                CandidatePoint::new(vec![("Ra".to_string(), 1.0), ("vs_diff".to_string(), 0.2)]),
+                CandidatePoint::new(vec![("Ra".to_string(), 1.0), ("vs_diff".to_string(), 0.3)]),
+                CandidatePoint::new(vec![("Ra".to_string(), 2.0), ("vs_diff".to_string(), 0.2)]),
+                CandidatePoint::new(vec![("Ra".to_string(), 2.0), ("vs_diff".to_string(), 0.3)]),
+            ]
+        );
+    }
+
+    #[test]
+    fn build_filtered_candidates_applies_axis_and_candidate_filters() {
+        let axes = vec![CandidateAxis::new("Ra", vec![0.5, 2.0])];
+        let xdp = CandidateSet::new(
+            "xdp",
+            vec![
+                CandidatePoint::new(vec![("vs_diff".to_string(), 0.2)]),
+                CandidatePoint::new(vec![("vs_diff".to_string(), 0.3)]),
+            ],
+        );
+        let xcs = CandidateSet::new(
+            "xcs",
+            vec![
+                CandidatePoint::new(vec![("vs_cs".to_string(), 0.1)]),
+                CandidatePoint::new(vec![("vs_cs".to_string(), 0.3)]),
+            ],
+        );
+        let filters = vec![
+            ExplorationFilter::new(
+                FilterPhase::AxisPreEvaluation,
+                "Ra",
+                super::super::conditions::RangeCondition::min(1.0),
+            ),
+            ExplorationFilter::equal_columns(
+                FilterPhase::CandidatePreEvaluation,
+                vec!["vs_diff", "vs_cs"],
+            ),
+        ];
+
+        let candidates = build_filtered_candidates(&axes, &[xdp, xcs], &filters).unwrap();
+
+        assert_eq!(
+            candidates,
+            vec![CandidatePoint::new(vec![
+                ("Ra".to_string(), 2.0),
+                ("vs_diff".to_string(), 0.3),
+                ("vs_cs".to_string(), 0.3),
+            ])]
+        );
+    }
+
+    #[test]
+    fn builds_macro_and_two_primitive_candidate_space_without_breaking_primitive_rows() {
+        let macro_axes = vec![
+            CandidateAxis::new("Ra", vec![1.0, 2.0, 3.0]),
+            CandidateAxis::new("Cc", vec![0.5, 1.0]),
+        ];
+        let diffpair = CandidateSet::new(
+            "diffpair",
+            vec![
+                CandidatePoint::new(vec![
+                    ("xdp.gm".to_string(), 1.0),
+                    ("xdp.gds".to_string(), 0.1),
+                    ("xdp.vs".to_string(), 0.2),
+                ]),
+                CandidatePoint::new(vec![
+                    ("xdp.gm".to_string(), 10.0),
+                    ("xdp.gds".to_string(), 0.2),
+                    ("xdp.vs".to_string(), 0.3),
+                ]),
+                CandidatePoint::new(vec![
+                    ("xdp.gm".to_string(), 100.0),
+                    ("xdp.gds".to_string(), 0.4),
+                    ("xdp.vs".to_string(), 0.4),
+                ]),
+            ],
+        );
+        let current_mirror = CandidateSet::new(
+            "current_mirror",
+            vec![
+                CandidatePoint::new(vec![
+                    ("xcm.gm".to_string(), 2.0),
+                    ("xcm.gds".to_string(), 0.02),
+                    ("xcm.vs".to_string(), 0.3),
+                ]),
+                CandidatePoint::new(vec![
+                    ("xcm.gm".to_string(), 20.0),
+                    ("xcm.gds".to_string(), 0.05),
+                    ("xcm.vs".to_string(), 0.4),
+                ]),
+                CandidatePoint::new(vec![
+                    ("xcm.gm".to_string(), 200.0),
+                    ("xcm.gds".to_string(), 0.08),
+                    ("xcm.vs".to_string(), 0.5),
+                ]),
+                CandidatePoint::new(vec![
+                    ("xcm.gm".to_string(), 2000.0),
+                    ("xcm.gds".to_string(), 0.13),
+                    ("xcm.vs".to_string(), 0.6),
+                ]),
+            ],
+        );
+
+        let candidates =
+            build_filtered_candidates(&macro_axes, &[diffpair, current_mirror], &[]).unwrap();
+
+        assert_eq!(candidates.len(), 3 * 2 * 3 * 4);
+        assert_eq!(candidates[0].get("Ra"), Some(1.0));
+        assert_eq!(candidates[0].get("Cc"), Some(0.5));
+        assert_eq!(candidates[0].get("xdp.gm"), Some(1.0));
+        assert_eq!(candidates[0].get("xdp.gds"), Some(0.1));
+        assert_eq!(candidates[0].get("xcm.gm"), Some(2.0));
+        assert_eq!(candidates[0].get("xcm.gds"), Some(0.02));
+
+        assert!(
+            candidates
+                .iter()
+                .all(|candidate| match candidate.get("xdp.gm").unwrap() {
+                    1.0 => candidate.get("xdp.gds") == Some(0.1),
+                    10.0 => candidate.get("xdp.gds") == Some(0.2),
+                    100.0 => candidate.get("xdp.gds") == Some(0.4),
+                    _ => false,
+                })
+        );
+        assert!(
+            candidates
+                .iter()
+                .all(|candidate| match candidate.get("xcm.gm").unwrap() {
+                    2.0 => candidate.get("xcm.gds") == Some(0.02),
+                    20.0 => candidate.get("xcm.gds") == Some(0.05),
+                    200.0 => candidate.get("xcm.gds") == Some(0.08),
+                    2000.0 => candidate.get("xcm.gds") == Some(0.13),
+                    _ => false,
+                })
+        );
+    }
+
+    #[test]
+    fn filters_advanced_candidate_space_by_shared_node() {
+        let macro_axes = vec![
+            CandidateAxis::new("Ra", vec![1.0, 2.0]),
+            CandidateAxis::new("Cc", vec![0.5, 1.0]),
+        ];
+        let diffpair = CandidateSet::new(
+            "diffpair",
+            vec![
+                CandidatePoint::new(vec![
+                    ("xdp.gm".to_string(), 1.0),
+                    ("xdp.gds".to_string(), 0.1),
+                    ("xdp.vs".to_string(), 0.2),
+                ]),
+                CandidatePoint::new(vec![
+                    ("xdp.gm".to_string(), 10.0),
+                    ("xdp.gds".to_string(), 0.2),
+                    ("xdp.vs".to_string(), 0.3),
+                ]),
+                CandidatePoint::new(vec![
+                    ("xdp.gm".to_string(), 100.0),
+                    ("xdp.gds".to_string(), 0.4),
+                    ("xdp.vs".to_string(), 0.4),
+                ]),
+            ],
+        );
+        let current_source = CandidateSet::new(
+            "current_source",
+            vec![
+                CandidatePoint::new(vec![
+                    ("xcs.gm".to_string(), 2.0),
+                    ("xcs.gds".to_string(), 0.02),
+                    ("xcs.vs".to_string(), 0.3),
+                ]),
+                CandidatePoint::new(vec![
+                    ("xcs.gm".to_string(), 20.0),
+                    ("xcs.gds".to_string(), 0.05),
+                    ("xcs.vs".to_string(), 0.4),
+                ]),
+                CandidatePoint::new(vec![
+                    ("xcs.gm".to_string(), 200.0),
+                    ("xcs.gds".to_string(), 0.08),
+                    ("xcs.vs".to_string(), 0.5),
+                ]),
+            ],
+        );
+        let filters = vec![shared_node_filter(vec!["xdp.vs", "xcs.vs"])];
+
+        let candidates =
+            build_filtered_candidates(&macro_axes, &[diffpair, current_source], &filters).unwrap();
+
+        assert_eq!(candidates.len(), 2 * 2 * 2);
+        assert!(candidates.iter().all(|candidate| {
+            candidate.get("xdp.vs") == candidate.get("xcs.vs")
+                && matches!(candidate.get("xdp.vs"), Some(0.3 | 0.4))
+        }));
+        assert!(candidates.iter().any(|candidate| {
+            candidate.get("xdp.gm") == Some(10.0)
+                && candidate.get("xdp.gds") == Some(0.2)
+                && candidate.get("xcs.gm") == Some(2.0)
+                && candidate.get("xcs.gds") == Some(0.02)
+        }));
+        assert!(candidates.iter().any(|candidate| {
+            candidate.get("xdp.gm") == Some(100.0)
+                && candidate.get("xdp.gds") == Some(0.4)
+                && candidate.get("xcs.gm") == Some(20.0)
+                && candidate.get("xcs.gds") == Some(0.05)
+        }));
     }
 
     #[test]

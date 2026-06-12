@@ -120,6 +120,10 @@ impl ExplorationFilter {
     }
 }
 
+pub fn shared_node_filter(columns: Vec<impl Into<String>>) -> ExplorationFilter {
+    ExplorationFilter::equal_columns(FilterPhase::CandidatePreEvaluation, columns)
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpecificationResult {
     pub name: String,
@@ -401,6 +405,16 @@ mod tests {
         assert_eq!(filter.phase(), FilterPhase::CandidatePreEvaluation);
         assert_eq!(filter.column(), None);
         assert_eq!(filter.columns(), &["vs_diff".to_string(), "vs_cs_1stage".to_string()]);
+        assert_eq!(filter.condition(), None);
+    }
+
+    #[test]
+    fn creates_shared_node_filter() {
+        let filter = shared_node_filter(vec!["xdp.vs", "xcs.vs"]);
+
+        assert_eq!(filter.phase(), FilterPhase::CandidatePreEvaluation);
+        assert_eq!(filter.column(), None);
+        assert_eq!(filter.columns(), &["xdp.vs".to_string(), "xcs.vs".to_string()]);
         assert_eq!(filter.condition(), None);
     }
 
