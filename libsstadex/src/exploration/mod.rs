@@ -1,6 +1,7 @@
 pub mod candidate;
 pub mod conditions;
 pub mod evaluation;
+pub mod flow;
 pub mod prepare;
 pub mod spec;
 pub mod table;
@@ -18,12 +19,16 @@ pub use conditions::{
     filter_known_columns, shared_node_filter,
 };
 pub use evaluation::{
-    CandidateEvaluation, CandidateEvaluationError, evaluate_candidates,
-    evaluate_prepared_candidate_spec, evaluate_prepared_candidate_specs, required_candidate_value,
+    CandidateEvaluation, CandidateEvaluationError, evaluate_candidate_expression,
+    evaluate_candidates, evaluate_prepared_candidate_spec, evaluate_prepared_candidate_specs,
+    evaluate_prepared_expression_spec, evaluate_prepared_expression_specs,
+    required_candidate_value,
 };
+pub use flow::{ExplorationFlowError, run_candidate_expression_flow, run_prepared_expression_flow};
 pub use prepare::{
     PreparedSpec, PreparedSpecSource, SpecPrepareError, prepare_candidate_expression_spec,
-    prepare_candidate_expression_specs,
+    prepare_candidate_expression_specs, prepare_transfer_function_spec,
+    prepare_transfer_function_spec_from_analysis,
 };
 pub use spec::{
     CircuitView, ExplorationSpec, FrequencySweep, SpecOutput, SpecParameter, SpecSource,

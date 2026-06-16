@@ -384,10 +384,7 @@ mod tests {
 
         assert_eq!(
             testbench.body_lines(),
-            vec![
-                "Vin VIN 0 ac 1".to_string(),
-                "Rload VOUT 0 1k".to_string(),
-            ]
+            vec!["Vin VIN 0 ac 1".to_string(), "Rload VOUT 0 1k".to_string(),]
         );
         assert_eq!(testbench.body_text(), "Vin VIN 0 ac 1\nRload VOUT 0 1k");
     }

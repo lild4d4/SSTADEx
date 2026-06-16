@@ -65,11 +65,7 @@ pub enum ExplorationFilter {
 }
 
 impl ExplorationFilter {
-    pub fn new(
-        phase: FilterPhase,
-        column: impl Into<String>,
-        condition: RangeCondition,
-    ) -> Self {
+    pub fn new(phase: FilterPhase, column: impl Into<String>, condition: RangeCondition) -> Self {
         Self::Range {
             phase,
             column: column.into(),
@@ -236,7 +232,10 @@ pub fn filter_known_columns(
             .iter()
             .find(|column| Some(column.name.as_str()) == filter.column())
             .ok_or_else(|| FilterKnownColumnsError::MissingColumn {
-                column: filter.column().unwrap_or("<not-a-range-filter>").to_string(),
+                column: filter
+                    .column()
+                    .unwrap_or("<not-a-range-filter>")
+                    .to_string(),
             })?;
 
         for (is_kept, value) in mask.iter_mut().zip(&column.values) {
@@ -388,8 +387,11 @@ mod tests {
 
     #[test]
     fn exploration_filter_evaluates_range_condition() {
-        let filter =
-            ExplorationFilter::new(FilterPhase::PostEvaluation, "gain", RangeCondition::max(10.0));
+        let filter = ExplorationFilter::new(
+            FilterPhase::PostEvaluation,
+            "gain",
+            RangeCondition::max(10.0),
+        );
 
         assert!(filter.accepts_value(3.0));
         assert!(!filter.accepts_value(12.0));
@@ -404,7 +406,10 @@ mod tests {
 
         assert_eq!(filter.phase(), FilterPhase::CandidatePreEvaluation);
         assert_eq!(filter.column(), None);
-        assert_eq!(filter.columns(), &["vs_diff".to_string(), "vs_cs_1stage".to_string()]);
+        assert_eq!(
+            filter.columns(),
+            &["vs_diff".to_string(), "vs_cs_1stage".to_string()]
+        );
         assert_eq!(filter.condition(), None);
     }
 
@@ -414,7 +419,10 @@ mod tests {
 
         assert_eq!(filter.phase(), FilterPhase::CandidatePreEvaluation);
         assert_eq!(filter.column(), None);
-        assert_eq!(filter.columns(), &["xdp.vs".to_string(), "xcs.vs".to_string()]);
+        assert_eq!(
+            filter.columns(),
+            &["xdp.vs".to_string(), "xcs.vs".to_string()]
+        );
         assert_eq!(filter.condition(), None);
     }
 

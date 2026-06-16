@@ -269,7 +269,10 @@ fn filter_candidate_range_columns(
     columns: &[ExplorationColumn],
     filters: &[ExplorationFilter],
 ) -> Result<Vec<bool>, CandidateFilterError> {
-    let row_count = columns.first().map(|column| column.values.len()).unwrap_or(0);
+    let row_count = columns
+        .first()
+        .map(|column| column.values.len())
+        .unwrap_or(0);
     let mut mask = vec![true; row_count];
 
     for filter in filters {
@@ -367,8 +370,8 @@ pub fn build_filtered_candidates(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::conditions::shared_node_filter;
+    use super::*;
 
     #[test]
     fn creates_candidate_axis() {
@@ -472,7 +475,11 @@ mod tests {
     fn builds_candidate_column_names() {
         assert_eq!(
             candidate_column_names("xdp", ["gm", "gds", "vs"]),
-            vec!["xdp.gm".to_string(), "xdp.gds".to_string(), "xdp.vs".to_string()]
+            vec![
+                "xdp.gm".to_string(),
+                "xdp.gds".to_string(),
+                "xdp.vs".to_string()
+            ]
         );
     }
 
@@ -917,9 +924,18 @@ mod tests {
     #[test]
     fn filters_candidate_points_with_equal_columns_filter() {
         let candidates = vec![
-            CandidatePoint::new(vec![("vs_diff".to_string(), 0.2), ("vs_cs".to_string(), 0.1)]),
-            CandidatePoint::new(vec![("vs_diff".to_string(), 0.3), ("vs_cs".to_string(), 0.3)]),
-            CandidatePoint::new(vec![("vs_diff".to_string(), 0.4), ("vs_cs".to_string(), 0.4)]),
+            CandidatePoint::new(vec![
+                ("vs_diff".to_string(), 0.2),
+                ("vs_cs".to_string(), 0.1),
+            ]),
+            CandidatePoint::new(vec![
+                ("vs_diff".to_string(), 0.3),
+                ("vs_cs".to_string(), 0.3),
+            ]),
+            CandidatePoint::new(vec![
+                ("vs_diff".to_string(), 0.4),
+                ("vs_cs".to_string(), 0.4),
+            ]),
         ];
         let filters = vec![ExplorationFilter::equal_columns(
             FilterPhase::CandidatePreEvaluation,
@@ -944,9 +960,21 @@ mod tests {
     #[test]
     fn combines_candidate_range_and_equal_columns_filters() {
         let candidates = vec![
-            CandidatePoint::new(vec![("W".to_string(), 0.5), ("a".to_string(), 1.0), ("b".to_string(), 1.0)]),
-            CandidatePoint::new(vec![("W".to_string(), 2.0), ("a".to_string(), 1.0), ("b".to_string(), 2.0)]),
-            CandidatePoint::new(vec![("W".to_string(), 2.0), ("a".to_string(), 3.0), ("b".to_string(), 3.0)]),
+            CandidatePoint::new(vec![
+                ("W".to_string(), 0.5),
+                ("a".to_string(), 1.0),
+                ("b".to_string(), 1.0),
+            ]),
+            CandidatePoint::new(vec![
+                ("W".to_string(), 2.0),
+                ("a".to_string(), 1.0),
+                ("b".to_string(), 2.0),
+            ]),
+            CandidatePoint::new(vec![
+                ("W".to_string(), 2.0),
+                ("a".to_string(), 3.0),
+                ("b".to_string(), 3.0),
+            ]),
         ];
         let filters = vec![
             ExplorationFilter::new(

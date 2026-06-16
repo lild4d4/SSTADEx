@@ -1,5 +1,6 @@
 use crate::catalog::PrimitiveCatalog;
 use crate::circuit::{Circuit, CircuitValidationError, validate_circuit};
+use crate::exploration::TestbenchSpec;
 use crate::netlist::{small_signal_element_name, small_signal_param_name};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,6 +82,28 @@ pub fn render_small_signal_netlist(
     Ok(format!("{}\n", lines.join("\n")))
 }
 
+pub fn render_testbench_small_signal_netlist(
+    circuit: &Circuit,
+    catalog: &PrimitiveCatalog,
+    testbench: &TestbenchSpec,
+) -> Result<String, SmallSignalRenderError> {
+    let mut netlist = render_small_signal_netlist(circuit, catalog)?;
+    let testbench_body = testbench.body_text();
+
+    if !testbench_body.trim().is_empty() {
+        if !netlist.ends_with('\n') {
+            netlist.push('\n');
+        }
+        netlist.push_str("\n* testbench ");
+        netlist.push_str(&testbench.name);
+        netlist.push('\n');
+        netlist.push_str(testbench_body.trim());
+        netlist.push('\n');
+    }
+
+    Ok(netlist)
+}
+
 fn connected_net<'a>(circuit: &'a Circuit, instance: &str, pin: &str) -> Option<&'a str> {
     circuit
         .connections
@@ -155,6 +178,56 @@ mod tests {
                 primitive: "simplediffpair".to_string()
             }
         );
+    }
+
+    #[test]
+    fn renders_small_signal_netlist_with_testbench_body() {
+        let catalog = catalog_with_simplediffpair();
+        let mut circuit = Circuit::new("ota");
+
+        circuit.add_instance(Instance::new("xdp", "simplediffpair"));
+        circuit.connect(Connection::new(PinRef::new("xdp", "VINP"), "VINP"));
+        circuit.connect(Connection::new(PinRef::new("xdp", "VINN"), "VINN"));
+        circuit.connect(Connection::new(PinRef::new("xdp", "VOUTP"), "VOUT"));
+        circuit.connect(Connection::new(PinRef::new("xdp", "VOUTN"), "N1"));
+        circuit.connect(Connection::new(PinRef::new("xdp", "VTAIL"), "IBIAS"));
+
+        let testbench = TestbenchSpec::new("gain")
+            .with_element(crate::exploration::TestbenchElement::VoltageSource {
+                name: "Vin".to_string(),
+                nplus: "VINP".to_string(),
+                nminus: "VINN".to_string(),
+                value: "ac 1".to_string(),
+            })
+            .with_extra_body(".ac dec 10 1 1e9");
+
+        let netlist =
+            render_testbench_small_signal_netlist(&circuit, &catalog, &testbench).unwrap();
+
+        assert!(netlist.contains("G_gm__xdp__m1 VOUT IBIAS VINP IBIAS gm__xdp__m1"));
+        assert!(netlist.contains("* testbench gain"));
+        assert!(netlist.contains("Vin VINP VINN ac 1"));
+        assert!(netlist.contains(".ac dec 10 1 1e9"));
+    }
+
+    #[test]
+    fn renders_small_signal_netlist_without_empty_testbench_body() {
+        let catalog = catalog_with_simplediffpair();
+        let mut circuit = Circuit::new("ota");
+
+        circuit.add_instance(Instance::new("xdp", "simplediffpair"));
+        circuit.connect(Connection::new(PinRef::new("xdp", "VINP"), "VINP"));
+        circuit.connect(Connection::new(PinRef::new("xdp", "VINN"), "VINN"));
+        circuit.connect(Connection::new(PinRef::new("xdp", "VOUTP"), "VOUT"));
+        circuit.connect(Connection::new(PinRef::new("xdp", "VOUTN"), "N1"));
+        circuit.connect(Connection::new(PinRef::new("xdp", "VTAIL"), "IBIAS"));
+
+        let netlist =
+            render_testbench_small_signal_netlist(&circuit, &catalog, &TestbenchSpec::new("gain"))
+                .unwrap();
+
+        assert!(netlist.contains("* Small-signal circuit: ota"));
+        assert!(!netlist.contains("* testbench gain"));
     }
 
     fn catalog_with_simplediffpair() -> PrimitiveCatalog {
