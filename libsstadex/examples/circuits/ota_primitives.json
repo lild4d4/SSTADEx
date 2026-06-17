@@ -60,23 +60,9 @@
     {
       "from": {
         "instance": "xcm",
-        "pin": "VINN"
-      },
-      "net": "N1"
-    },
-    {
-      "from": {
-        "instance": "xcm",
         "pin": "VOUTP"
       },
       "net": "VOUT"
-    },
-    {
-      "from": {
-        "instance": "xcm",
-        "pin": "VOUTN"
-      },
-      "net": "N1"
     },
     {
       "from": {
@@ -95,21 +81,7 @@
     {
       "from": {
         "instance": "xcs",
-        "pin": "VINN"
-      },
-      "net": "VBIAS"
-    },
-    {
-      "from": {
-        "instance": "xcs",
         "pin": "VOUTP"
-      },
-      "net": "IBIAS"
-    },
-    {
-      "from": {
-        "instance": "xcs",
-        "pin": "VOUTN"
       },
       "net": "IBIAS"
     },
