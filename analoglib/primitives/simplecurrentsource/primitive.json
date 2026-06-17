@@ -4,7 +4,7 @@
   "description": "Simple NMOS current source — single transistor per branch",
   "transistor_type": "nmos",
   "subckt_name": "simplecurrentsource",
-  "pin_order": ["VINP", "VINN", "VOUTP", "VOUTN", "VSS"],
+  "pin_order": ["VINP", "VOUTP", "VSS"],
 
   "small_signal": {
     "branches": [
@@ -29,6 +29,17 @@
     "VOUTP": { "name": "VOUTP", "role": "OUTPUT", "description": "Positive output" },
     "VOUTN": { "name": "VOUTN", "role": "OUTPUT", "description": "Mirrored output" },
     "VSS":   { "name": "VSS",   "role": "BIAS",   "description": "Source / ground node" }
+  },
+
+
+  "ui": {
+    "symbol": {
+      "pins": [
+        { "name": "VINP", "side": "top", "offset": 0.2 },
+	{ "name": "VOUTP", "side": "top", "offset": 0.8 },
+	{ "name": "VSS", "side": "bottom", "offset": 0.5 }
+      ]
+    }
   },
 
   "layout_params": [

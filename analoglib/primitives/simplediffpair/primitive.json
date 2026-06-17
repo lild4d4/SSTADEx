@@ -31,6 +31,18 @@
             "VTAIL": { "name": "VTAIL", "role": "BIAS",   "description": "Tail current source node" }
   },
 
+  "ui": {
+    "symbol": {
+      "pins": [
+        { "name": "VINP", "side": "right", "offset": 0.5 },
+	{ "name": "VINN", "side": "left", "offset": 0.5 },
+	{ "name": "VOUTP", "side": "top", "offset": 0.8 },
+	{ "name": "VOUTN", "side": "top", "offset": 0.2 },
+	{ "name": "VTAIL", "side": "bottom", "offset": 0.5 }
+      ]
+    }
+  },
+
   "layout_params": [
     { "name": "W",    "unit": "m",   "computed": true,  "description": "Transistor width (set by build)" },
     { "name": "L",    "unit": "m",   "computed": false, "default": 4e-7, "description": "Gate length" },

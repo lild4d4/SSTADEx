@@ -4,7 +4,7 @@
   "description": "Simple current mirror — single transistor per branch, NMOS or PMOS",
   "transistor_type": "pmos",
   "subckt_name": "simplecurrentmirror",
-  "pin_order": ["VINP", "VINN", "VOUTP", "VOUTN", "VDD"],
+  "pin_order": ["VINP", "VOUTP", "VDD"],
 
   "small_signal": {
     "branches": [
@@ -26,10 +26,18 @@
 
   "ports": {
             "VINP":  { "name": "VINP",  "role": "INPUT",  "description": "Positive input" },
-            "VINN":  { "name": "VINN",  "role": "INPUT",  "description": "Negative input" },
             "VOUTP": { "name": "VOUTP", "role": "OUTPUT", "description": "Positive output" },
-            "VOUTN": { "name": "VOUTN", "role": "OUTPUT", "description": "Negative output" },
             "VDD": { "name": "VDD", "role": "BIAS",   "description": "Vdd node" }
+  },
+
+  "ui": {
+    "symbol": {
+      "pins": [
+        { "name": "VINP", "side": "bottom", "offset": 0.2 },
+	{ "name": "VOUTP", "side": "bottom", "offset": 0.8 },
+	{ "name": "VDD", "side": "top", "offset": 0.5 }
+      ]
+    }
   },
 
   "layout_params": [
