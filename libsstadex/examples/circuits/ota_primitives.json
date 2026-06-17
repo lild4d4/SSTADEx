@@ -8,10 +8,6 @@
     {
       "id": "xcm",
       "primitive": "simplecurrentmirror"
-    },
-    {
-      "id": "xcs",
-      "primitive": "simplecurrentsource"
     }
   ],
   "connections": [
@@ -70,27 +66,6 @@
         "pin": "VDD"
       },
       "net": "VDD"
-    },
-    {
-      "from": {
-        "instance": "xcs",
-        "pin": "VINP"
-      },
-      "net": "VBIAS"
-    },
-    {
-      "from": {
-        "instance": "xcs",
-        "pin": "VOUTP"
-      },
-      "net": "IBIAS"
-    },
-    {
-      "from": {
-        "instance": "xcs",
-        "pin": "VSS"
-      },
-      "net": "VSS"
     }
   ]
 }

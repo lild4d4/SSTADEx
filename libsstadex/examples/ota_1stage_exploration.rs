@@ -1,4 +1,3 @@
-use std::fs;
 use std::path::Path;
 
 use libsstadex::catalog::load_primitive_catalog;
@@ -31,10 +30,11 @@ fn main() -> Result<(), String> {
         .map_err(|error| format!("{error:?}"))?;
     let prepared_rout = prepare_transfer_function_spec(&rout_spec, &circuit, &catalog, &output_dir)
         .map_err(|error| format!("{error:?}"))?;
+    
     let candidates = vec![
-        operating_point(1.0e-3, 1.0e5, 8.0e-4, 1.2e5, 6.0e-4, 1.5e5),
-        operating_point(1.5e-3, 8.0e4, 1.0e-3, 1.0e5, 8.0e-4, 1.2e5),
-        operating_point(2.0e-3, 6.0e4, 1.2e-3, 9.0e4, 1.0e-3, 1.0e5),
+        operating_point(2.6688e-4, 7.739160e4, 1.192103e-4, 5.579659e5),
+        operating_point(1.5e-3, 8.0e4, 1.0e-3, 1.0e5),
+        operating_point(2.0e-3, 6.0e4, 1.2e-3, 9.0e4),
     ];
 
     let candidate_set = CandidateSet::new("ota_1stage_manual_lut_points", candidates.clone());
@@ -67,7 +67,8 @@ fn main() -> Result<(), String> {
         );
     }
 
-    let _ = fs::remove_dir_all(output_dir);
+    //let _ = fs::remove_dir_all(output_dir);
+    println!("Output directory: {}", output_dir.display());
 
     Ok(())
 }
@@ -81,7 +82,8 @@ fn gain_spec() -> ExplorationSpec {
                 .with_element(voltage_source("Vdd", "VDD", "VSS", "0"))
                 .with_element(voltage_source("Vss", "VSS", "VSS", "0"))
                 .with_element(voltage_source("V_n", "VINN", "VSS", "0"))
-                .with_element(voltage_source("V_p", "VINP", "VSS", "vin")),
+                .with_element(voltage_source("V_p", "VINP", "VSS", "vin"))
+                .with_element(current_source("Ibias", "IBIAS", "VSS", "0")),
             input: "VINP".to_string(),
             output: "VOUT".to_string(),
         },
@@ -102,6 +104,7 @@ fn rout_spec() -> ExplorationSpec {
                 .with_element(voltage_source("V_n", "VINN", "VSS", "0"))
                 .with_element(voltage_source("V_p", "VINP", "VSS", "0"))
                 .with_element(voltage_source("Vr", "VR", "VSS", "vr"))
+                .with_element(current_source("Ibias", "IBIAS", "VSS", "0"))
                 .with_element(TestbenchElement::Resistor {
                     name: "Rr".to_string(),
                     n1: "VR".to_string(),
@@ -119,7 +122,6 @@ fn rout_spec() -> ExplorationSpec {
 
 fn ota_parameter_map(extra: Vec<(&str, &str)>) -> Vec<SpecParameter> {
     let mut parameters = vec![
-        SpecParameter::new("v6", "0"),
         SpecParameter::new("gm__xdp__m2", "gm__xdp__m1"),
         SpecParameter::new("ro__xdp__m2", "ro__xdp__m1"),
         SpecParameter::new("gm__xcm__m2", "gm__xcm__m1"),
@@ -145,23 +147,26 @@ fn voltage_source(name: &str, nplus: &str, nminus: &str, value: &str) -> Testben
     }
 }
 
+fn current_source(name: &str, nplus: &str, nminus: &str, value: &str) -> TestbenchElement {
+    TestbenchElement::CurrentSource {
+        name: name.to_string(),
+        nplus: nplus.to_string(),
+        nminus: nminus.to_string(),
+        value: value.to_string(),
+    }
+}
+
 fn operating_point(
     xdp_gm: f64,
     xdp_ro: f64,
     xcm_gm: f64,
     xcm_ro: f64,
-    xcs_gm: f64,
-    xcs_ro: f64,
 ) -> CandidatePoint {
     CandidatePoint::new(vec![
         ("gm__xdp__m1".to_string(), xdp_gm),
         ("ro__xdp__m1".to_string(), xdp_ro),
         ("gm__xcm__m1".to_string(), xcm_gm),
         ("ro__xcm__m1".to_string(), xcm_ro),
-        ("gm__xcs__m1".to_string(), xcs_gm),
-        ("ro__xcs__m1".to_string(), xcs_ro),
-        ("gm__xcs__m2".to_string(), xcs_gm),
-        ("ro__xcs__m2".to_string(), xcs_ro),
     ])
 }
 
