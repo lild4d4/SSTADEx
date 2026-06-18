@@ -24,6 +24,14 @@ fn ota_circuit_file() -> PathBuf {
     workspace_root().join("libsstadex/examples/circuits/ota_primitives.json")
 }
 
+fn ota_testbenches_file() -> PathBuf {
+    workspace_root().join("libsstadex/examples/exploration/ota_1stage_testbenches.json")
+}
+
+fn ota_specs_file() -> PathBuf {
+    workspace_root().join("libsstadex/examples/exploration/ota_1stage_specs.json")
+}
+
 fn assert_success(output: &Output) {
     assert!(
         output.status.success(),
@@ -118,7 +126,8 @@ fn render_file_output_writes_netlist_to_file() {
 
     let netlist = fs::read_to_string(&output_file).expect("failed to read generated netlist");
     assert!(netlist.contains("* Small-signal circuit: ota_primitives"));
-    assert!(netlist.contains("R_ro__xcs__m1 IBIAS VSS ro__xcs__m1"));
+    assert!(netlist.contains("R_ro__xdp__m1 VOUT IBIAS ro__xdp__m1"));
+    assert!(netlist.contains("R_ro__xcm__m1 VOUT VDD ro__xcm__m1"));
 
     fs::remove_dir_all(output_dir).expect("failed to remove temporary test directory");
 }
@@ -211,20 +220,81 @@ fn circuit_mna_json_outputs_structured_result() {
         output_dir.join("ota_primitives.cir").display().to_string()
     );
     assert_eq!(json["solution"], serde_json::Value::Null);
-    assert_eq!(json["nodes"][1]["name"], "VOUT");
-    assert_eq!(json["nodes"][1]["number"], 1);
+    assert_eq!(json["nodes"][0]["name"], "VOUT");
+    assert_eq!(json["nodes"][0]["number"], 1);
     assert_eq!(json["variables"][0]["variable"], "v1");
     assert_eq!(json["variables"][0]["node_name"], "VOUT");
-    assert!(
-        json["equations"]
-            .as_array()
-            .expect("equations should be an array")
-            .iter()
-            .any(|equation| equation["text"]
-                .as_str()
-                .expect("equation text should be a string")
-                .contains("gm__xdp__m1"))
-    );
+    assert!(json["equations"]
+        .as_array()
+        .expect("equations should be an array")
+        .iter()
+        .any(|equation| equation["text"]
+            .as_str()
+            .expect("equation text should be a string")
+            .contains("gm__xdp__m1")));
 
     fs::remove_dir_all(output_dir).expect("failed to remove temporary test directory");
+}
+
+#[test]
+fn exploration_validate_checks_testbenches_and_specs() {
+    let primitives_dir = primitives_dir();
+    let circuit = ota_circuit_file();
+    let testbenches = ota_testbenches_file();
+    let specs = ota_specs_file();
+    let output = sstadex(&[
+        "exploration",
+        "validate",
+        "--primitives-dir",
+        primitives_dir.to_str().expect("valid primitives path"),
+        "--circuit",
+        circuit.to_str().expect("valid circuit path"),
+        "--testbenches",
+        testbenches.to_str().expect("valid testbenches path"),
+        "--specs",
+        specs.to_str().expect("valid specs path"),
+    ]);
+
+    assert_success(&output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("SSTADEx Exploration Validation"));
+    assert!(stdout.contains("Testbenches: 2"));
+    assert!(stdout.contains("Specs: 2"));
+    assert!(stdout.contains("ota_1stage_gain"));
+    assert!(stdout.contains("ota_1stage_rout"));
+}
+
+#[test]
+fn exploration_validate_json_outputs_summary() {
+    let primitives_dir = primitives_dir();
+    let circuit = ota_circuit_file();
+    let testbenches = ota_testbenches_file();
+    let specs = ota_specs_file();
+    let output = sstadex(&[
+        "exploration",
+        "validate",
+        "--primitives-dir",
+        primitives_dir.to_str().expect("valid primitives path"),
+        "--circuit",
+        circuit.to_str().expect("valid circuit path"),
+        "--testbenches",
+        testbenches.to_str().expect("valid testbenches path"),
+        "--specs",
+        specs.to_str().expect("valid specs path"),
+        "--format",
+        "json",
+    ]);
+
+    assert_success(&output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout).expect("expected valid JSON output");
+
+    assert_eq!(json["circuit"], "ota_primitives");
+    assert_eq!(json["testbench_count"], 2);
+    assert_eq!(json["spec_count"], 2);
+    assert_eq!(json["rendered_testbenches"][0], "ota_1stage_gain");
+    assert_eq!(json["rendered_testbenches"][1], "ota_1stage_rout");
 }

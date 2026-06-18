@@ -3,13 +3,17 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use libsstadex::analysis::{CircuitMnaAnalysisError, CircuitMnaOutput, analyze_circuit_mna};
-use libsstadex::catalog::{PrimitiveLoadError, load_primitive_catalog};
-use libsstadex::circuit::{Circuit, CircuitIoError, Connection, Instance, PinRef, load_circuit};
-use libsstadex::mna::mna::{MnaError, mna, mna_solve};
+use libsstadex::analysis::{analyze_circuit_mna, CircuitMnaAnalysisError, CircuitMnaOutput};
+use libsstadex::catalog::{load_primitive_catalog, PrimitiveLoadError};
+use libsstadex::circuit::{load_circuit, Circuit, CircuitIoError, Connection, Instance, PinRef};
+use libsstadex::exploration::{
+    load_exploration_specs, load_testbenches, ExplorationIoError, SpecSource,
+};
+use libsstadex::mna::mna::{mna, mna_solve, MnaError};
 use libsstadex::mna::pretty::{pretty_solutions, pretty_system};
 use libsstadex::netlist::{
-    NetlistRenderError, SmallSignalRenderError, render_circuit_netlist, render_small_signal_netlist,
+    render_circuit_netlist, render_small_signal_netlist, render_testbench_small_signal_netlist,
+    NetlistRenderError, SmallSignalRenderError,
 };
 
 #[derive(Debug)]
@@ -70,6 +74,21 @@ struct MnaArgs {
     solve: bool,
 }
 
+#[derive(Debug)]
+struct ExplorationValidateArgs {
+    primitives_dir: PathBuf,
+    circuit: PathBuf,
+    testbenches: PathBuf,
+    specs: PathBuf,
+    format: ExplorationValidateFormat,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExplorationValidateFormat {
+    Text,
+    Json,
+}
+
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
@@ -95,9 +114,27 @@ fn run() -> Result<(), String> {
         }
         Some("catalog") => run_catalog(args.collect()),
         Some("circuit") => run_circuit(args.collect()),
+        Some("exploration") => run_exploration(args.collect()),
         Some("mna") => run_mna(parse_mna_args(args.collect())?),
         Some(command) => Err(format!(
             "unknown command '{command}'\n\nRun `sstadex --help` for usage."
+        )),
+    }
+}
+
+fn run_exploration(args: Vec<String>) -> Result<(), String> {
+    let mut args = args.into_iter();
+
+    match args.next().as_deref() {
+        Some("validate") => {
+            run_exploration_validate(parse_exploration_validate_args(args.collect())?)
+        }
+        Some("--help") | Some("-h") | None => {
+            print_exploration_help();
+            Ok(())
+        }
+        Some(command) => Err(format!(
+            "unknown exploration command '{command}'\n\nRun `sstadex exploration --help` for usage."
         )),
     }
 }
@@ -193,6 +230,87 @@ fn parse_circuit_mna_format(value: &str) -> Result<CircuitMnaFormat, String> {
         "json" => Ok(CircuitMnaFormat::Json),
         _ => Err(format!(
             "unknown circuit mna format '{value}'. Expected: text, json"
+        )),
+    }
+}
+
+fn parse_exploration_validate_args(args: Vec<String>) -> Result<ExplorationValidateArgs, String> {
+    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+        print_exploration_validate_help();
+        return Err("exploration validate help requested".to_string());
+    }
+
+    let mut primitives_dir = None;
+    let mut circuit = None;
+    let mut testbenches = None;
+    let mut specs = None;
+    let mut format = ExplorationValidateFormat::Text;
+
+    let mut idx = 0;
+    while idx < args.len() {
+        match args[idx].as_str() {
+            "--primitives-dir" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| "--primitives-dir requires a value".to_string())?;
+                primitives_dir = Some(PathBuf::from(value));
+            }
+            "--circuit" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| "--circuit requires a value".to_string())?;
+                circuit = Some(PathBuf::from(value));
+            }
+            "--testbenches" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| "--testbenches requires a value".to_string())?;
+                testbenches = Some(PathBuf::from(value));
+            }
+            "--specs" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| "--specs requires a value".to_string())?;
+                specs = Some(PathBuf::from(value));
+            }
+            "--format" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| "--format requires a value".to_string())?;
+                format = parse_exploration_validate_format(value)?;
+            }
+            flag => {
+                return Err(format!(
+                    "unknown exploration validate option '{flag}'\n\nRun `sstadex exploration validate --help` for usage."
+                ));
+            }
+        }
+
+        idx += 1;
+    }
+
+    Ok(ExplorationValidateArgs {
+        primitives_dir: primitives_dir
+            .ok_or_else(|| "missing required option --primitives-dir".to_string())?,
+        circuit: circuit.ok_or_else(|| "missing required option --circuit".to_string())?,
+        testbenches: testbenches
+            .ok_or_else(|| "missing required option --testbenches".to_string())?,
+        specs: specs.ok_or_else(|| "missing required option --specs".to_string())?,
+        format,
+    })
+}
+
+fn parse_exploration_validate_format(value: &str) -> Result<ExplorationValidateFormat, String> {
+    match value {
+        "text" => Ok(ExplorationValidateFormat::Text),
+        "json" => Ok(ExplorationValidateFormat::Json),
+        _ => Err(format!(
+            "unknown exploration validate format '{value}'. Expected: text, json"
         )),
     }
 }
@@ -450,6 +568,63 @@ fn run_circuit_mna(args: CircuitMnaArgs) -> Result<(), String> {
 
     if let Some(solution) = analysis.solution {
         println!("{}", pretty_solutions(&solution.solutions));
+    }
+
+    Ok(())
+}
+
+fn run_exploration_validate(args: ExplorationValidateArgs) -> Result<(), String> {
+    let catalog =
+        load_primitive_catalog(&args.primitives_dir).map_err(format_primitive_load_error)?;
+    let circuit = load_circuit(&args.circuit).map_err(format_circuit_io_error)?;
+    let testbenches = load_testbenches(&args.testbenches).map_err(format_exploration_io_error)?;
+    let specs =
+        load_exploration_specs(&args.specs, &testbenches).map_err(format_exploration_io_error)?;
+
+    let mut rendered_testbenches = Vec::new();
+    for spec in &specs {
+        let SpecSource::TransferFunction { testbench, .. } = &spec.source else {
+            continue;
+        };
+
+        if rendered_testbenches
+            .iter()
+            .any(|name: &String| name == &testbench.name)
+        {
+            continue;
+        }
+
+        render_testbench_small_signal_netlist(&circuit, &catalog, testbench)
+            .map_err(format_small_signal_error)?;
+        rendered_testbenches.push(testbench.name.clone());
+    }
+
+    if args.format == ExplorationValidateFormat::Json {
+        let json = serde_json::json!({
+            "circuit": circuit.name,
+            "testbench_count": testbenches.len(),
+            "spec_count": specs.len(),
+            "rendered_testbenches": rendered_testbenches,
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json)
+                .map_err(|error| format!("failed to serialize exploration validation: {error}"))?
+        );
+        return Ok(());
+    }
+
+    println!("SSTADEx Exploration Validation");
+    println!();
+    println!("Circuit: {}", circuit.name);
+    println!("Testbenches: {}", testbenches.len());
+    println!("Specs: {}", specs.len());
+    println!(
+        "Rendered testbench netlists: {}",
+        rendered_testbenches.len()
+    );
+    for name in rendered_testbenches {
+        println!("  {name}");
     }
 
     Ok(())
@@ -754,6 +929,21 @@ fn format_circuit_io_error(error: CircuitIoError) -> String {
     }
 }
 
+fn format_exploration_io_error(error: ExplorationIoError) -> String {
+    match error {
+        ExplorationIoError::Io(error) => {
+            format!("I/O failure while loading exploration JSON: {error}")
+        }
+        ExplorationIoError::Json(error) => format!("invalid exploration JSON: {error}"),
+        ExplorationIoError::DuplicateTestbench { name } => {
+            format!("duplicate testbench '{name}'")
+        }
+        ExplorationIoError::MissingTestbench { name } => {
+            format!("spec references missing testbench '{name}'")
+        }
+    }
+}
+
 fn format_netlist_error(error: NetlistRenderError) -> String {
     match error {
         NetlistRenderError::InvalidCircuit(errors) => {
@@ -831,11 +1021,13 @@ Usage:\n\
   sstadex circuit render --primitives-dir <DIR> --name <NAME> --instance <ID:PRIMITIVE> --connect <INSTANCE.PIN=NET> [--view structural|small-signal] [--output <FILE>]\n\
   sstadex circuit render-file --primitives-dir <DIR> --circuit <FILE> [--view structural|small-signal] [--output <FILE>]\n\
   sstadex circuit mna --primitives-dir <DIR> --circuit <FILE> --output <DIR> [--solve] [--format text|json]\n\
+  sstadex exploration validate --primitives-dir <DIR> --circuit <FILE> --testbenches <FILE> --specs <FILE> [--format text|json]\n\
   sstadex mna --spice-dir <DIR> --design <NAME> --output <DIR> [--solve]\n\
 \n\
 Commands:\n\
   catalog    Inspect primitive catalogs\n\
   circuit    Build and render circuits from primitives\n\
+  exploration Validate exploration testbenches and specs\n\
   mna        Generate and print a symbolic MNA system from a SPICE netlist\n"
     );
 }
@@ -926,6 +1118,31 @@ Options:\n\
   --circuit <FILE>          Circuit JSON file\n\
   --output <DIR>            Directory where generated .spice and .cir files are written\n\
   --solve                   Solve the symbolic MNA system using Python/SymPy\n\
+  --format <FORMAT>         Output format: text or json; default text\n"
+    );
+}
+
+fn print_exploration_help() {
+    println!(
+        "Usage:\n\
+  sstadex exploration --help\n\
+  sstadex exploration validate --primitives-dir <DIR> --circuit <FILE> --testbenches <FILE> --specs <FILE> [--format text|json]\n\
+\n\
+Commands:\n\
+  validate    Validate exploration testbenches/specs and render referenced testbench netlists\n"
+    );
+}
+
+fn print_exploration_validate_help() {
+    println!(
+        "Usage:\n\
+  sstadex exploration validate --primitives-dir <DIR> --circuit <FILE> --testbenches <FILE> --specs <FILE> [--format text|json]\n\
+\n\
+Options:\n\
+  --primitives-dir <DIR>    Directory containing primitive subfolders\n\
+  --circuit <FILE>          Circuit JSON file\n\
+  --testbenches <FILE>      Exploration testbench JSON file\n\
+  --specs <FILE>            Exploration spec JSON file\n\
   --format <FORMAT>         Output format: text or json; default text\n"
     );
 }
