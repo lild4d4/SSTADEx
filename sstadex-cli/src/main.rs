@@ -7,7 +7,9 @@ use libsstadex::analysis::{analyze_circuit_mna, CircuitMnaAnalysisError, Circuit
 use libsstadex::catalog::{load_primitive_catalog, PrimitiveLoadError};
 use libsstadex::circuit::{load_circuit, Circuit, CircuitIoError, Connection, Instance, PinRef};
 use libsstadex::exploration::{
-    load_exploration_specs, load_testbenches, ExplorationIoError, SpecSource,
+    load_exploration_specs, load_testbenches, prepare_candidate_expression_spec,
+    prepare_transfer_function_spec, ExplorationIoError, PreparedSpec, PreparedSpecSource,
+    SpecPrepareError, SpecSource,
 };
 use libsstadex::mna::mna::{mna, mna_solve, MnaError};
 use libsstadex::mna::pretty::{pretty_solutions, pretty_system};
@@ -83,8 +85,24 @@ struct ExplorationValidateArgs {
     format: ExplorationValidateFormat,
 }
 
+#[derive(Debug)]
+struct ExplorationPrepareArgs {
+    primitives_dir: PathBuf,
+    circuit: PathBuf,
+    testbenches: PathBuf,
+    specs: PathBuf,
+    output: PathBuf,
+    format: ExplorationPrepareFormat,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ExplorationValidateFormat {
+    Text,
+    Json,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExplorationPrepareFormat {
     Text,
     Json,
 }
@@ -126,6 +144,7 @@ fn run_exploration(args: Vec<String>) -> Result<(), String> {
     let mut args = args.into_iter();
 
     match args.next().as_deref() {
+        Some("prepare") => run_exploration_prepare(parse_exploration_prepare_args(args.collect())?),
         Some("validate") => {
             run_exploration_validate(parse_exploration_validate_args(args.collect())?)
         }
@@ -311,6 +330,96 @@ fn parse_exploration_validate_format(value: &str) -> Result<ExplorationValidateF
         "json" => Ok(ExplorationValidateFormat::Json),
         _ => Err(format!(
             "unknown exploration validate format '{value}'. Expected: text, json"
+        )),
+    }
+}
+
+fn parse_exploration_prepare_args(args: Vec<String>) -> Result<ExplorationPrepareArgs, String> {
+    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+        print_exploration_prepare_help();
+        return Err("exploration prepare help requested".to_string());
+    }
+
+    let mut primitives_dir = None;
+    let mut circuit = None;
+    let mut testbenches = None;
+    let mut specs = None;
+    let mut output = None;
+    let mut format = ExplorationPrepareFormat::Text;
+
+    let mut idx = 0;
+    while idx < args.len() {
+        match args[idx].as_str() {
+            "--primitives-dir" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| "--primitives-dir requires a value".to_string())?;
+                primitives_dir = Some(PathBuf::from(value));
+            }
+            "--circuit" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| "--circuit requires a value".to_string())?;
+                circuit = Some(PathBuf::from(value));
+            }
+            "--testbenches" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| "--testbenches requires a value".to_string())?;
+                testbenches = Some(PathBuf::from(value));
+            }
+            "--specs" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| "--specs requires a value".to_string())?;
+                specs = Some(PathBuf::from(value));
+            }
+            "--output" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| "--output requires a value".to_string())?;
+                output = Some(PathBuf::from(value));
+            }
+            "--format" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| "--format requires a value".to_string())?;
+                format = parse_exploration_prepare_format(value)?;
+            }
+            flag => {
+                return Err(format!(
+                    "unknown exploration prepare option '{flag}'\n\nRun `sstadex exploration prepare --help` for usage."
+                ));
+            }
+        }
+
+        idx += 1;
+    }
+
+    Ok(ExplorationPrepareArgs {
+        primitives_dir: primitives_dir
+            .ok_or_else(|| "missing required option --primitives-dir".to_string())?,
+        circuit: circuit.ok_or_else(|| "missing required option --circuit".to_string())?,
+        testbenches: testbenches
+            .ok_or_else(|| "missing required option --testbenches".to_string())?,
+        specs: specs.ok_or_else(|| "missing required option --specs".to_string())?,
+        output: output.ok_or_else(|| "missing required option --output".to_string())?,
+        format,
+    })
+}
+
+fn parse_exploration_prepare_format(value: &str) -> Result<ExplorationPrepareFormat, String> {
+    match value {
+        "text" => Ok(ExplorationPrepareFormat::Text),
+        "json" => Ok(ExplorationPrepareFormat::Json),
+        _ => Err(format!(
+            "unknown exploration prepare format '{value}'. Expected: text, json"
         )),
     }
 }
@@ -630,6 +739,63 @@ fn run_exploration_validate(args: ExplorationValidateArgs) -> Result<(), String>
     Ok(())
 }
 
+fn run_exploration_prepare(args: ExplorationPrepareArgs) -> Result<(), String> {
+    let catalog =
+        load_primitive_catalog(&args.primitives_dir).map_err(format_primitive_load_error)?;
+    let circuit = load_circuit(&args.circuit).map_err(format_circuit_io_error)?;
+    let testbenches = load_testbenches(&args.testbenches).map_err(format_exploration_io_error)?;
+    let specs =
+        load_exploration_specs(&args.specs, &testbenches).map_err(format_exploration_io_error)?;
+
+    let mut prepared_specs = Vec::with_capacity(specs.len());
+    for spec in &specs {
+        let prepared = match &spec.source {
+            SpecSource::CandidateExpression { .. } => prepare_candidate_expression_spec(spec),
+            SpecSource::TransferFunction { .. } => {
+                prepare_transfer_function_spec(spec, &circuit, &catalog, &args.output)
+            }
+            SpecSource::Composed => Err(SpecPrepareError::UnsupportedSource { source: "composed" }),
+        }
+        .map_err(format_spec_prepare_error)?;
+        prepared_specs.push(prepared);
+    }
+
+    if args.format == ExplorationPrepareFormat::Json {
+        let json = serde_json::json!({
+            "circuit": circuit.name,
+            "output_dir": args.output.display().to_string(),
+            "prepared_specs": prepared_specs
+                .iter()
+                .map(prepared_spec_json)
+                .collect::<Vec<_>>(),
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json).map_err(|error| format!(
+                "failed to serialize prepared exploration specs: {error}"
+            ))?
+        );
+        return Ok(());
+    }
+
+    println!("SSTADEx Exploration Prepare");
+    println!();
+    println!("Circuit: {}", circuit.name);
+    println!("Output directory: {}", args.output.display());
+    println!("Prepared specs: {}", prepared_specs.len());
+    for prepared in &prepared_specs {
+        println!();
+        println!("Spec: {}", prepared.name);
+        println!("Source: {}", prepared_source_kind(prepared));
+        if let Some(expression) = prepared_expression(prepared) {
+            println!("Expression:");
+            println!("{expression}");
+        }
+    }
+
+    Ok(())
+}
+
 fn emit_output(content: &str, output: Option<&PathBuf>) -> Result<(), String> {
     let Some(output) = output else {
         print!("{content}");
@@ -909,6 +1075,40 @@ fn print_node_variable_map(result: &libsstadex::mna::mna::MnaResult) {
     println!();
 }
 
+fn prepared_spec_json(prepared: &PreparedSpec) -> serde_json::Value {
+    serde_json::json!({
+        "name": prepared.name,
+        "source": prepared_source_kind(prepared),
+        "expression": prepared_expression(prepared),
+        "parameter_map": prepared
+            .parameter_map
+            .iter()
+            .map(|parameter| {
+                serde_json::json!({
+                    "name": parameter.name,
+                    "value": parameter.value,
+                })
+            })
+            .collect::<Vec<_>>(),
+    })
+}
+
+fn prepared_source_kind(prepared: &PreparedSpec) -> &'static str {
+    match &prepared.source {
+        PreparedSpecSource::CandidateExpression { .. } => "candidate_expression",
+        PreparedSpecSource::TransferFunction { .. } => "transfer_function",
+        PreparedSpecSource::Composed => "composed",
+    }
+}
+
+fn prepared_expression(prepared: &PreparedSpec) -> Option<&str> {
+    match &prepared.source {
+        PreparedSpecSource::CandidateExpression { expression }
+        | PreparedSpecSource::TransferFunction { expression } => Some(expression),
+        PreparedSpecSource::Composed => None,
+    }
+}
+
 fn format_primitive_load_error(error: PrimitiveLoadError) -> String {
     match error {
         PrimitiveLoadError::Io(error) => format!("I/O failure while loading catalog: {error}"),
@@ -995,6 +1195,28 @@ fn format_circuit_mna_error(error: CircuitMnaAnalysisError) -> String {
     }
 }
 
+fn format_spec_prepare_error(error: SpecPrepareError) -> String {
+    match error {
+        SpecPrepareError::UnsupportedSource { source } => {
+            format!("unsupported exploration spec source: {source}")
+        }
+        SpecPrepareError::TransferFunction(error) => {
+            format!("failed to extract transfer function: {error:?}")
+        }
+        SpecPrepareError::MnaAnalysis { reason } => {
+            if reason.contains("No module named 'sympy'") {
+                "exploration prepare requires Python package `sympy`, but it is not installed"
+                    .to_string()
+            } else {
+                format!("failed to prepare MNA-backed exploration spec: {reason}")
+            }
+        }
+        SpecPrepareError::MissingMnaSolution => {
+            "failed to prepare MNA-backed exploration spec: missing MNA solution".to_string()
+        }
+    }
+}
+
 fn format_mna_error(error: MnaError) -> String {
     match error {
         MnaError::Io(error) => format!("I/O failure: {error}"),
@@ -1021,6 +1243,7 @@ Usage:\n\
   sstadex circuit render --primitives-dir <DIR> --name <NAME> --instance <ID:PRIMITIVE> --connect <INSTANCE.PIN=NET> [--view structural|small-signal] [--output <FILE>]\n\
   sstadex circuit render-file --primitives-dir <DIR> --circuit <FILE> [--view structural|small-signal] [--output <FILE>]\n\
   sstadex circuit mna --primitives-dir <DIR> --circuit <FILE> --output <DIR> [--solve] [--format text|json]\n\
+  sstadex exploration prepare --primitives-dir <DIR> --circuit <FILE> --testbenches <FILE> --specs <FILE> --output <DIR> [--format text|json]\n\
   sstadex exploration validate --primitives-dir <DIR> --circuit <FILE> --testbenches <FILE> --specs <FILE> [--format text|json]\n\
   sstadex mna --spice-dir <DIR> --design <NAME> --output <DIR> [--solve]\n\
 \n\
@@ -1126,10 +1349,27 @@ fn print_exploration_help() {
     println!(
         "Usage:\n\
   sstadex exploration --help\n\
+  sstadex exploration prepare --primitives-dir <DIR> --circuit <FILE> --testbenches <FILE> --specs <FILE> --output <DIR> [--format text|json]\n\
   sstadex exploration validate --primitives-dir <DIR> --circuit <FILE> --testbenches <FILE> --specs <FILE> [--format text|json]\n\
 \n\
 Commands:\n\
+  prepare     Prepare exploration specs and extract transfer-function expressions\n\
   validate    Validate exploration testbenches/specs and render referenced testbench netlists\n"
+    );
+}
+
+fn print_exploration_prepare_help() {
+    println!(
+        "Usage:\n\
+  sstadex exploration prepare --primitives-dir <DIR> --circuit <FILE> --testbenches <FILE> --specs <FILE> --output <DIR> [--format text|json]\n\
+\n\
+Options:\n\
+  --primitives-dir <DIR>    Directory containing primitive subfolders\n\
+  --circuit <FILE>          Circuit JSON file\n\
+  --testbenches <FILE>      Exploration testbench JSON file\n\
+  --specs <FILE>            Exploration spec JSON file\n\
+  --output <DIR>            Directory where generated .spice and .cir files are written\n\
+  --format <FORMAT>         Output format: text or json; default text\n"
     );
 }
 

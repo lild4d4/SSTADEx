@@ -75,6 +75,18 @@ fn circuit_mna_help_exits_successfully() {
 }
 
 #[test]
+fn exploration_prepare_help_exits_successfully() {
+    let output = sstadex(&["exploration", "prepare", "--help"]);
+
+    assert_success(&output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("sstadex exploration prepare"));
+    assert!(stdout.contains("--testbenches <FILE>"));
+    assert!(stdout.contains("--output <DIR>"));
+}
+
+#[test]
 fn render_file_writes_netlist_to_stdout_by_default() {
     let primitives_dir = primitives_dir();
     let circuit = ota_circuit_file();
