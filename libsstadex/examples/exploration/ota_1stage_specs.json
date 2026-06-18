@@ -1,0 +1,86 @@
+{
+  "specs": [
+    {
+      "name": "gain_1stage",
+      "condition": {
+        "min": 0.00001
+      },
+      "source": {
+        "type": "transfer_function",
+        "testbench": "ota_1stage_gain",
+        "input": "VINP",
+        "output": "VOUT"
+      },
+      "output": {
+        "type": "eval"
+      },
+      "parameter_map": [
+        {
+          "name": "gm__xdp__m2",
+          "value": "gm__xdp__m1"
+        },
+        {
+          "name": "ro__xdp__m2",
+          "value": "ro__xdp__m1"
+        },
+        {
+          "name": "gm__xcm__m2",
+          "value": "gm__xcm__m1"
+        },
+        {
+          "name": "ro__xcm__m2",
+          "value": "ro__xcm__m1"
+        },
+        {
+          "name": "s",
+          "value": "0"
+        },
+        {
+          "name": "vin",
+          "value": "1"
+        }
+      ]
+    },
+    {
+      "name": "rout_1stage",
+      "condition": {
+        "min": 0.000000000001
+      },
+      "source": {
+        "type": "transfer_function",
+        "testbench": "ota_1stage_rout",
+        "input": "VR",
+        "output": "VOUT"
+      },
+      "output": {
+        "type": "eval"
+      },
+      "parameter_map": [
+        {
+          "name": "gm__xdp__m2",
+          "value": "gm__xdp__m1"
+        },
+        {
+          "name": "ro__xdp__m2",
+          "value": "ro__xdp__m1"
+        },
+        {
+          "name": "gm__xcm__m2",
+          "value": "gm__xcm__m1"
+        },
+        {
+          "name": "ro__xcm__m2",
+          "value": "ro__xcm__m1"
+        },
+        {
+          "name": "s",
+          "value": "0"
+        },
+        {
+          "name": "vr",
+          "value": "1"
+        }
+      ]
+    }
+  ]
+}

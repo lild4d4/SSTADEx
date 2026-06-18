@@ -1,0 +1,100 @@
+{
+  "testbenches": [
+    {
+      "name": "ota_1stage_gain",
+      "view": "small_signal",
+      "elements": [
+        {
+          "type": "voltage_source",
+          "name": "Vdd",
+          "nplus": "VDD",
+          "nminus": "VSS",
+          "value": "0"
+        },
+        {
+          "type": "voltage_source",
+          "name": "Vss",
+          "nplus": "VSS",
+          "nminus": "VSS",
+          "value": "0"
+        },
+        {
+          "type": "voltage_source",
+          "name": "V_n",
+          "nplus": "VINN",
+          "nminus": "VSS",
+          "value": "0"
+        },
+        {
+          "type": "voltage_source",
+          "name": "V_p",
+          "nplus": "VINP",
+          "nminus": "VSS",
+          "value": "vin"
+        },
+        {
+          "type": "current_source",
+          "name": "Ibias",
+          "nplus": "IBIAS",
+          "nminus": "VSS",
+          "value": "0"
+        }
+      ]
+    },
+    {
+      "name": "ota_1stage_rout",
+      "view": "small_signal",
+      "elements": [
+        {
+          "type": "voltage_source",
+          "name": "Vdd",
+          "nplus": "VDD",
+          "nminus": "VSS",
+          "value": "0"
+        },
+        {
+          "type": "voltage_source",
+          "name": "Vss",
+          "nplus": "VSS",
+          "nminus": "VSS",
+          "value": "0"
+        },
+        {
+          "type": "voltage_source",
+          "name": "V_n",
+          "nplus": "VINN",
+          "nminus": "VSS",
+          "value": "0"
+        },
+        {
+          "type": "voltage_source",
+          "name": "V_p",
+          "nplus": "VINP",
+          "nminus": "VSS",
+          "value": "0"
+        },
+        {
+          "type": "voltage_source",
+          "name": "Vr",
+          "nplus": "VR",
+          "nminus": "VSS",
+          "value": "vr"
+        },
+        {
+          "type": "current_source",
+          "name": "Ibias",
+          "nplus": "IBIAS",
+          "nminus": "VSS",
+          "value": "0"
+        },
+        {
+          "type": "resistor",
+          "name": "Rr",
+          "n1": "VR",
+          "n2": "VOUT",
+          "value": "1000"
+        }
+      ]
+    }
+  ]
+}
