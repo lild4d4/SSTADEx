@@ -372,10 +372,11 @@ impl SstadexApp {
     fn add_canvas_instance(&mut self, primitive_name: &str) {
         let offset = 28.0 * self.canvas_instances.len() as f32;
         let id = self.next_instance_id;
+        let instance_name = next_available_instance_name(&self.canvas_instances);
 
         self.canvas_instances.push(CanvasInstance {
             id,
-            instance_name: circuit_instance_id(id),
+            instance_name,
             primitive_name: primitive_name.to_string(),
             position: egui::pos2(40.0 + offset, 40.0 + offset),
         });
@@ -1054,6 +1055,23 @@ fn format_endpoint(endpoint: &CanvasEndpoint) -> String {
 
 fn circuit_instance_id(instance_id: usize) -> String {
     format!("x{instance_id}")
+}
+
+fn next_available_instance_name(instances: &[CanvasInstance]) -> String {
+    let mut index = 1;
+
+    loop {
+        let candidate = circuit_instance_id(index);
+        let is_available = instances
+            .iter()
+            .all(|instance| exported_instance_name(instance) != candidate);
+
+        if is_available {
+            return candidate;
+        }
+
+        index += 1;
+    }
 }
 
 fn exported_instance_name(instance: &CanvasInstance) -> String {
