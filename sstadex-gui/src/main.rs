@@ -2,9 +2,10 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use eframe::egui;
-use libsstadex::analysis::{CircuitMnaOutput, analyze_circuit_mna};
+use libsstadex::analysis::{analyze_circuit_mna, CircuitMnaOutput};
 use libsstadex::catalog::{load_primitive_catalog, PrimitiveCatalog};
-use libsstadex::circuit::{Circuit, Connection, Instance, PinRef, save_circuit};
+use libsstadex::circuit::{save_circuit, Circuit, Connection, Instance, PinRef};
+use libsstadex::exploration::{save_testbenches, TestbenchElement, TestbenchSpec};
 use libsstadex::primitive::manifest::{PinRole, PrimitiveManifest, SymbolPinSide};
 
 fn main() -> eframe::Result {
@@ -28,6 +29,9 @@ struct SstadexApp {
     selected_endpoint: Option<CanvasEndpoint>,
     pending_connection: Option<CanvasEndpoint>,
     connections: Vec<CanvasConnection>,
+    bottom_view: BottomView,
+    testbenches: Vec<GuiTestbench>,
+    selected_testbench: Option<usize>,
     output_log: String,
     next_instance_id: usize,
     next_label_pin_id: usize,
@@ -41,8 +45,13 @@ struct CanvasInstance {
 
 #[derive(Clone, Hash, PartialEq, Eq)]
 enum CanvasEndpoint {
-    PrimitivePin { instance_id: usize, pin_name: String },
-    LabelPin { label_id: usize },
+    PrimitivePin {
+        instance_id: usize,
+        pin_name: String,
+    },
+    LabelPin {
+        label_id: usize,
+    },
 }
 
 struct CanvasLabelPin {
@@ -54,6 +63,34 @@ struct CanvasLabelPin {
 struct CanvasConnection {
     from: CanvasEndpoint,
     to: CanvasEndpoint,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BottomView {
+    Logs,
+    Testbenches,
+}
+
+struct GuiTestbench {
+    name: String,
+    elements: Vec<GuiTestbenchElement>,
+    extra_body: String,
+}
+
+struct GuiTestbenchElement {
+    kind: GuiTestbenchElementKind,
+    name: String,
+    nplus: String,
+    nminus: String,
+    value: String,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GuiTestbenchElementKind {
+    VoltageSource,
+    CurrentSource,
+    Resistor,
+    Capacitor,
 }
 
 struct CanvasView {
@@ -85,6 +122,9 @@ impl Default for SstadexApp {
             selected_endpoint: None,
             pending_connection: None,
             connections: Vec::new(),
+            bottom_view: BottomView::Logs,
+            testbenches: Vec::new(),
+            selected_testbench: None,
             output_log: "Logs, netlists, and MNA results will appear here".to_string(),
             next_instance_id: 1,
             next_label_pin_id: 1,
@@ -168,39 +208,22 @@ impl eframe::App for SstadexApp {
 
         egui::TopBottomPanel::bottom("bottom_panel")
             .resizable(true)
-            .default_height(180.0)
+            .default_height(240.0)
             .show(ctx, |ui| {
-                ui.heading("Output");
-                ui.separator();
-                ui.label(format!(
-                    "Selected primitive: {}",
-                    self.selected_primitive.as_deref().unwrap_or("none")
-                ));
-                ui.label(format!(
-                    "Selected instance: {}",
-                    self.selected_instance_id
-                        .map(|id| id.to_string())
-                        .unwrap_or_else(|| "none".to_string())
-                ));
-                ui.label(format!(
-                    "Selected endpoint: {}",
-                    self.selected_endpoint
-                        .as_ref()
-                        .map(format_endpoint)
-                        .unwrap_or_else(|| "none".to_string())
-                ));
-                ui.label(format!(
-                    "Pending connection: {}",
-                    self.pending_connection
-                        .as_ref()
-                        .map(format_endpoint)
-                        .unwrap_or_else(|| "none".to_string())
-                ));
-                ui.label(format!("Connections: {}", self.connections.len()));
-                ui.separator();
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    ui.label(&self.output_log);
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut self.bottom_view, BottomView::Logs, "Logs");
+                    ui.selectable_value(
+                        &mut self.bottom_view,
+                        BottomView::Testbenches,
+                        "Testbenches",
+                    );
                 });
+                ui.separator();
+
+                match self.bottom_view {
+                    BottomView::Logs => self.show_logs_ui(ui),
+                    BottomView::Testbenches => self.show_testbenches_ui(ui),
+                }
             });
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -373,6 +396,18 @@ impl SstadexApp {
         self.next_label_pin_id += 1;
     }
 
+    fn add_testbench(&mut self) {
+        let index = self.testbenches.len() + 1;
+
+        self.testbenches.push(GuiTestbench {
+            name: format!("tb_{index}"),
+            elements: Vec::new(),
+            extra_body: String::new(),
+        });
+        self.selected_testbench = Some(self.testbenches.len() - 1);
+        self.bottom_view = BottomView::Testbenches;
+    }
+
     fn delete_selected_instance(&mut self) {
         let Some(instance_id) = self.selected_instance_id else {
             return;
@@ -488,6 +523,114 @@ impl SstadexApp {
             })
             .find(|name| !name.is_empty())
     }
+
+    fn show_logs_ui(&mut self, ui: &mut egui::Ui) {
+        ui.label(format!(
+            "Selected primitive: {}",
+            self.selected_primitive.as_deref().unwrap_or("none")
+        ));
+        ui.label(format!(
+            "Selected instance: {}",
+            self.selected_instance_id
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| "none".to_string())
+        ));
+        ui.label(format!(
+            "Selected endpoint: {}",
+            self.selected_endpoint
+                .as_ref()
+                .map(format_endpoint)
+                .unwrap_or_else(|| "none".to_string())
+        ));
+        ui.label(format!(
+            "Pending connection: {}",
+            self.pending_connection
+                .as_ref()
+                .map(format_endpoint)
+                .unwrap_or_else(|| "none".to_string())
+        ));
+        ui.label(format!("Connections: {}", self.connections.len()));
+        ui.separator();
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            ui.label(&self.output_log);
+        });
+    }
+
+    fn show_testbenches_ui(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            if ui.button("Add testbench").clicked() {
+                self.add_testbench();
+            }
+            if ui.button("Save testbenches").clicked() {
+                self.output_log = self.save_gui_testbenches();
+                self.bottom_view = BottomView::Logs;
+            }
+        });
+        ui.separator();
+
+        if self.testbenches.is_empty() {
+            ui.label("No testbenches yet");
+            return;
+        }
+
+        ui.horizontal(|ui| {
+            ui.vertical(|ui| {
+                ui.heading("Testbenches");
+                for (index, testbench) in self.testbenches.iter().enumerate() {
+                    let label = if testbench.name.trim().is_empty() {
+                        "(unnamed)"
+                    } else {
+                        testbench.name.as_str()
+                    };
+                    ui.selectable_value(&mut self.selected_testbench, Some(index), label);
+                }
+            });
+
+            ui.separator();
+
+            let Some(selected_index) = self.selected_testbench else {
+                ui.label("Select a testbench");
+                return;
+            };
+            let Some(testbench) = self.testbenches.get_mut(selected_index) else {
+                self.selected_testbench = None;
+                return;
+            };
+
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                show_testbench_editor(ui, selected_index, testbench);
+            });
+        });
+    }
+
+    fn save_gui_testbenches(&self) -> String {
+        let output_dir = std::env::temp_dir().join("sstadex-gui-mna");
+        let output_path = output_dir.join("gui_testbenches.json");
+
+        if let Err(error) = std::fs::create_dir_all(&output_dir) {
+            return format!(
+                "Cannot save testbenches: failed to create output directory '{}'\n\n{error}",
+                output_dir.display()
+            );
+        }
+
+        let testbenches = match gui_testbenches_to_specs(&self.testbenches) {
+            Ok(testbenches) => testbenches,
+            Err(error) => return format!("Cannot save testbenches: {error}"),
+        };
+
+        match save_testbenches(&output_path, &testbenches) {
+            Ok(()) => format!(
+                "Saved {} testbench(es)\n\nPath: {}",
+                testbenches.len(),
+                output_path.display()
+            ),
+            Err(error) => format!(
+                "Cannot save testbenches: failed to write '{}'\n\n{error:?}",
+                output_path.display()
+            ),
+        }
+    }
 }
 
 impl CanvasView {
@@ -512,6 +655,207 @@ impl CanvasEndpoint {
             CanvasEndpoint::LabelPin { .. } => false,
         }
     }
+}
+
+impl GuiTestbenchElementKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::VoltageSource => "Voltage source",
+            Self::CurrentSource => "Current source",
+            Self::Resistor => "Resistor",
+            Self::Capacitor => "Capacitor",
+        }
+    }
+
+    fn default_name_prefix(self) -> &'static str {
+        match self {
+            Self::VoltageSource => "V",
+            Self::CurrentSource => "I",
+            Self::Resistor => "R",
+            Self::Capacitor => "C",
+        }
+    }
+}
+
+impl GuiTestbenchElement {
+    fn new(kind: GuiTestbenchElementKind, index: usize) -> Self {
+        Self {
+            kind,
+            name: format!("{}{}", kind.default_name_prefix(), index),
+            nplus: String::new(),
+            nminus: "0".to_string(),
+            value: String::new(),
+        }
+    }
+}
+
+fn show_testbench_editor(ui: &mut egui::Ui, testbench_index: usize, testbench: &mut GuiTestbench) {
+    ui.heading("Testbench");
+    ui.horizontal(|ui| {
+        ui.label("Name:");
+        ui.text_edit_singleline(&mut testbench.name);
+    });
+
+    ui.separator();
+    ui.horizontal(|ui| {
+        ui.heading("Elements");
+        if ui.button("Add element").clicked() {
+            let index = testbench.elements.len() + 1;
+            testbench.elements.push(GuiTestbenchElement::new(
+                GuiTestbenchElementKind::VoltageSource,
+                index,
+            ));
+        }
+    });
+
+    let mut remove_element = None;
+    for (element_index, element) in testbench.elements.iter_mut().enumerate() {
+        ui.group(|ui| {
+            ui.horizontal(|ui| {
+                egui::ComboBox::from_id_salt(format!(
+                    "testbench_{testbench_index}_element_{element_index}_kind"
+                ))
+                .selected_text(element.kind.label())
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(
+                        &mut element.kind,
+                        GuiTestbenchElementKind::VoltageSource,
+                        GuiTestbenchElementKind::VoltageSource.label(),
+                    );
+                    ui.selectable_value(
+                        &mut element.kind,
+                        GuiTestbenchElementKind::CurrentSource,
+                        GuiTestbenchElementKind::CurrentSource.label(),
+                    );
+                    ui.selectable_value(
+                        &mut element.kind,
+                        GuiTestbenchElementKind::Resistor,
+                        GuiTestbenchElementKind::Resistor.label(),
+                    );
+                    ui.selectable_value(
+                        &mut element.kind,
+                        GuiTestbenchElementKind::Capacitor,
+                        GuiTestbenchElementKind::Capacitor.label(),
+                    );
+                });
+
+                if ui.button("Delete").clicked() {
+                    remove_element = Some(element_index);
+                }
+            });
+
+            ui.horizontal(|ui| {
+                ui.label("Name:");
+                ui.text_edit_singleline(&mut element.name);
+                ui.label(node_a_label(element.kind));
+                ui.text_edit_singleline(&mut element.nplus);
+                ui.label(node_b_label(element.kind));
+                ui.text_edit_singleline(&mut element.nminus);
+                ui.label("Value:");
+                ui.text_edit_singleline(&mut element.value);
+            });
+        });
+    }
+
+    if let Some(element_index) = remove_element {
+        testbench.elements.remove(element_index);
+    }
+
+    ui.separator();
+    ui.label("Extra body:");
+    ui.add(
+        egui::TextEdit::multiline(&mut testbench.extra_body)
+            .desired_rows(4)
+            .code_editor(),
+    );
+}
+
+fn node_a_label(kind: GuiTestbenchElementKind) -> &'static str {
+    match kind {
+        GuiTestbenchElementKind::VoltageSource | GuiTestbenchElementKind::CurrentSource => "N+:",
+        GuiTestbenchElementKind::Resistor | GuiTestbenchElementKind::Capacitor => "N1:",
+    }
+}
+
+fn node_b_label(kind: GuiTestbenchElementKind) -> &'static str {
+    match kind {
+        GuiTestbenchElementKind::VoltageSource | GuiTestbenchElementKind::CurrentSource => "N-:",
+        GuiTestbenchElementKind::Resistor | GuiTestbenchElementKind::Capacitor => "N2:",
+    }
+}
+
+fn gui_testbenches_to_specs(testbenches: &[GuiTestbench]) -> Result<Vec<TestbenchSpec>, String> {
+    let mut specs = Vec::with_capacity(testbenches.len());
+
+    for (index, testbench) in testbenches.iter().enumerate() {
+        let name = required_text(&testbench.name, &format!("testbench {}", index + 1), "name")?;
+        let mut spec = TestbenchSpec::new(name);
+
+        for (element_index, element) in testbench.elements.iter().enumerate() {
+            spec = spec.with_element(gui_testbench_element_to_spec(
+                element,
+                index + 1,
+                element_index + 1,
+            )?);
+        }
+
+        if !testbench.extra_body.trim().is_empty() {
+            spec = spec.with_extra_body(testbench.extra_body.trim().to_string());
+        }
+
+        specs.push(spec);
+    }
+
+    Ok(specs)
+}
+
+fn gui_testbench_element_to_spec(
+    element: &GuiTestbenchElement,
+    testbench_index: usize,
+    element_index: usize,
+) -> Result<TestbenchElement, String> {
+    let context = format!("testbench {testbench_index}, element {element_index}");
+    let name = required_text(&element.name, &context, "name")?;
+    let nplus = required_text(&element.nplus, &context, node_a_label(element.kind))?;
+    let nminus = required_text(&element.nminus, &context, node_b_label(element.kind))?;
+    let value = required_text(&element.value, &context, "value")?;
+
+    Ok(match element.kind {
+        GuiTestbenchElementKind::VoltageSource => TestbenchElement::VoltageSource {
+            name,
+            nplus,
+            nminus,
+            value,
+        },
+        GuiTestbenchElementKind::CurrentSource => TestbenchElement::CurrentSource {
+            name,
+            nplus,
+            nminus,
+            value,
+        },
+        GuiTestbenchElementKind::Resistor => TestbenchElement::Resistor {
+            name,
+            n1: nplus,
+            n2: nminus,
+            value,
+        },
+        GuiTestbenchElementKind::Capacitor => TestbenchElement::Capacitor {
+            name,
+            n1: nplus,
+            n2: nminus,
+            value,
+        },
+    })
+}
+
+fn required_text(value: &str, owner: &str, field: &str) -> Result<String, String> {
+    let value = value.trim();
+
+    if value.is_empty() {
+        return Err(format!("{owner} has empty {field}"));
+    }
+
+    Ok(value.to_string())
 }
 
 fn show_primitive_details(ui: &mut egui::Ui, primitive: &PrimitiveManifest) {
@@ -733,9 +1077,7 @@ fn connected_endpoint_groups(connections: &[CanvasConnection]) -> Vec<Vec<Canvas
             }
         }
 
-        group.sort_by(|left, right| {
-            endpoint_sort_key(left).cmp(&endpoint_sort_key(right))
-        });
+        group.sort_by(|left, right| endpoint_sort_key(left).cmp(&endpoint_sort_key(right)));
         groups.push(group);
     }
 
@@ -887,7 +1229,11 @@ fn draw_instance_pins(
             egui::Color32::from_rgb(120, 190, 220)
         };
 
-        painter.circle_filled(pin_view.position, if selected { 5.5 } else { 4.0 }, pin_color);
+        painter.circle_filled(
+            pin_view.position,
+            if selected { 5.5 } else { 4.0 },
+            pin_color,
+        );
         painter.text(
             pin_view.label_position,
             pin_view.align,
