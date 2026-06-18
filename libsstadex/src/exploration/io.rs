@@ -4,7 +4,9 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use super::candidate::{CandidateAxis, CandidatePoint, CandidateSet};
 use super::conditions::RangeCondition;
+use super::conditions::{ExplorationFilter, FilterPhase};
 use super::spec::{
     CircuitView, ExplorationSpec, FrequencySweep, SpecOutput, SpecParameter, SpecSource,
     SpecVariable, TestbenchElement, TestbenchSpec,
@@ -16,6 +18,13 @@ pub enum ExplorationIoError {
     Json(serde_json::Error),
     DuplicateTestbench { name: String },
     MissingTestbench { name: String },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExplorationCandidateInput {
+    pub axes: Vec<CandidateAxis>,
+    pub sets: Vec<CandidateSet>,
+    pub filters: Vec<ExplorationFilter>,
 }
 
 impl From<std::io::Error> for ExplorationIoError {
@@ -68,6 +77,28 @@ pub fn save_exploration_specs(
     }
 
     let document = ExplorationSpecDocument::from_specs(specs);
+    fs::write(path, serde_json::to_string_pretty(&document)?)?;
+    Ok(())
+}
+
+pub fn load_exploration_candidates(
+    path: &Path,
+) -> Result<ExplorationCandidateInput, ExplorationIoError> {
+    let content = fs::read_to_string(path)?;
+    let document: CandidateInputDocument = serde_json::from_str(&content)?;
+
+    Ok(document.into_input())
+}
+
+pub fn save_exploration_candidates(
+    path: &Path,
+    input: &ExplorationCandidateInput,
+) -> Result<(), ExplorationIoError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let document = CandidateInputDocument::from_input(input);
     fs::write(path, serde_json::to_string_pretty(&document)?)?;
     Ok(())
 }
@@ -285,6 +316,171 @@ impl RawTestbenchElement {
                 n2: n2.clone(),
                 value: value.clone(),
             },
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct CandidateInputDocument {
+    #[serde(default)]
+    axes: Vec<RawCandidateAxis>,
+    #[serde(default)]
+    sets: Vec<RawCandidateSet>,
+    #[serde(default)]
+    filters: Vec<RawExplorationFilter>,
+}
+
+impl CandidateInputDocument {
+    fn into_input(self) -> ExplorationCandidateInput {
+        ExplorationCandidateInput {
+            axes: self
+                .axes
+                .into_iter()
+                .map(RawCandidateAxis::into_axis)
+                .collect(),
+            sets: self
+                .sets
+                .into_iter()
+                .map(RawCandidateSet::into_set)
+                .collect(),
+            filters: self
+                .filters
+                .into_iter()
+                .map(RawExplorationFilter::into_filter)
+                .collect(),
+        }
+    }
+
+    fn from_input(input: &ExplorationCandidateInput) -> Self {
+        Self {
+            axes: input.axes.iter().map(RawCandidateAxis::from_axis).collect(),
+            sets: input.sets.iter().map(RawCandidateSet::from_set).collect(),
+            filters: input
+                .filters
+                .iter()
+                .map(RawExplorationFilter::from_filter)
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct RawCandidateAxis {
+    name: String,
+    values: Vec<f64>,
+}
+
+impl RawCandidateAxis {
+    fn into_axis(self) -> CandidateAxis {
+        CandidateAxis::new(self.name, self.values)
+    }
+
+    fn from_axis(axis: &CandidateAxis) -> Self {
+        Self {
+            name: axis.name.clone(),
+            values: axis.values.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct RawCandidateSet {
+    name: String,
+    points: Vec<BTreeMap<String, f64>>,
+}
+
+impl RawCandidateSet {
+    fn into_set(self) -> CandidateSet {
+        CandidateSet::new(
+            self.name,
+            self.points
+                .into_iter()
+                .map(|point| CandidatePoint::new(point.into_iter().collect()))
+                .collect(),
+        )
+    }
+
+    fn from_set(set: &CandidateSet) -> Self {
+        Self {
+            name: set.name.clone(),
+            points: set
+                .points
+                .iter()
+                .map(|point| point.values.iter().cloned().collect())
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum RawExplorationFilter {
+    Range {
+        phase: RawFilterPhase,
+        column: String,
+        condition: RawRangeCondition,
+    },
+    EqualColumns {
+        phase: RawFilterPhase,
+        columns: Vec<String>,
+    },
+}
+
+impl RawExplorationFilter {
+    fn into_filter(self) -> ExplorationFilter {
+        match self {
+            Self::Range {
+                phase,
+                column,
+                condition,
+            } => ExplorationFilter::new(phase.into_phase(), column, condition.into_condition()),
+            Self::EqualColumns { phase, columns } => {
+                ExplorationFilter::equal_columns(phase.into_phase(), columns)
+            }
+        }
+    }
+
+    fn from_filter(filter: &ExplorationFilter) -> Self {
+        match filter {
+            ExplorationFilter::Range {
+                phase,
+                column,
+                condition,
+            } => Self::Range {
+                phase: RawFilterPhase::from_phase(*phase),
+                column: column.clone(),
+                condition: RawRangeCondition::from_condition(*condition),
+            },
+            ExplorationFilter::EqualColumns { phase, columns } => Self::EqualColumns {
+                phase: RawFilterPhase::from_phase(*phase),
+                columns: columns.clone(),
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum RawFilterPhase {
+    AxisPreEvaluation,
+    CandidatePreEvaluation,
+    PostEvaluation,
+}
+
+impl RawFilterPhase {
+    fn into_phase(self) -> FilterPhase {
+        match self {
+            Self::AxisPreEvaluation => FilterPhase::AxisPreEvaluation,
+            Self::CandidatePreEvaluation => FilterPhase::CandidatePreEvaluation,
+            Self::PostEvaluation => FilterPhase::PostEvaluation,
+        }
+    }
+
+    fn from_phase(phase: FilterPhase) -> Self {
+        match phase {
+            FilterPhase::AxisPreEvaluation => Self::AxisPreEvaluation,
+            FilterPhase::CandidatePreEvaluation => Self::CandidatePreEvaluation,
+            FilterPhase::PostEvaluation => Self::PostEvaluation,
         }
     }
 }
@@ -795,6 +991,94 @@ mod tests {
             specs[0].source,
             SpecSource::TransferFunction { .. }
         ));
+    }
+
+    #[test]
+    fn loads_exploration_candidates_from_json() {
+        let dir = make_temp_dir("load_candidates");
+        let path = dir.join("candidates.json");
+        write_file(
+            &path,
+            r#"{
+              "axes": [
+                { "name": "vdd", "values": [1.7, 1.8] }
+              ],
+              "sets": [
+                {
+                  "name": "diffpair",
+                  "points": [
+                    { "xdp.gm": 0.001, "xdp.ro": 100000.0, "xdp.vs": 0.3 },
+                    { "xdp.gm": 0.002, "xdp.ro": 80000.0, "xdp.vs": 0.4 }
+                  ]
+                }
+              ],
+              "filters": [
+                {
+                  "type": "range",
+                  "phase": "axis_pre_evaluation",
+                  "column": "vdd",
+                  "condition": { "min": 1.75 }
+                },
+                {
+                  "type": "equal_columns",
+                  "phase": "candidate_pre_evaluation",
+                  "columns": ["xdp.vs", "xcs.vs"]
+                }
+              ]
+            }"#,
+        );
+
+        let input = load_exploration_candidates(&path).unwrap();
+
+        assert_eq!(input.axes.len(), 1);
+        assert_eq!(input.axes[0], CandidateAxis::new("vdd", vec![1.7, 1.8]));
+        assert_eq!(input.sets.len(), 1);
+        assert_eq!(input.sets[0].points.len(), 2);
+        assert_eq!(input.sets[0].points[0].get("xdp.gm"), Some(0.001));
+        assert_eq!(input.filters.len(), 2);
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn saves_and_loads_exploration_candidates_roundtrip() {
+        let dir = make_temp_dir("roundtrip_candidates");
+        let path = dir.join("candidates.json");
+        let input = ExplorationCandidateInput {
+            axes: vec![CandidateAxis::new("vdd", vec![1.8])],
+            sets: vec![CandidateSet::new(
+                "diffpair",
+                vec![CandidatePoint::new(vec![
+                    ("xdp.gm".to_string(), 0.001),
+                    ("xdp.ro".to_string(), 100000.0),
+                ])],
+            )],
+            filters: vec![ExplorationFilter::new(
+                FilterPhase::AxisPreEvaluation,
+                "vdd",
+                RangeCondition::min(1.0),
+            )],
+        };
+
+        save_exploration_candidates(&path, &input).unwrap();
+        let loaded = load_exploration_candidates(&path).unwrap();
+
+        assert_eq!(loaded, input);
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn loads_ota_1stage_candidate_example_json_file() {
+        let examples_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/exploration");
+        let input =
+            load_exploration_candidates(&examples_dir.join("ota_1stage_candidates.json")).unwrap();
+
+        assert!(input.axes.is_empty());
+        assert_eq!(input.sets.len(), 1);
+        assert_eq!(input.sets[0].name, "ota_1stage_manual_lut_points");
+        assert_eq!(input.sets[0].points.len(), 3);
+        assert_eq!(input.sets[0].points[0].get("gm__xdp__m1"), Some(0.00026688));
     }
 
     fn make_temp_dir(name: &str) -> std::path::PathBuf {

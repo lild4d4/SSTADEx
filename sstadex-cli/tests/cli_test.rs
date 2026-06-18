@@ -32,6 +32,10 @@ fn ota_specs_file() -> PathBuf {
     workspace_root().join("libsstadex/examples/exploration/ota_1stage_specs.json")
 }
 
+fn ota_candidates_file() -> PathBuf {
+    workspace_root().join("libsstadex/examples/exploration/ota_1stage_candidates.json")
+}
+
 fn assert_success(output: &Output) {
     assert!(
         output.status.success(),
@@ -254,6 +258,7 @@ fn exploration_validate_checks_testbenches_and_specs() {
     let circuit = ota_circuit_file();
     let testbenches = ota_testbenches_file();
     let specs = ota_specs_file();
+    let candidates = ota_candidates_file();
     let output = sstadex(&[
         "exploration",
         "validate",
@@ -265,6 +270,8 @@ fn exploration_validate_checks_testbenches_and_specs() {
         testbenches.to_str().expect("valid testbenches path"),
         "--specs",
         specs.to_str().expect("valid specs path"),
+        "--candidates",
+        candidates.to_str().expect("valid candidates path"),
     ]);
 
     assert_success(&output);
@@ -273,6 +280,7 @@ fn exploration_validate_checks_testbenches_and_specs() {
     assert!(stdout.contains("SSTADEx Exploration Validation"));
     assert!(stdout.contains("Testbenches: 2"));
     assert!(stdout.contains("Specs: 2"));
+    assert!(stdout.contains("Candidate sets: 1"));
     assert!(stdout.contains("ota_1stage_gain"));
     assert!(stdout.contains("ota_1stage_rout"));
 }
@@ -283,6 +291,7 @@ fn exploration_validate_json_outputs_summary() {
     let circuit = ota_circuit_file();
     let testbenches = ota_testbenches_file();
     let specs = ota_specs_file();
+    let candidates = ota_candidates_file();
     let output = sstadex(&[
         "exploration",
         "validate",
@@ -294,6 +303,8 @@ fn exploration_validate_json_outputs_summary() {
         testbenches.to_str().expect("valid testbenches path"),
         "--specs",
         specs.to_str().expect("valid specs path"),
+        "--candidates",
+        candidates.to_str().expect("valid candidates path"),
         "--format",
         "json",
     ]);
@@ -307,6 +318,9 @@ fn exploration_validate_json_outputs_summary() {
     assert_eq!(json["circuit"], "ota_primitives");
     assert_eq!(json["testbench_count"], 2);
     assert_eq!(json["spec_count"], 2);
+    assert_eq!(json["candidate_axis_count"], 0);
+    assert_eq!(json["candidate_set_count"], 1);
+    assert_eq!(json["candidate_filter_count"], 0);
     assert_eq!(json["rendered_testbenches"][0], "ota_1stage_gain");
     assert_eq!(json["rendered_testbenches"][1], "ota_1stage_rout");
 }

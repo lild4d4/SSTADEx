@@ -27,8 +27,9 @@ pub use evaluation::{
 };
 pub use flow::{run_candidate_expression_flow, run_prepared_expression_flow, ExplorationFlowError};
 pub use io::{
-    load_exploration_specs, load_testbenches, save_exploration_specs, save_testbenches,
-    ExplorationIoError,
+    load_exploration_candidates, load_exploration_specs, load_testbenches,
+    save_exploration_candidates, save_exploration_specs, save_testbenches,
+    ExplorationCandidateInput, ExplorationIoError,
 };
 pub use prepare::{
     prepare_candidate_expression_spec, prepare_candidate_expression_specs,

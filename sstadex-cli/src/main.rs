@@ -7,9 +7,9 @@ use libsstadex::analysis::{analyze_circuit_mna, CircuitMnaAnalysisError, Circuit
 use libsstadex::catalog::{load_primitive_catalog, PrimitiveLoadError};
 use libsstadex::circuit::{load_circuit, Circuit, CircuitIoError, Connection, Instance, PinRef};
 use libsstadex::exploration::{
-    load_exploration_specs, load_testbenches, prepare_candidate_expression_spec,
-    prepare_transfer_function_spec, ExplorationIoError, PreparedSpec, PreparedSpecSource,
-    SpecPrepareError, SpecSource,
+    load_exploration_candidates, load_exploration_specs, load_testbenches,
+    prepare_candidate_expression_spec, prepare_transfer_function_spec, ExplorationIoError,
+    PreparedSpec, PreparedSpecSource, SpecPrepareError, SpecSource,
 };
 use libsstadex::mna::mna::{mna, mna_solve, MnaError};
 use libsstadex::mna::pretty::{pretty_solutions, pretty_system};
@@ -82,6 +82,7 @@ struct ExplorationValidateArgs {
     circuit: PathBuf,
     testbenches: PathBuf,
     specs: PathBuf,
+    candidates: Option<PathBuf>,
     format: ExplorationValidateFormat,
 }
 
@@ -263,6 +264,7 @@ fn parse_exploration_validate_args(args: Vec<String>) -> Result<ExplorationValid
     let mut circuit = None;
     let mut testbenches = None;
     let mut specs = None;
+    let mut candidates = None;
     let mut format = ExplorationValidateFormat::Text;
 
     let mut idx = 0;
@@ -296,6 +298,13 @@ fn parse_exploration_validate_args(args: Vec<String>) -> Result<ExplorationValid
                     .ok_or_else(|| "--specs requires a value".to_string())?;
                 specs = Some(PathBuf::from(value));
             }
+            "--candidates" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| "--candidates requires a value".to_string())?;
+                candidates = Some(PathBuf::from(value));
+            }
             "--format" => {
                 idx += 1;
                 let value = args
@@ -320,6 +329,7 @@ fn parse_exploration_validate_args(args: Vec<String>) -> Result<ExplorationValid
         testbenches: testbenches
             .ok_or_else(|| "missing required option --testbenches".to_string())?,
         specs: specs.ok_or_else(|| "missing required option --specs".to_string())?,
+        candidates,
         format,
     })
 }
@@ -689,6 +699,11 @@ fn run_exploration_validate(args: ExplorationValidateArgs) -> Result<(), String>
     let testbenches = load_testbenches(&args.testbenches).map_err(format_exploration_io_error)?;
     let specs =
         load_exploration_specs(&args.specs, &testbenches).map_err(format_exploration_io_error)?;
+    let candidates = args
+        .candidates
+        .as_ref()
+        .map(|path| load_exploration_candidates(path).map_err(format_exploration_io_error))
+        .transpose()?;
 
     let mut rendered_testbenches = Vec::new();
     for spec in &specs {
@@ -713,6 +728,9 @@ fn run_exploration_validate(args: ExplorationValidateArgs) -> Result<(), String>
             "circuit": circuit.name,
             "testbench_count": testbenches.len(),
             "spec_count": specs.len(),
+            "candidate_axis_count": candidates.as_ref().map(|input| input.axes.len()),
+            "candidate_set_count": candidates.as_ref().map(|input| input.sets.len()),
+            "candidate_filter_count": candidates.as_ref().map(|input| input.filters.len()),
             "rendered_testbenches": rendered_testbenches,
         });
         println!(
@@ -728,6 +746,11 @@ fn run_exploration_validate(args: ExplorationValidateArgs) -> Result<(), String>
     println!("Circuit: {}", circuit.name);
     println!("Testbenches: {}", testbenches.len());
     println!("Specs: {}", specs.len());
+    if let Some(candidates) = &candidates {
+        println!("Candidate axes: {}", candidates.axes.len());
+        println!("Candidate sets: {}", candidates.sets.len());
+        println!("Candidate filters: {}", candidates.filters.len());
+    }
     println!(
         "Rendered testbench netlists: {}",
         rendered_testbenches.len()
@@ -1244,7 +1267,7 @@ Usage:\n\
   sstadex circuit render-file --primitives-dir <DIR> --circuit <FILE> [--view structural|small-signal] [--output <FILE>]\n\
   sstadex circuit mna --primitives-dir <DIR> --circuit <FILE> --output <DIR> [--solve] [--format text|json]\n\
   sstadex exploration prepare --primitives-dir <DIR> --circuit <FILE> --testbenches <FILE> --specs <FILE> --output <DIR> [--format text|json]\n\
-  sstadex exploration validate --primitives-dir <DIR> --circuit <FILE> --testbenches <FILE> --specs <FILE> [--format text|json]\n\
+  sstadex exploration validate --primitives-dir <DIR> --circuit <FILE> --testbenches <FILE> --specs <FILE> [--candidates <FILE>] [--format text|json]\n\
   sstadex mna --spice-dir <DIR> --design <NAME> --output <DIR> [--solve]\n\
 \n\
 Commands:\n\
@@ -1350,7 +1373,7 @@ fn print_exploration_help() {
         "Usage:\n\
   sstadex exploration --help\n\
   sstadex exploration prepare --primitives-dir <DIR> --circuit <FILE> --testbenches <FILE> --specs <FILE> --output <DIR> [--format text|json]\n\
-  sstadex exploration validate --primitives-dir <DIR> --circuit <FILE> --testbenches <FILE> --specs <FILE> [--format text|json]\n\
+  sstadex exploration validate --primitives-dir <DIR> --circuit <FILE> --testbenches <FILE> --specs <FILE> [--candidates <FILE>] [--format text|json]\n\
 \n\
 Commands:\n\
   prepare     Prepare exploration specs and extract transfer-function expressions\n\
@@ -1376,13 +1399,14 @@ Options:\n\
 fn print_exploration_validate_help() {
     println!(
         "Usage:\n\
-  sstadex exploration validate --primitives-dir <DIR> --circuit <FILE> --testbenches <FILE> --specs <FILE> [--format text|json]\n\
+  sstadex exploration validate --primitives-dir <DIR> --circuit <FILE> --testbenches <FILE> --specs <FILE> [--candidates <FILE>] [--format text|json]\n\
 \n\
 Options:\n\
   --primitives-dir <DIR>    Directory containing primitive subfolders\n\
   --circuit <FILE>          Circuit JSON file\n\
   --testbenches <FILE>      Exploration testbench JSON file\n\
   --specs <FILE>            Exploration spec JSON file\n\
+  --candidates <FILE>       Optional exploration candidate JSON file\n\
   --format <FORMAT>         Output format: text or json; default text\n"
     );
 }
