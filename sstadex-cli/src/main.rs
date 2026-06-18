@@ -8,8 +8,9 @@ use libsstadex::catalog::{load_primitive_catalog, PrimitiveLoadError};
 use libsstadex::circuit::{load_circuit, Circuit, CircuitIoError, Connection, Instance, PinRef};
 use libsstadex::exploration::{
     load_exploration_candidates, load_exploration_specs, load_testbenches,
-    prepare_candidate_expression_spec, prepare_transfer_function_spec, ExplorationIoError,
-    PreparedSpec, PreparedSpecSource, SpecPrepareError, SpecSource,
+    prepare_candidate_expression_spec, prepare_transfer_function_spec,
+    run_prepared_expression_flow, ExplorationIoError, ExplorationTable, PreparedSpec,
+    PreparedSpecSource, SpecPrepareError, SpecSource,
 };
 use libsstadex::mna::mna::{mna, mna_solve, MnaError};
 use libsstadex::mna::pretty::{pretty_solutions, pretty_system};
@@ -96,6 +97,17 @@ struct ExplorationPrepareArgs {
     format: ExplorationPrepareFormat,
 }
 
+#[derive(Debug)]
+struct ExplorationRunArgs {
+    primitives_dir: PathBuf,
+    circuit: PathBuf,
+    testbenches: PathBuf,
+    specs: PathBuf,
+    candidates: PathBuf,
+    work_dir: PathBuf,
+    format: ExplorationRunFormat,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ExplorationValidateFormat {
     Text,
@@ -104,6 +116,12 @@ enum ExplorationValidateFormat {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ExplorationPrepareFormat {
+    Text,
+    Json,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExplorationRunFormat {
     Text,
     Json,
 }
@@ -146,6 +164,7 @@ fn run_exploration(args: Vec<String>) -> Result<(), String> {
 
     match args.next().as_deref() {
         Some("prepare") => run_exploration_prepare(parse_exploration_prepare_args(args.collect())?),
+        Some("run") => run_exploration_run(parse_exploration_run_args(args.collect())?),
         Some("validate") => {
             run_exploration_validate(parse_exploration_validate_args(args.collect())?)
         }
@@ -430,6 +449,105 @@ fn parse_exploration_prepare_format(value: &str) -> Result<ExplorationPrepareFor
         "json" => Ok(ExplorationPrepareFormat::Json),
         _ => Err(format!(
             "unknown exploration prepare format '{value}'. Expected: text, json"
+        )),
+    }
+}
+
+fn parse_exploration_run_args(args: Vec<String>) -> Result<ExplorationRunArgs, String> {
+    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+        print_exploration_run_help();
+        return Err("exploration run help requested".to_string());
+    }
+
+    let mut primitives_dir = None;
+    let mut circuit = None;
+    let mut testbenches = None;
+    let mut specs = None;
+    let mut candidates = None;
+    let mut work_dir = None;
+    let mut format = ExplorationRunFormat::Text;
+
+    let mut idx = 0;
+    while idx < args.len() {
+        match args[idx].as_str() {
+            "--primitives-dir" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| "--primitives-dir requires a value".to_string())?;
+                primitives_dir = Some(PathBuf::from(value));
+            }
+            "--circuit" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| "--circuit requires a value".to_string())?;
+                circuit = Some(PathBuf::from(value));
+            }
+            "--testbenches" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| "--testbenches requires a value".to_string())?;
+                testbenches = Some(PathBuf::from(value));
+            }
+            "--specs" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| "--specs requires a value".to_string())?;
+                specs = Some(PathBuf::from(value));
+            }
+            "--candidates" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| "--candidates requires a value".to_string())?;
+                candidates = Some(PathBuf::from(value));
+            }
+            "--work-dir" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| "--work-dir requires a value".to_string())?;
+                work_dir = Some(PathBuf::from(value));
+            }
+            "--format" => {
+                idx += 1;
+                let value = args
+                    .get(idx)
+                    .ok_or_else(|| "--format requires a value".to_string())?;
+                format = parse_exploration_run_format(value)?;
+            }
+            flag => {
+                return Err(format!(
+                    "unknown exploration run option '{flag}'\n\nRun `sstadex exploration run --help` for usage."
+                ));
+            }
+        }
+
+        idx += 1;
+    }
+
+    Ok(ExplorationRunArgs {
+        primitives_dir: primitives_dir
+            .ok_or_else(|| "missing required option --primitives-dir".to_string())?,
+        circuit: circuit.ok_or_else(|| "missing required option --circuit".to_string())?,
+        testbenches: testbenches
+            .ok_or_else(|| "missing required option --testbenches".to_string())?,
+        specs: specs.ok_or_else(|| "missing required option --specs".to_string())?,
+        candidates: candidates.ok_or_else(|| "missing required option --candidates".to_string())?,
+        work_dir: work_dir.ok_or_else(|| "missing required option --work-dir".to_string())?,
+        format,
+    })
+}
+
+fn parse_exploration_run_format(value: &str) -> Result<ExplorationRunFormat, String> {
+    match value {
+        "text" => Ok(ExplorationRunFormat::Text),
+        "json" => Ok(ExplorationRunFormat::Json),
+        _ => Err(format!(
+            "unknown exploration run format '{value}'. Expected: text, json"
         )),
     }
 }
@@ -819,6 +937,69 @@ fn run_exploration_prepare(args: ExplorationPrepareArgs) -> Result<(), String> {
     Ok(())
 }
 
+fn run_exploration_run(args: ExplorationRunArgs) -> Result<(), String> {
+    let catalog =
+        load_primitive_catalog(&args.primitives_dir).map_err(format_primitive_load_error)?;
+    let circuit = load_circuit(&args.circuit).map_err(format_circuit_io_error)?;
+    let testbenches = load_testbenches(&args.testbenches).map_err(format_exploration_io_error)?;
+    let specs =
+        load_exploration_specs(&args.specs, &testbenches).map_err(format_exploration_io_error)?;
+    let candidates =
+        load_exploration_candidates(&args.candidates).map_err(format_exploration_io_error)?;
+
+    let mut prepared_specs = Vec::with_capacity(specs.len());
+    for spec in &specs {
+        let prepared = match &spec.source {
+            SpecSource::CandidateExpression { .. } => prepare_candidate_expression_spec(spec),
+            SpecSource::TransferFunction { .. } => {
+                prepare_transfer_function_spec(spec, &circuit, &catalog, &args.work_dir)
+            }
+            SpecSource::Composed => Err(SpecPrepareError::UnsupportedSource { source: "composed" }),
+        }
+        .map_err(format_spec_prepare_error)?;
+        prepared_specs.push(prepared);
+    }
+
+    let table = run_prepared_expression_flow(
+        &candidates.axes,
+        &candidates.sets,
+        &candidates.filters,
+        &prepared_specs,
+    )
+    .map_err(|error| format!("failed to run exploration: {error:?}"))?;
+
+    if args.format == ExplorationRunFormat::Json {
+        let json = serde_json::json!({
+            "circuit": circuit.name,
+            "candidate_axis_count": candidates.axes.len(),
+            "candidate_set_count": candidates.sets.len(),
+            "candidate_filter_count": candidates.filters.len(),
+            "prepared_spec_count": prepared_specs.len(),
+            "row_count": table.row_count,
+            "table": exploration_table_json(&table),
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json)
+                .map_err(|error| format!("failed to serialize exploration result: {error}"))?
+        );
+        return Ok(());
+    }
+
+    println!("SSTADEx Exploration Run");
+    println!();
+    println!("Circuit: {}", circuit.name);
+    println!("Candidate axes: {}", candidates.axes.len());
+    println!("Candidate sets: {}", candidates.sets.len());
+    println!("Candidate filters: {}", candidates.filters.len());
+    println!("Prepared specs: {}", prepared_specs.len());
+    println!("Kept rows: {}", table.row_count);
+    println!();
+    print_exploration_table(&table);
+
+    Ok(())
+}
+
 fn emit_output(content: &str, output: Option<&PathBuf>) -> Result<(), String> {
     let Some(output) = output else {
         print!("{content}");
@@ -1098,6 +1279,52 @@ fn print_node_variable_map(result: &libsstadex::mna::mna::MnaResult) {
     println!();
 }
 
+fn print_exploration_table(table: &ExplorationTable) {
+    if table.columns.is_empty() {
+        println!("No columns");
+        return;
+    }
+
+    for column in &table.columns {
+        print!("{:<20}", column.name);
+    }
+    println!();
+
+    for _ in &table.columns {
+        print!("{:<20}", "----------------");
+    }
+    println!();
+
+    for row in 0..table.row_count {
+        for column in &table.columns {
+            print!("{:<20}", format!("{:.6e}", column.values[row]));
+        }
+        println!();
+    }
+}
+
+fn exploration_table_json(table: &ExplorationTable) -> serde_json::Value {
+    serde_json::json!({
+        "columns": table.columns
+            .iter()
+            .map(|column| {
+                serde_json::json!({
+                    "name": column.name,
+                    "values": column.values,
+                })
+            })
+            .collect::<Vec<_>>(),
+        "rows": (0..table.row_count)
+            .map(|row| {
+                table.columns
+                    .iter()
+                    .map(|column| (column.name.clone(), serde_json::json!(column.values[row])))
+                    .collect::<serde_json::Map<_, _>>()
+            })
+            .collect::<Vec<_>>(),
+    })
+}
+
 fn prepared_spec_json(prepared: &PreparedSpec) -> serde_json::Value {
     serde_json::json!({
         "name": prepared.name,
@@ -1267,13 +1494,14 @@ Usage:\n\
   sstadex circuit render-file --primitives-dir <DIR> --circuit <FILE> [--view structural|small-signal] [--output <FILE>]\n\
   sstadex circuit mna --primitives-dir <DIR> --circuit <FILE> --output <DIR> [--solve] [--format text|json]\n\
   sstadex exploration prepare --primitives-dir <DIR> --circuit <FILE> --testbenches <FILE> --specs <FILE> --output <DIR> [--format text|json]\n\
+  sstadex exploration run --primitives-dir <DIR> --circuit <FILE> --testbenches <FILE> --specs <FILE> --candidates <FILE> --work-dir <DIR> [--format text|json]\n\
   sstadex exploration validate --primitives-dir <DIR> --circuit <FILE> --testbenches <FILE> --specs <FILE> [--candidates <FILE>] [--format text|json]\n\
   sstadex mna --spice-dir <DIR> --design <NAME> --output <DIR> [--solve]\n\
 \n\
 Commands:\n\
   catalog    Inspect primitive catalogs\n\
   circuit    Build and render circuits from primitives\n\
-  exploration Validate exploration testbenches and specs\n\
+  exploration Prepare, validate, and run exploration flows\n\
   mna        Generate and print a symbolic MNA system from a SPICE netlist\n"
     );
 }
@@ -1373,10 +1601,12 @@ fn print_exploration_help() {
         "Usage:\n\
   sstadex exploration --help\n\
   sstadex exploration prepare --primitives-dir <DIR> --circuit <FILE> --testbenches <FILE> --specs <FILE> --output <DIR> [--format text|json]\n\
+  sstadex exploration run --primitives-dir <DIR> --circuit <FILE> --testbenches <FILE> --specs <FILE> --candidates <FILE> --work-dir <DIR> [--format text|json]\n\
   sstadex exploration validate --primitives-dir <DIR> --circuit <FILE> --testbenches <FILE> --specs <FILE> [--candidates <FILE>] [--format text|json]\n\
 \n\
 Commands:\n\
   prepare     Prepare exploration specs and extract transfer-function expressions\n\
+  run         Run exploration specs over candidate inputs and print the filtered table\n\
   validate    Validate exploration testbenches/specs and render referenced testbench netlists\n"
     );
 }
@@ -1407,6 +1637,22 @@ Options:\n\
   --testbenches <FILE>      Exploration testbench JSON file\n\
   --specs <FILE>            Exploration spec JSON file\n\
   --candidates <FILE>       Optional exploration candidate JSON file\n\
+  --format <FORMAT>         Output format: text or json; default text\n"
+    );
+}
+
+fn print_exploration_run_help() {
+    println!(
+        "Usage:\n\
+  sstadex exploration run --primitives-dir <DIR> --circuit <FILE> --testbenches <FILE> --specs <FILE> --candidates <FILE> --work-dir <DIR> [--format text|json]\n\
+\n\
+Options:\n\
+  --primitives-dir <DIR>    Directory containing primitive subfolders\n\
+  --circuit <FILE>          Circuit JSON file\n\
+  --testbenches <FILE>      Exploration testbench JSON file\n\
+  --specs <FILE>            Exploration spec JSON file\n\
+  --candidates <FILE>       Exploration candidate JSON file\n\
+  --work-dir <DIR>          Directory where transfer-function intermediate files are written\n\
   --format <FORMAT>         Output format: text or json; default text\n"
     );
 }

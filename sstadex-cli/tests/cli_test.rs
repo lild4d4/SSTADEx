@@ -91,6 +91,18 @@ fn exploration_prepare_help_exits_successfully() {
 }
 
 #[test]
+fn exploration_run_help_exits_successfully() {
+    let output = sstadex(&["exploration", "run", "--help"]);
+
+    assert_success(&output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("sstadex exploration run"));
+    assert!(stdout.contains("--candidates <FILE>"));
+    assert!(stdout.contains("--work-dir <DIR>"));
+}
+
+#[test]
 fn render_file_writes_netlist_to_stdout_by_default() {
     let primitives_dir = primitives_dir();
     let circuit = ota_circuit_file();
@@ -323,4 +335,73 @@ fn exploration_validate_json_outputs_summary() {
     assert_eq!(json["candidate_filter_count"], 0);
     assert_eq!(json["rendered_testbenches"][0], "ota_1stage_gain");
     assert_eq!(json["rendered_testbenches"][1], "ota_1stage_rout");
+}
+
+#[test]
+fn exploration_run_json_outputs_filtered_table() {
+    let output_dir = std::env::temp_dir().join(format!(
+        "sstadex-cli-exploration-run-test-{}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&output_dir).expect("failed to create temporary test directory");
+
+    let specs_file = output_dir.join("candidate_expression_specs.json");
+    fs::write(
+        &specs_file,
+        r#"{
+  "specs": [
+    {
+      "name": "intrinsic_gain",
+      "condition": {
+        "min": 100.0
+      },
+      "source": {
+        "type": "candidate_expression",
+        "expression": "gm__xdp__m1 * ro__xdp__m1"
+      },
+      "output": {
+        "type": "eval"
+      }
+    }
+  ]
+}"#,
+    )
+    .expect("failed to write temporary specs file");
+
+    let primitives_dir = primitives_dir();
+    let circuit = ota_circuit_file();
+    let testbenches = ota_testbenches_file();
+    let candidates = ota_candidates_file();
+    let output = sstadex(&[
+        "exploration",
+        "run",
+        "--primitives-dir",
+        primitives_dir.to_str().expect("valid primitives path"),
+        "--circuit",
+        circuit.to_str().expect("valid circuit path"),
+        "--testbenches",
+        testbenches.to_str().expect("valid testbenches path"),
+        "--specs",
+        specs_file.to_str().expect("valid specs path"),
+        "--candidates",
+        candidates.to_str().expect("valid candidates path"),
+        "--work-dir",
+        output_dir.to_str().expect("valid output path"),
+        "--format",
+        "json",
+    ]);
+
+    assert_success(&output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout).expect("expected valid JSON output");
+
+    assert_eq!(json["candidate_set_count"], 1);
+    assert_eq!(json["prepared_spec_count"], 1);
+    assert_eq!(json["row_count"], 2);
+    assert_eq!(json["table"]["columns"][0]["name"], "gm__xcm__m1");
+    assert_eq!(json["table"]["rows"][0]["intrinsic_gain"], 120.0);
+
+    fs::remove_dir_all(output_dir).expect("failed to remove temporary test directory");
 }
