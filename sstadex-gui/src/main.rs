@@ -39,6 +39,7 @@ struct SstadexApp {
 
 struct CanvasInstance {
     id: usize,
+    instance_name: String,
     primitive_name: String,
     position: egui::Pos2,
 }
@@ -192,17 +193,21 @@ impl eframe::App for SstadexApp {
 
                 if let Some(label_pin) = self.selected_label_pin_mut() {
                     show_label_pin_details(ui, label_pin);
-                } else if let Some(instance) = self.selected_instance() {
-                    show_instance_details(ui, instance, self.selected_endpoint.as_ref());
-                } else if let Some(primitive) = self.selected_primitive().cloned() {
-                    show_primitive_details(ui, &primitive);
-
-                    ui.separator();
-                    if ui.button("Add to canvas").clicked() {
-                        self.add_canvas_instance(&primitive.name);
-                    }
                 } else {
-                    ui.label("Nothing selected");
+                    let selected_endpoint = self.selected_endpoint.clone();
+
+                    if let Some(instance) = self.selected_instance_mut() {
+                        show_instance_details(ui, instance, selected_endpoint.as_ref());
+                    } else if let Some(primitive) = self.selected_primitive().cloned() {
+                        show_primitive_details(ui, &primitive);
+
+                        ui.separator();
+                        if ui.button("Add to canvas").clicked() {
+                            self.add_canvas_instance(&primitive.name);
+                        }
+                    } else {
+                        ui.label("Nothing selected");
+                    }
                 }
             });
 
@@ -345,11 +350,11 @@ impl SstadexApp {
         catalog.get(name)
     }
 
-    fn selected_instance(&self) -> Option<&CanvasInstance> {
+    fn selected_instance_mut(&mut self) -> Option<&mut CanvasInstance> {
         let id = self.selected_instance_id?;
 
         self.canvas_instances
-            .iter()
+            .iter_mut()
             .find(|instance| instance.id == id)
     }
 
@@ -370,6 +375,7 @@ impl SstadexApp {
 
         self.canvas_instances.push(CanvasInstance {
             id,
+            instance_name: circuit_instance_id(id),
             primitive_name: primitive_name.to_string(),
             position: egui::pos2(40.0 + offset, 40.0 + offset),
         });
@@ -480,7 +486,7 @@ impl SstadexApp {
 
         for instance in &self.canvas_instances {
             circuit.add_instance(Instance::new(
-                circuit_instance_id(instance.id),
+                exported_instance_name(instance),
                 instance.primitive_name.clone(),
             ));
         }
@@ -499,8 +505,15 @@ impl SstadexApp {
                     pin_name,
                 } = endpoint
                 {
+                    let instance_name = self
+                        .canvas_instances
+                        .iter()
+                        .find(|instance| instance.id == instance_id)
+                        .map(exported_instance_name)
+                        .unwrap_or_else(|| circuit_instance_id(instance_id));
+
                     circuit.connect(Connection::new(
-                        PinRef::new(circuit_instance_id(instance_id), pin_name),
+                        PinRef::new(instance_name, pin_name),
                         net.clone(),
                     ));
                 }
@@ -882,11 +895,16 @@ fn show_primitive_details(ui: &mut egui::Ui, primitive: &PrimitiveManifest) {
 
 fn show_instance_details(
     ui: &mut egui::Ui,
-    instance: &CanvasInstance,
+    instance: &mut CanvasInstance,
     selected_endpoint: Option<&CanvasEndpoint>,
 ) {
-    ui.heading(format!("{}_{}", instance.primitive_name, instance.id));
+    ui.heading(&instance.instance_name);
+    ui.label(format!("Canvas ID: {}", instance.id));
     ui.label(format!("Primitive: {}", instance.primitive_name));
+    ui.horizontal(|ui| {
+        ui.label("Instance name:");
+        ui.text_edit_singleline(&mut instance.instance_name);
+    });
     ui.label(format!(
         "Position: {:.0}, {:.0}",
         instance.position.x, instance.position.y
@@ -1038,6 +1056,16 @@ fn circuit_instance_id(instance_id: usize) -> String {
     format!("x{instance_id}")
 }
 
+fn exported_instance_name(instance: &CanvasInstance) -> String {
+    let name = instance.instance_name.trim();
+
+    if name.is_empty() {
+        circuit_instance_id(instance.id)
+    } else {
+        name.to_string()
+    }
+}
+
 fn connected_endpoint_groups(connections: &[CanvasConnection]) -> Vec<Vec<CanvasEndpoint>> {
     let mut adjacency: HashMap<CanvasEndpoint, Vec<CanvasEndpoint>> = HashMap::new();
 
@@ -1166,7 +1194,7 @@ fn draw_canvas_instance(
     painter.text(
         rect.center_top() + egui::vec2(0.0, 16.0),
         egui::Align2::CENTER_TOP,
-        format!("{}_{}", instance.primitive_name, instance.id),
+        exported_instance_name(instance),
         egui::FontId::proportional(15.0),
         egui::Color32::WHITE,
     );
