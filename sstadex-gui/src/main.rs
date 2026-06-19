@@ -438,17 +438,21 @@ impl SstadexApp {
                         ui.heading("Preview");
                         ui.separator();
 
-                        if let Some(primitive) = self
-                            .insert_primitive_selection
-                            .as_ref()
-                            .and_then(|name| catalog.get(name))
-                        {
-                            show_primitive_details(ui, primitive);
-                            ui.separator();
-                            draw_primitive_preview(ui, primitive);
-                        } else {
-                            ui.label("Select a primitive");
-                        }
+                        egui::ScrollArea::vertical()
+                            .max_height(210.0)
+                            .show(ui, |ui| {
+                                if let Some(primitive) = self
+                                    .insert_primitive_selection
+                                    .as_ref()
+                                    .and_then(|name| catalog.get(name))
+                                {
+                                    show_primitive_details(ui, primitive);
+                                    ui.separator();
+                                    draw_primitive_preview(ui, primitive);
+                                } else {
+                                    ui.label("Select a primitive");
+                                }
+                            });
                     });
                 });
 
@@ -1265,13 +1269,13 @@ fn show_primitive_details(ui: &mut egui::Ui, primitive: &PrimitiveManifest) {
 }
 
 fn draw_primitive_preview(ui: &mut egui::Ui, primitive: &PrimitiveManifest) {
-    let preview_size = egui::vec2(200.0, 110.0);
+    let preview_size = egui::vec2(200.0, 96.0);
     let (rect, _) = ui.allocate_exact_size(preview_size, egui::Sense::hover());
     let painter = ui.painter_at(rect);
 
     painter.rect_filled(rect, 4.0, egui::Color32::from_gray(28));
 
-    let symbol_rect = egui::Rect::from_center_size(rect.center(), egui::vec2(150.0, 64.0));
+    let symbol_rect = egui::Rect::from_center_size(rect.center(), egui::vec2(150.0, 58.0));
     painter.rect_filled(symbol_rect, 4.0, egui::Color32::from_rgb(45, 49, 56));
     painter.rect_stroke(
         symbol_rect,
