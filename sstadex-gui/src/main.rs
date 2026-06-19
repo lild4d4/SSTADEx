@@ -30,6 +30,8 @@ struct SstadexApp {
     selected_endpoint: Option<CanvasEndpoint>,
     pending_connection: Option<CanvasEndpoint>,
     connections: Vec<CanvasConnection>,
+    circuits: Vec<GuiCircuitDocument>,
+    active_circuit: usize,
     bottom_view: BottomView,
     testbenches: Vec<GuiTestbench>,
     selected_testbench: Option<usize>,
@@ -39,6 +41,7 @@ struct SstadexApp {
     next_label_pin_id: usize,
 }
 
+#[derive(Clone)]
 struct CanvasInstance {
     id: usize,
     instance_name: String,
@@ -57,15 +60,26 @@ enum CanvasEndpoint {
     },
 }
 
+#[derive(Clone)]
 struct CanvasLabelPin {
     id: usize,
     name: String,
     position: egui::Pos2,
 }
 
+#[derive(Clone)]
 struct CanvasConnection {
     from: CanvasEndpoint,
     to: CanvasEndpoint,
+}
+
+struct GuiCircuitDocument {
+    name: String,
+    canvas_instances: Vec<CanvasInstance>,
+    label_pins: Vec<CanvasLabelPin>,
+    connections: Vec<CanvasConnection>,
+    next_instance_id: usize,
+    next_label_pin_id: usize,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -99,10 +113,18 @@ enum GuiTestbenchElementKind {
 #[derive(Serialize, Deserialize)]
 struct GuiProject {
     version: u32,
-    circuit_name: String,
+    active_circuit: usize,
+    circuits: Vec<GuiProjectCircuit>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct GuiProjectCircuit {
+    name: String,
     instances: Vec<GuiProjectInstance>,
     label_pins: Vec<GuiProjectLabelPin>,
     connections: Vec<GuiProjectConnection>,
+    next_instance_id: usize,
+    next_label_pin_id: usize,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -168,6 +190,8 @@ impl Default for SstadexApp {
             selected_endpoint: None,
             pending_connection: None,
             connections: Vec::new(),
+            circuits: vec![GuiCircuitDocument::empty("gui_canvas")],
+            active_circuit: 0,
             bottom_view: BottomView::Logs,
             testbenches: Vec::new(),
             selected_testbench: None,
@@ -220,6 +244,13 @@ impl eframe::App for SstadexApp {
 
         self.show_insert_primitive_window(ctx);
 
+        egui::SidePanel::left("project_browser")
+            .resizable(true)
+            .default_width(220.0)
+            .show(ctx, |ui| {
+                self.show_project_browser_ui(ui);
+            });
+
         egui::SidePanel::right("details")
             .resizable(true)
             .default_width(260.0)
@@ -261,7 +292,12 @@ impl eframe::App for SstadexApp {
             });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("Canvas");
+            let active_circuit_name = self
+                .circuits
+                .get(self.active_circuit)
+                .map(|circuit| circuit.name.as_str())
+                .unwrap_or("gui_canvas");
+            ui.heading(format!("Canvas - {active_circuit_name}"));
             ui.separator();
 
             let canvas_rect = ui.available_rect_before_wrap();
@@ -372,6 +408,101 @@ impl eframe::App for SstadexApp {
 }
 
 impl SstadexApp {
+    fn show_project_browser_ui(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Project");
+        ui.separator();
+
+        ui.horizontal(|ui| {
+            ui.label("Circuits");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("+").clicked() {
+                    self.add_circuit_document();
+                }
+            });
+        });
+
+        for index in 0..self.circuits.len() {
+            let selected = self.active_circuit == index;
+            let name = self.circuits[index].name.clone();
+
+            if ui.selectable_label(selected, name).clicked() {
+                self.switch_circuit_document(index);
+            }
+        }
+
+        ui.separator();
+        ui.horizontal(|ui| {
+            ui.label("Testbenches");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("+").clicked() {
+                    self.add_testbench();
+                }
+            });
+        });
+
+        for (index, testbench) in self.testbenches.iter().enumerate() {
+            let label = if testbench.name.trim().is_empty() {
+                "(unnamed)"
+            } else {
+                testbench.name.as_str()
+            };
+
+            if ui
+                .selectable_label(self.selected_testbench == Some(index), label)
+                .clicked()
+            {
+                self.selected_testbench = Some(index);
+                self.bottom_view = BottomView::Testbenches;
+            }
+        }
+    }
+
+    fn add_circuit_document(&mut self) {
+        self.save_active_circuit_document();
+
+        let name = next_available_circuit_name(&self.circuits);
+        self.circuits.push(GuiCircuitDocument::empty(name));
+        self.active_circuit = self.circuits.len() - 1;
+        self.load_active_circuit_document();
+    }
+
+    fn switch_circuit_document(&mut self, index: usize) {
+        if index == self.active_circuit || index >= self.circuits.len() {
+            return;
+        }
+
+        self.save_active_circuit_document();
+        self.active_circuit = index;
+        self.load_active_circuit_document();
+    }
+
+    fn save_active_circuit_document(&mut self) {
+        let Some(circuit) = self.circuits.get_mut(self.active_circuit) else {
+            return;
+        };
+
+        circuit.canvas_instances = self.canvas_instances.clone();
+        circuit.label_pins = self.label_pins.clone();
+        circuit.connections = self.connections.clone();
+        circuit.next_instance_id = self.next_instance_id;
+        circuit.next_label_pin_id = self.next_label_pin_id;
+    }
+
+    fn load_active_circuit_document(&mut self) {
+        let Some(circuit) = self.circuits.get_mut(self.active_circuit) else {
+            return;
+        };
+
+        self.canvas_instances = circuit.canvas_instances.clone();
+        self.label_pins = circuit.label_pins.clone();
+        self.connections = circuit.connections.clone();
+        self.next_instance_id = circuit.next_instance_id;
+        self.next_label_pin_id = circuit.next_label_pin_id;
+        self.selected_instance_id = None;
+        self.selected_endpoint = None;
+        self.pending_connection = None;
+    }
+
     fn selected_instance_mut(&mut self) -> Option<&mut CanvasInstance> {
         let id = self.selected_instance_id?;
 
@@ -627,7 +758,9 @@ impl SstadexApp {
         }
     }
 
-    fn save_gui_project(&self) -> String {
+    fn save_gui_project(&mut self) -> String {
+        self.save_active_circuit_document();
+
         let project_path = match project_path_from_input(&self.project_path) {
             Ok(path) => path,
             Err(error) => return format!("Cannot save circuit: {error}"),
@@ -703,7 +836,7 @@ impl SstadexApp {
             }
         };
 
-        if project.version != 1 {
+        if project.version != 2 {
             return format!(
                 "Cannot open circuit: unsupported GUI project version {}",
                 project.version
@@ -723,93 +856,43 @@ impl SstadexApp {
 
     fn gui_project(&self) -> GuiProject {
         GuiProject {
-            version: 1,
-            circuit_name: "gui_canvas".to_string(),
-            instances: self
-                .canvas_instances
+            version: 2,
+            active_circuit: self.active_circuit,
+            circuits: self
+                .circuits
                 .iter()
-                .map(|instance| GuiProjectInstance {
-                    id: instance.id,
-                    name: exported_instance_name(instance),
-                    primitive: instance.primitive_name.clone(),
-                    position: GuiProjectPosition::from_pos(instance.position),
-                })
-                .collect(),
-            label_pins: self
-                .label_pins
-                .iter()
-                .map(|label_pin| GuiProjectLabelPin {
-                    id: label_pin.id,
-                    name: label_pin.name.clone(),
-                    position: GuiProjectPosition::from_pos(label_pin.position),
-                })
-                .collect(),
-            connections: self
-                .connections
-                .iter()
-                .map(GuiProjectConnection::from_canvas_connection)
+                .map(GuiProjectCircuit::from_circuit_document)
                 .collect(),
         }
     }
 
     fn apply_gui_project(&mut self, project: GuiProject) {
-        self.canvas_instances = project
-            .instances
+        let mut circuits = project
+            .circuits
             .into_iter()
-            .map(|instance| CanvasInstance {
-                id: instance.id,
-                instance_name: instance.name,
-                primitive_name: instance.primitive,
-                position: instance.position.to_pos(),
-            })
-            .collect();
-        self.label_pins = project
-            .label_pins
-            .into_iter()
-            .map(|label_pin| CanvasLabelPin {
-                id: label_pin.id,
-                name: label_pin.name,
-                position: label_pin.position.to_pos(),
-            })
-            .collect();
-        self.connections = project
-            .connections
-            .into_iter()
-            .map(GuiProjectConnection::into_canvas_connection)
-            .filter(|connection| {
-                project_connection_endpoint_exists(
-                    &connection.from,
-                    &self.canvas_instances,
-                    &self.label_pins,
-                ) && project_connection_endpoint_exists(
-                    &connection.to,
-                    &self.canvas_instances,
-                    &self.label_pins,
-                )
-            })
-            .collect();
+            .map(GuiProjectCircuit::into_circuit_document)
+            .collect::<Vec<_>>();
+
+        if circuits.is_empty() {
+            circuits.push(GuiCircuitDocument::empty("gui_canvas"));
+        }
+
+        self.circuits = circuits;
+        self.active_circuit = project.active_circuit.min(self.circuits.len() - 1);
+        self.load_active_circuit_document();
 
         self.selected_instance_id = None;
         self.selected_endpoint = None;
         self.pending_connection = None;
-        self.next_instance_id = self
-            .canvas_instances
-            .iter()
-            .map(|instance| instance.id)
-            .max()
-            .unwrap_or(0)
-            + 1;
-        self.next_label_pin_id = self
-            .label_pins
-            .iter()
-            .map(|label_pin| label_pin.id)
-            .max()
-            .unwrap_or(0)
-            + 1;
     }
 
     fn build_circuit_from_canvas(&self) -> Circuit {
-        let mut circuit = Circuit::new("gui_canvas");
+        let circuit_name = self
+            .circuits
+            .get(self.active_circuit)
+            .map(|circuit| circuit.name.as_str())
+            .unwrap_or("gui_canvas");
+        let mut circuit = Circuit::new(circuit_name);
 
         for instance in &self.canvas_instances {
             circuit.add_instance(Instance::new(
@@ -993,6 +1076,19 @@ impl CanvasEndpoint {
     }
 }
 
+impl GuiCircuitDocument {
+    fn empty(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            canvas_instances: Vec::new(),
+            label_pins: Vec::new(),
+            connections: Vec::new(),
+            next_instance_id: 1,
+            next_label_pin_id: 1,
+        }
+    }
+}
+
 impl GuiTestbenchElementKind {
     fn label(self) -> &'static str {
         match self {
@@ -1035,6 +1131,84 @@ impl GuiProjectPosition {
 
     fn to_pos(&self) -> egui::Pos2 {
         egui::pos2(self.x, self.y)
+    }
+}
+
+impl GuiProjectCircuit {
+    fn from_circuit_document(circuit: &GuiCircuitDocument) -> Self {
+        Self {
+            name: circuit.name.clone(),
+            instances: circuit
+                .canvas_instances
+                .iter()
+                .map(|instance| GuiProjectInstance {
+                    id: instance.id,
+                    name: exported_instance_name(instance),
+                    primitive: instance.primitive_name.clone(),
+                    position: GuiProjectPosition::from_pos(instance.position),
+                })
+                .collect(),
+            label_pins: circuit
+                .label_pins
+                .iter()
+                .map(|label_pin| GuiProjectLabelPin {
+                    id: label_pin.id,
+                    name: label_pin.name.clone(),
+                    position: GuiProjectPosition::from_pos(label_pin.position),
+                })
+                .collect(),
+            connections: circuit
+                .connections
+                .iter()
+                .map(GuiProjectConnection::from_canvas_connection)
+                .collect(),
+            next_instance_id: circuit.next_instance_id,
+            next_label_pin_id: circuit.next_label_pin_id,
+        }
+    }
+
+    fn into_circuit_document(self) -> GuiCircuitDocument {
+        let canvas_instances = self
+            .instances
+            .into_iter()
+            .map(|instance| CanvasInstance {
+                id: instance.id,
+                instance_name: instance.name,
+                primitive_name: instance.primitive,
+                position: instance.position.to_pos(),
+            })
+            .collect::<Vec<_>>();
+        let label_pins = self
+            .label_pins
+            .into_iter()
+            .map(|label_pin| CanvasLabelPin {
+                id: label_pin.id,
+                name: label_pin.name,
+                position: label_pin.position.to_pos(),
+            })
+            .collect::<Vec<_>>();
+        let connections = self
+            .connections
+            .into_iter()
+            .map(GuiProjectConnection::into_canvas_connection)
+            .filter(|connection| {
+                project_connection_endpoint_exists(&connection.from, &canvas_instances, &label_pins)
+                    && project_connection_endpoint_exists(
+                        &connection.to,
+                        &canvas_instances,
+                        &label_pins,
+                    )
+            })
+            .collect();
+
+        GuiCircuitDocument {
+            name: self.name,
+            canvas_instances,
+            label_pins,
+            connections,
+            next_instance_id: self.next_instance_id,
+            next_label_pin_id: self.next_label_pin_id,
+        }
     }
 }
 
@@ -1479,6 +1653,21 @@ fn default_project_dir() -> PathBuf {
 
 fn default_project_path() -> PathBuf {
     default_project_dir().join("gui_project.json")
+}
+
+fn next_available_circuit_name(circuits: &[GuiCircuitDocument]) -> String {
+    let mut index = 1;
+
+    loop {
+        let candidate = format!("circuit_{index}");
+        let is_available = circuits.iter().all(|circuit| circuit.name != candidate);
+
+        if is_available {
+            return candidate;
+        }
+
+        index += 1;
+    }
 }
 
 fn project_path_from_input(input: &str) -> Result<PathBuf, String> {
