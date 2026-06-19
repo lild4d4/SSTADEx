@@ -102,15 +102,18 @@ struct GuiTestbenchDocument {
     name: String,
     elements: Vec<GuiTestbenchElement>,
     extra_body: String,
+    next_element_id: usize,
 }
 
 #[derive(Clone)]
 struct GuiTestbenchElement {
+    id: usize,
     kind: GuiTestbenchElementKind,
     name: String,
     nplus: String,
     nminus: String,
     value: String,
+    position: egui::Pos2,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -145,15 +148,18 @@ struct GuiProjectTestbench {
     name: String,
     elements: Vec<GuiProjectTestbenchElement>,
     extra_body: String,
+    next_element_id: usize,
 }
 
 #[derive(Serialize, Deserialize)]
 struct GuiProjectTestbenchElement {
+    id: usize,
     kind: GuiProjectTestbenchElementKind,
     name: String,
     nplus: String,
     nminus: String,
     value: String,
+    position: GuiProjectPosition,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -500,18 +506,24 @@ impl SstadexApp {
         ui.heading(format!("Testbench - {}", testbench.name));
         ui.separator();
 
-        let canvas_rect =
-            egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), 160.0));
-        let painter = ui.painter_at(canvas_rect);
-        painter.rect_filled(canvas_rect, 0.0, egui::Color32::from_gray(24));
-        painter.text(
-            canvas_rect.center(),
-            egui::Align2::CENTER_CENTER,
-            "Testbench canvas placeholder",
-            egui::FontId::proportional(14.0),
-            egui::Color32::from_gray(210),
-        );
-        ui.allocate_space(canvas_rect.size());
+        ui.horizontal(|ui| {
+            ui.label("Insert:");
+            if ui.button("Voltage source").clicked() {
+                testbench.add_element(GuiTestbenchElementKind::VoltageSource);
+            }
+            if ui.button("Current source").clicked() {
+                testbench.add_element(GuiTestbenchElementKind::CurrentSource);
+            }
+            if ui.button("Resistor").clicked() {
+                testbench.add_element(GuiTestbenchElementKind::Resistor);
+            }
+            if ui.button("Capacitor").clicked() {
+                testbench.add_element(GuiTestbenchElementKind::Capacitor);
+            }
+        });
+        ui.separator();
+
+        draw_testbench_canvas(ui, testbench);
 
         ui.separator();
         egui::ScrollArea::vertical()
@@ -893,6 +905,7 @@ impl SstadexApp {
             name: format!("tb_{index}"),
             elements: Vec::new(),
             extra_body: String::new(),
+            next_element_id: 1,
         });
         self.selected_testbench = Some(self.testbenches.len() - 1);
         self.active_document = ActiveDocument::Testbench;
@@ -1065,7 +1078,7 @@ impl SstadexApp {
             }
         };
 
-        if project.version != 3 {
+        if project.version != 4 {
             return format!(
                 "Cannot open circuit: unsupported GUI project version {}",
                 project.version
@@ -1085,7 +1098,7 @@ impl SstadexApp {
 
     fn gui_project(&self) -> GuiProject {
         GuiProject {
-            version: 3,
+            version: 4,
             active_circuit: self.active_circuit,
             circuits: self
                 .circuits
@@ -1316,6 +1329,17 @@ impl GuiCircuitDocument {
     }
 }
 
+impl GuiTestbenchDocument {
+    fn add_element(&mut self, kind: GuiTestbenchElementKind) {
+        let id = self.next_element_id;
+        let index = self.elements.len() + 1;
+
+        self.elements
+            .push(GuiTestbenchElement::new(kind, id, index));
+        self.next_element_id += 1;
+    }
+}
+
 impl GuiTestbenchElementKind {
     fn label(self) -> &'static str {
         match self {
@@ -1337,13 +1361,17 @@ impl GuiTestbenchElementKind {
 }
 
 impl GuiTestbenchElement {
-    fn new(kind: GuiTestbenchElementKind, index: usize) -> Self {
+    fn new(kind: GuiTestbenchElementKind, id: usize, index: usize) -> Self {
+        let offset = 24.0 * (index.saturating_sub(1)) as f32;
+
         Self {
+            id,
             kind,
             name: format!("{}{}", kind.default_name_prefix(), index),
             nplus: String::new(),
             nminus: "0".to_string(),
             value: String::new(),
+            position: egui::pos2(48.0 + offset, 48.0 + offset),
         }
     }
 }
@@ -1449,6 +1477,7 @@ impl GuiProjectTestbench {
                 .map(GuiProjectTestbenchElement::from_testbench_element)
                 .collect(),
             extra_body: testbench.extra_body.clone(),
+            next_element_id: testbench.next_element_id,
         }
     }
 
@@ -1461,6 +1490,7 @@ impl GuiProjectTestbench {
                 .map(GuiProjectTestbenchElement::into_testbench_element)
                 .collect(),
             extra_body: self.extra_body,
+            next_element_id: self.next_element_id,
         }
     }
 }
@@ -1468,21 +1498,25 @@ impl GuiProjectTestbench {
 impl GuiProjectTestbenchElement {
     fn from_testbench_element(element: &GuiTestbenchElement) -> Self {
         Self {
+            id: element.id,
             kind: GuiProjectTestbenchElementKind::from_testbench_kind(element.kind),
             name: element.name.clone(),
             nplus: element.nplus.clone(),
             nminus: element.nminus.clone(),
             value: element.value.clone(),
+            position: GuiProjectPosition::from_pos(element.position),
         }
     }
 
     fn into_testbench_element(self) -> GuiTestbenchElement {
         GuiTestbenchElement {
+            id: self.id,
             kind: self.kind.into_testbench_kind(),
             name: self.name,
             nplus: self.nplus,
             nminus: self.nminus,
             value: self.value,
+            position: self.position.to_pos(),
         }
     }
 }
@@ -1565,11 +1599,7 @@ fn show_testbench_editor(
     ui.horizontal(|ui| {
         ui.heading("Elements");
         if ui.button("Add element").clicked() {
-            let index = testbench.elements.len() + 1;
-            testbench.elements.push(GuiTestbenchElement::new(
-                GuiTestbenchElementKind::VoltageSource,
-                index,
-            ));
+            testbench.add_element(GuiTestbenchElementKind::VoltageSource);
         }
     });
 
@@ -1768,6 +1798,107 @@ fn draw_primitive_preview(ui: &mut egui::Ui, primitive: &PrimitiveManifest) {
     );
 
     draw_instance_pins(&painter, symbol_rect, 0, primitive, None);
+}
+
+fn draw_testbench_canvas(ui: &mut egui::Ui, testbench: &mut GuiTestbenchDocument) {
+    let canvas_size = egui::vec2(ui.available_width(), 180.0);
+    let (canvas_rect, _) = ui.allocate_exact_size(canvas_size, egui::Sense::hover());
+    let painter = ui.painter_at(canvas_rect);
+
+    painter.rect_filled(canvas_rect, 0.0, egui::Color32::from_gray(24));
+
+    if testbench.elements.is_empty() {
+        painter.text(
+            canvas_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "Insert a testbench element",
+            egui::FontId::proportional(14.0),
+            egui::Color32::from_gray(210),
+        );
+        return;
+    }
+
+    for element in &mut testbench.elements {
+        let center = canvas_rect.min + element.position.to_vec2();
+        let rect = egui::Rect::from_center_size(center, egui::vec2(88.0, 54.0));
+        let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
+
+        if response.dragged() {
+            element.position += response.drag_delta();
+        }
+
+        draw_testbench_element_symbol(&painter, rect, element);
+    }
+}
+
+fn draw_testbench_element_symbol(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    element: &GuiTestbenchElement,
+) {
+    let stroke = egui::Stroke::new(1.5, egui::Color32::from_rgb(130, 150, 170));
+    let body_color = egui::Color32::from_rgb(45, 49, 56);
+    let pin_color = egui::Color32::from_rgb(120, 210, 150);
+
+    painter.line_segment(
+        [
+            egui::pos2(rect.left(), rect.center().y),
+            egui::pos2(rect.left() + 18.0, rect.center().y),
+        ],
+        stroke,
+    );
+    painter.line_segment(
+        [
+            egui::pos2(rect.right() - 18.0, rect.center().y),
+            egui::pos2(rect.right(), rect.center().y),
+        ],
+        stroke,
+    );
+    painter.circle_filled(egui::pos2(rect.left(), rect.center().y), 3.5, pin_color);
+    painter.circle_filled(egui::pos2(rect.right(), rect.center().y), 3.5, pin_color);
+
+    match element.kind {
+        GuiTestbenchElementKind::VoltageSource | GuiTestbenchElementKind::CurrentSource => {
+            painter.circle_filled(rect.center(), 20.0, body_color);
+            painter.circle_stroke(rect.center(), 20.0, stroke);
+            painter.text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                match element.kind {
+                    GuiTestbenchElementKind::VoltageSource => "V",
+                    GuiTestbenchElementKind::CurrentSource => "I",
+                    GuiTestbenchElementKind::Resistor | GuiTestbenchElementKind::Capacitor => "",
+                },
+                egui::FontId::proportional(18.0),
+                egui::Color32::WHITE,
+            );
+        }
+        GuiTestbenchElementKind::Resistor => {
+            let body = egui::Rect::from_center_size(rect.center(), egui::vec2(42.0, 18.0));
+            painter.rect_filled(body, 2.0, body_color);
+            painter.rect_stroke(body, 2.0, stroke, egui::StrokeKind::Inside);
+        }
+        GuiTestbenchElementKind::Capacitor => {
+            let x = rect.center().x;
+            let y = rect.center().y;
+            painter.line_segment(
+                [egui::pos2(x - 6.0, y - 18.0), egui::pos2(x - 6.0, y + 18.0)],
+                stroke,
+            );
+            painter.line_segment(
+                [egui::pos2(x + 6.0, y - 18.0), egui::pos2(x + 6.0, y + 18.0)],
+                stroke,
+            );
+        }
+    }
+
+    painter.text(
+        rect.center_bottom() + egui::vec2(0.0, 4.0),
+        egui::Align2::CENTER_TOP,
+        &element.name,
+        egui::FontId::proportional(11.0),
+        egui::Color32::from_gray(220),
+    );
 }
 
 fn show_instance_details(
