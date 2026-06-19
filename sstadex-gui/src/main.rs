@@ -32,6 +32,7 @@ struct SstadexApp {
     connections: Vec<CanvasConnection>,
     circuits: Vec<GuiCircuitDocument>,
     active_circuit: usize,
+    active_document: ActiveDocument,
     renaming_circuit: Option<usize>,
     bottom_view: BottomView,
     testbenches: Vec<GuiTestbenchDocument>,
@@ -88,6 +89,12 @@ struct GuiCircuitDocument {
 enum BottomView {
     Logs,
     Testbenches,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ActiveDocument {
+    Circuit,
+    Testbench,
 }
 
 #[derive(Clone)]
@@ -223,6 +230,7 @@ impl Default for SstadexApp {
             connections: Vec::new(),
             circuits: vec![GuiCircuitDocument::empty("gui_canvas")],
             active_circuit: 0,
+            active_document: ActiveDocument::Circuit,
             renaming_circuit: None,
             bottom_view: BottomView::Logs,
             testbenches: Vec::new(),
@@ -238,7 +246,9 @@ impl Default for SstadexApp {
 
 impl eframe::App for SstadexApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if ctx.input(|input| input.key_pressed(egui::Key::Delete)) {
+        if self.active_document == ActiveDocument::Circuit
+            && ctx.input(|input| input.key_pressed(egui::Key::Delete))
+        {
             self.delete_selected_instance();
         }
 
@@ -263,13 +273,23 @@ impl eframe::App for SstadexApp {
                     self.output_log = self.save_gui_project();
                     self.bottom_view = BottomView::Logs;
                 }
-                if ui.button("Add lab pin").clicked() {
+                let is_circuit_active = self.active_document == ActiveDocument::Circuit;
+                if ui
+                    .add_enabled(is_circuit_active, egui::Button::new("Add lab pin"))
+                    .clicked()
+                {
                     self.add_label_pin();
                 }
-                if ui.button("Insert primitive").clicked() {
+                if ui
+                    .add_enabled(is_circuit_active, egui::Button::new("Insert primitive"))
+                    .clicked()
+                {
                     self.show_insert_primitive_window = true;
                 }
-                if ui.button("Run MNA").clicked() {
+                if ui
+                    .add_enabled(is_circuit_active, egui::Button::new("Run MNA"))
+                    .clicked()
+                {
                     self.output_log = self.run_mna_from_canvas();
                 }
             });
@@ -291,15 +311,32 @@ impl eframe::App for SstadexApp {
                 ui.heading("Details");
                 ui.separator();
 
-                if let Some(label_pin) = self.selected_label_pin_mut() {
-                    show_label_pin_details(ui, label_pin);
-                } else {
-                    let selected_endpoint = self.selected_endpoint.clone();
+                match self.active_document {
+                    ActiveDocument::Circuit => {
+                        if let Some(label_pin) = self.selected_label_pin_mut() {
+                            show_label_pin_details(ui, label_pin);
+                        } else {
+                            let selected_endpoint = self.selected_endpoint.clone();
 
-                    if let Some(instance) = self.selected_instance_mut() {
-                        show_instance_details(ui, instance, selected_endpoint.as_ref());
-                    } else {
-                        ui.label("Nothing selected");
+                            if let Some(instance) = self.selected_instance_mut() {
+                                show_instance_details(ui, instance, selected_endpoint.as_ref());
+                            } else {
+                                ui.label("Nothing selected");
+                            }
+                        }
+                    }
+                    ActiveDocument::Testbench => {
+                        if let Some(testbench) = self.selected_testbench_document() {
+                            ui.heading(&testbench.name);
+                            ui.label(format!("Elements: {}", testbench.elements.len()));
+                            ui.label(if testbench.extra_body.trim().is_empty() {
+                                "Extra body: empty"
+                            } else {
+                                "Extra body: present"
+                            });
+                        } else {
+                            ui.label("No testbench selected");
+                        }
                     }
                 }
             });
@@ -324,123 +361,166 @@ impl eframe::App for SstadexApp {
                 }
             });
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            let active_circuit_name = self
-                .circuits
-                .get(self.active_circuit)
-                .map(|circuit| circuit.name.as_str())
-                .unwrap_or("gui_canvas");
-            ui.heading(format!("Canvas - {active_circuit_name}"));
-            ui.separator();
-
-            let canvas_rect = ui.available_rect_before_wrap();
-            let canvas = CanvasView { rect: canvas_rect };
-            let painter = ui.painter_at(canvas_rect);
-
-            painter.rect_filled(canvas_rect, 0.0, egui::Color32::from_gray(24));
-
-            if self.canvas_instances.is_empty() {
-                ui.label("No instances yet");
-            }
-
-            draw_canvas_connections(
-                &painter,
-                &canvas,
-                &self.canvas_instances,
-                &self.label_pins,
-                self.catalog.as_ref(),
-                &self.connections,
-            );
-
-            for instance in &mut self.canvas_instances {
-                let rect = canvas.instance_rect(instance);
-                let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
-
-                if response.clicked() || response.dragged() {
-                    self.selected_instance_id = Some(instance.id);
-                }
-
-                if response.dragged() {
-                    instance.position += response.drag_delta();
-                }
-
-                let selected = self.selected_instance_id == Some(instance.id);
-                let primitive = self
-                    .catalog
-                    .as_ref()
-                    .and_then(|catalog| catalog.get(&instance.primitive_name));
-
-                if let Some(primitive) = primitive {
-                    for pin_view in pin_views(rect, primitive) {
-                        let hit_rect =
-                            egui::Rect::from_center_size(pin_view.position, egui::vec2(14.0, 14.0));
-                        let response = ui.allocate_rect(hit_rect, egui::Sense::click());
-
-                        if response.clicked() {
-                            let selected_endpoint = CanvasEndpoint::PrimitivePin {
-                                instance_id: instance.id,
-                                pin_name: pin_view.name.clone(),
-                            };
-
-                            self.selected_instance_id = Some(instance.id);
-                            self.selected_endpoint = Some(selected_endpoint.clone());
-                            update_pending_connection(
-                                &mut self.pending_connection,
-                                &mut self.connections,
-                                selected_endpoint,
-                            );
-                        }
-                    }
-                }
-
-                draw_canvas_instance(
-                    &painter,
-                    rect,
-                    instance,
-                    primitive,
-                    self.selected_endpoint.as_ref(),
-                    selected,
-                );
-            }
-
-            for label_pin in &mut self.label_pins {
-                let position = canvas.to_screen(label_pin.position);
-                let hit_rect = egui::Rect::from_center_size(position, egui::vec2(18.0, 18.0));
-                let response = ui.allocate_rect(hit_rect, egui::Sense::click_and_drag());
-
-                if response.clicked() || response.dragged() {
-                    self.selected_instance_id = None;
-                    self.selected_endpoint = Some(CanvasEndpoint::LabelPin {
-                        label_id: label_pin.id,
-                    });
-                }
-
-                if response.clicked() {
-                    let selected_endpoint = CanvasEndpoint::LabelPin {
-                        label_id: label_pin.id,
-                    };
-                    update_pending_connection(
-                        &mut self.pending_connection,
-                        &mut self.connections,
-                        selected_endpoint,
-                    );
-                }
-
-                if response.dragged() {
-                    label_pin.position += response.drag_delta();
-                }
-
-                let selected = self.selected_endpoint.as_ref()
-                    == Some(&CanvasEndpoint::LabelPin {
-                        label_id: label_pin.id,
-                    });
-                draw_label_pin(&painter, position, label_pin, selected);
-            }
+        egui::CentralPanel::default().show(ctx, |ui| match self.active_document {
+            ActiveDocument::Circuit => self.show_circuit_document_ui(ui),
+            ActiveDocument::Testbench => self.show_testbench_document_ui(ui),
         });
     }
 }
 
 impl SstadexApp {
+    fn show_circuit_document_ui(&mut self, ui: &mut egui::Ui) {
+        let active_circuit_name = self
+            .circuits
+            .get(self.active_circuit)
+            .map(|circuit| circuit.name.as_str())
+            .unwrap_or("gui_canvas");
+        ui.heading(format!("Canvas - {active_circuit_name}"));
+        ui.separator();
+
+        let canvas_rect = ui.available_rect_before_wrap();
+        let canvas = CanvasView { rect: canvas_rect };
+        let painter = ui.painter_at(canvas_rect);
+
+        painter.rect_filled(canvas_rect, 0.0, egui::Color32::from_gray(24));
+
+        if self.canvas_instances.is_empty() {
+            ui.label("No instances yet");
+        }
+
+        draw_canvas_connections(
+            &painter,
+            &canvas,
+            &self.canvas_instances,
+            &self.label_pins,
+            self.catalog.as_ref(),
+            &self.connections,
+        );
+
+        for instance in &mut self.canvas_instances {
+            let rect = canvas.instance_rect(instance);
+            let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
+
+            if response.clicked() || response.dragged() {
+                self.selected_instance_id = Some(instance.id);
+            }
+
+            if response.dragged() {
+                instance.position += response.drag_delta();
+            }
+
+            let selected = self.selected_instance_id == Some(instance.id);
+            let primitive = self
+                .catalog
+                .as_ref()
+                .and_then(|catalog| catalog.get(&instance.primitive_name));
+
+            if let Some(primitive) = primitive {
+                for pin_view in pin_views(rect, primitive) {
+                    let hit_rect =
+                        egui::Rect::from_center_size(pin_view.position, egui::vec2(14.0, 14.0));
+                    let response = ui.allocate_rect(hit_rect, egui::Sense::click());
+
+                    if response.clicked() {
+                        let selected_endpoint = CanvasEndpoint::PrimitivePin {
+                            instance_id: instance.id,
+                            pin_name: pin_view.name.clone(),
+                        };
+
+                        self.selected_instance_id = Some(instance.id);
+                        self.selected_endpoint = Some(selected_endpoint.clone());
+                        update_pending_connection(
+                            &mut self.pending_connection,
+                            &mut self.connections,
+                            selected_endpoint,
+                        );
+                    }
+                }
+            }
+
+            draw_canvas_instance(
+                &painter,
+                rect,
+                instance,
+                primitive,
+                self.selected_endpoint.as_ref(),
+                selected,
+            );
+        }
+
+        for label_pin in &mut self.label_pins {
+            let position = canvas.to_screen(label_pin.position);
+            let hit_rect = egui::Rect::from_center_size(position, egui::vec2(18.0, 18.0));
+            let response = ui.allocate_rect(hit_rect, egui::Sense::click_and_drag());
+
+            if response.clicked() || response.dragged() {
+                self.selected_instance_id = None;
+                self.selected_endpoint = Some(CanvasEndpoint::LabelPin {
+                    label_id: label_pin.id,
+                });
+            }
+
+            if response.clicked() {
+                let selected_endpoint = CanvasEndpoint::LabelPin {
+                    label_id: label_pin.id,
+                };
+                update_pending_connection(
+                    &mut self.pending_connection,
+                    &mut self.connections,
+                    selected_endpoint,
+                );
+            }
+
+            if response.dragged() {
+                label_pin.position += response.drag_delta();
+            }
+
+            let selected = self.selected_endpoint.as_ref()
+                == Some(&CanvasEndpoint::LabelPin {
+                    label_id: label_pin.id,
+                });
+            draw_label_pin(&painter, position, label_pin, selected);
+        }
+    }
+
+    fn show_testbench_document_ui(&mut self, ui: &mut egui::Ui) {
+        let Some(selected_index) = self.selected_testbench else {
+            ui.heading("Testbench");
+            ui.separator();
+            ui.label("Select a testbench from the project browser");
+            return;
+        };
+
+        let Some(testbench) = self.testbenches.get_mut(selected_index) else {
+            self.selected_testbench = None;
+            ui.label("Selected testbench no longer exists");
+            return;
+        };
+
+        ui.heading(format!("Testbench - {}", testbench.name));
+        ui.separator();
+
+        let canvas_rect =
+            egui::Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), 160.0));
+        let painter = ui.painter_at(canvas_rect);
+        painter.rect_filled(canvas_rect, 0.0, egui::Color32::from_gray(24));
+        painter.text(
+            canvas_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "Testbench canvas placeholder",
+            egui::FontId::proportional(14.0),
+            egui::Color32::from_gray(210),
+        );
+        ui.allocate_space(canvas_rect.size());
+
+        ui.separator();
+        egui::ScrollArea::vertical()
+            .id_salt("central_testbench_editor_scroll")
+            .show(ui, |ui| {
+                show_testbench_editor(ui, selected_index, testbench);
+            });
+    }
+
     fn show_project_browser_ui(&mut self, ui: &mut egui::Ui) {
         ui.heading("Project");
         ui.separator();
@@ -492,6 +572,7 @@ impl SstadexApp {
 
         if response.clicked() {
             self.switch_circuit_document(index);
+            self.active_document = ActiveDocument::Circuit;
         }
 
         response.context_menu(|ui| {
@@ -533,6 +614,7 @@ impl SstadexApp {
 
         if response.clicked() {
             self.selected_testbench = Some(index);
+            self.active_document = ActiveDocument::Testbench;
             self.bottom_view = BottomView::Testbenches;
         }
 
@@ -554,6 +636,7 @@ impl SstadexApp {
         let name = next_available_circuit_name(&self.circuits);
         self.circuits.push(GuiCircuitDocument::empty(name));
         self.active_circuit = self.circuits.len() - 1;
+        self.active_document = ActiveDocument::Circuit;
         self.load_active_circuit_document();
     }
 
@@ -648,6 +731,12 @@ impl SstadexApp {
         self.canvas_instances
             .iter_mut()
             .find(|instance| instance.id == id)
+    }
+
+    fn selected_testbench_document(&self) -> Option<&GuiTestbenchDocument> {
+        let index = self.selected_testbench?;
+
+        self.testbenches.get(index)
     }
 
     fn show_insert_primitive_window(&mut self, ctx: &egui::Context) {
@@ -806,6 +895,7 @@ impl SstadexApp {
             extra_body: String::new(),
         });
         self.selected_testbench = Some(self.testbenches.len() - 1);
+        self.active_document = ActiveDocument::Testbench;
         self.bottom_view = BottomView::Testbenches;
     }
 
@@ -1149,14 +1239,14 @@ impl SstadexApp {
             ui.label("Select a testbench from the project browser");
             return;
         };
-        let Some(testbench) = self.testbenches.get_mut(selected_index) else {
+        let Some(testbench) = self.testbenches.get(selected_index) else {
             self.selected_testbench = None;
             return;
         };
 
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            show_testbench_editor(ui, selected_index, testbench);
-        });
+        ui.label(format!("Selected testbench: {}", testbench.name));
+        ui.label(format!("Elements: {}", testbench.elements.len()));
+        ui.label("Edit the selected testbench in the central panel.");
     }
 
     fn save_gui_testbenches(&self) -> String {
