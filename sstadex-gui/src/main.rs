@@ -32,9 +32,11 @@ struct SstadexApp {
     connections: Vec<CanvasConnection>,
     circuits: Vec<GuiCircuitDocument>,
     active_circuit: usize,
+    renaming_circuit: Option<usize>,
     bottom_view: BottomView,
     testbenches: Vec<GuiTestbench>,
     selected_testbench: Option<usize>,
+    renaming_testbench: Option<usize>,
     project_path: String,
     output_log: String,
     next_instance_id: usize,
@@ -192,9 +194,11 @@ impl Default for SstadexApp {
             connections: Vec::new(),
             circuits: vec![GuiCircuitDocument::empty("gui_canvas")],
             active_circuit: 0,
+            renaming_circuit: None,
             bottom_view: BottomView::Logs,
             testbenches: Vec::new(),
             selected_testbench: None,
+            renaming_testbench: None,
             project_path: default_project_path().display().to_string(),
             output_log: "Logs, netlists, and MNA results will appear here".to_string(),
             next_instance_id: 1,
@@ -422,12 +426,7 @@ impl SstadexApp {
         });
 
         for index in 0..self.circuits.len() {
-            let selected = self.active_circuit == index;
-            let name = self.circuits[index].name.clone();
-
-            if ui.selectable_label(selected, name).clicked() {
-                self.switch_circuit_document(index);
-            }
+            self.show_circuit_browser_item(ui, index);
         }
 
         ui.separator();
@@ -440,21 +439,84 @@ impl SstadexApp {
             });
         });
 
-        for (index, testbench) in self.testbenches.iter().enumerate() {
-            let label = if testbench.name.trim().is_empty() {
-                "(unnamed)"
-            } else {
-                testbench.name.as_str()
-            };
+        for index in 0..self.testbenches.len() {
+            self.show_testbench_browser_item(ui, index);
+        }
+    }
 
+    fn show_circuit_browser_item(&mut self, ui: &mut egui::Ui, index: usize) {
+        if self.renaming_circuit == Some(index) {
+            let response = ui.text_edit_singleline(&mut self.circuits[index].name);
+            if response.lost_focus()
+                || ui.input(|input| {
+                    input.key_pressed(egui::Key::Enter) || input.key_pressed(egui::Key::Escape)
+                })
+            {
+                self.renaming_circuit = None;
+            }
+            return;
+        }
+
+        let selected = self.active_circuit == index;
+        let name = self.circuits[index].name.clone();
+        let response = ui.selectable_label(selected, name);
+
+        if response.clicked() {
+            self.switch_circuit_document(index);
+        }
+
+        response.context_menu(|ui| {
+            if ui.button("Rename").clicked() {
+                self.renaming_circuit = Some(index);
+                ui.close();
+            }
+
+            let can_delete = self.circuits.len() > 1;
             if ui
-                .selectable_label(self.selected_testbench == Some(index), label)
+                .add_enabled(can_delete, egui::Button::new("Delete"))
                 .clicked()
             {
-                self.selected_testbench = Some(index);
-                self.bottom_view = BottomView::Testbenches;
+                self.delete_circuit_document(index);
+                ui.close();
             }
+        });
+    }
+
+    fn show_testbench_browser_item(&mut self, ui: &mut egui::Ui, index: usize) {
+        if self.renaming_testbench == Some(index) {
+            let response = ui.text_edit_singleline(&mut self.testbenches[index].name);
+            if response.lost_focus()
+                || ui.input(|input| {
+                    input.key_pressed(egui::Key::Enter) || input.key_pressed(egui::Key::Escape)
+                })
+            {
+                self.renaming_testbench = None;
+            }
+            return;
         }
+
+        let label = if self.testbenches[index].name.trim().is_empty() {
+            "(unnamed)"
+        } else {
+            self.testbenches[index].name.as_str()
+        };
+        let response = ui.selectable_label(self.selected_testbench == Some(index), label);
+
+        if response.clicked() {
+            self.selected_testbench = Some(index);
+            self.bottom_view = BottomView::Testbenches;
+        }
+
+        response.context_menu(|ui| {
+            if ui.button("Rename").clicked() {
+                self.renaming_testbench = Some(index);
+                ui.close();
+            }
+            if ui.button("Delete").clicked() {
+                self.delete_testbench(index);
+                ui.close();
+            }
+        });
     }
 
     fn add_circuit_document(&mut self) {
@@ -474,6 +536,54 @@ impl SstadexApp {
         self.save_active_circuit_document();
         self.active_circuit = index;
         self.load_active_circuit_document();
+    }
+
+    fn delete_circuit_document(&mut self, index: usize) {
+        if self.circuits.len() <= 1 || index >= self.circuits.len() {
+            return;
+        }
+
+        self.save_active_circuit_document();
+        self.circuits.remove(index);
+
+        if self.active_circuit == index {
+            self.active_circuit = index.saturating_sub(1).min(self.circuits.len() - 1);
+            self.load_active_circuit_document();
+        } else if self.active_circuit > index {
+            self.active_circuit -= 1;
+        }
+
+        if self.renaming_circuit == Some(index) {
+            self.renaming_circuit = None;
+        } else if let Some(renaming_index) = self.renaming_circuit {
+            if renaming_index > index {
+                self.renaming_circuit = Some(renaming_index - 1);
+            }
+        }
+    }
+
+    fn delete_testbench(&mut self, index: usize) {
+        if index >= self.testbenches.len() {
+            return;
+        }
+
+        self.testbenches.remove(index);
+
+        if self.selected_testbench == Some(index) {
+            self.selected_testbench = None;
+        } else if let Some(selected_index) = self.selected_testbench {
+            if selected_index > index {
+                self.selected_testbench = Some(selected_index - 1);
+            }
+        }
+
+        if self.renaming_testbench == Some(index) {
+            self.renaming_testbench = None;
+        } else if let Some(renaming_index) = self.renaming_testbench {
+            if renaming_index > index {
+                self.renaming_testbench = Some(renaming_index - 1);
+            }
+        }
     }
 
     fn save_active_circuit_document(&mut self) {
