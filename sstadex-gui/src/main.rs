@@ -34,7 +34,7 @@ struct SstadexApp {
     active_circuit: usize,
     renaming_circuit: Option<usize>,
     bottom_view: BottomView,
-    testbenches: Vec<GuiTestbench>,
+    testbenches: Vec<GuiTestbenchDocument>,
     selected_testbench: Option<usize>,
     renaming_testbench: Option<usize>,
     project_path: String,
@@ -90,12 +90,14 @@ enum BottomView {
     Testbenches,
 }
 
-struct GuiTestbench {
+#[derive(Clone)]
+struct GuiTestbenchDocument {
     name: String,
     elements: Vec<GuiTestbenchElement>,
     extra_body: String,
 }
 
+#[derive(Clone)]
 struct GuiTestbenchElement {
     kind: GuiTestbenchElementKind,
     name: String,
@@ -117,6 +119,8 @@ struct GuiProject {
     version: u32,
     active_circuit: usize,
     circuits: Vec<GuiProjectCircuit>,
+    selected_testbench: Option<usize>,
+    testbenches: Vec<GuiProjectTestbench>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -127,6 +131,31 @@ struct GuiProjectCircuit {
     connections: Vec<GuiProjectConnection>,
     next_instance_id: usize,
     next_label_pin_id: usize,
+}
+
+#[derive(Serialize, Deserialize)]
+struct GuiProjectTestbench {
+    name: String,
+    elements: Vec<GuiProjectTestbenchElement>,
+    extra_body: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct GuiProjectTestbenchElement {
+    kind: GuiProjectTestbenchElementKind,
+    name: String,
+    nplus: String,
+    nminus: String,
+    value: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum GuiProjectTestbenchElementKind {
+    VoltageSource,
+    CurrentSource,
+    Resistor,
+    Capacitor,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -771,7 +800,7 @@ impl SstadexApp {
     fn add_testbench(&mut self) {
         let index = self.testbenches.len() + 1;
 
-        self.testbenches.push(GuiTestbench {
+        self.testbenches.push(GuiTestbenchDocument {
             name: format!("tb_{index}"),
             elements: Vec::new(),
             extra_body: String::new(),
@@ -946,7 +975,7 @@ impl SstadexApp {
             }
         };
 
-        if project.version != 2 {
+        if project.version != 3 {
             return format!(
                 "Cannot open circuit: unsupported GUI project version {}",
                 project.version
@@ -966,12 +995,18 @@ impl SstadexApp {
 
     fn gui_project(&self) -> GuiProject {
         GuiProject {
-            version: 2,
+            version: 3,
             active_circuit: self.active_circuit,
             circuits: self
                 .circuits
                 .iter()
                 .map(GuiProjectCircuit::from_circuit_document)
+                .collect(),
+            selected_testbench: self.selected_testbench,
+            testbenches: self
+                .testbenches
+                .iter()
+                .map(GuiProjectTestbench::from_testbench_document)
                 .collect(),
         }
     }
@@ -989,6 +1024,14 @@ impl SstadexApp {
 
         self.circuits = circuits;
         self.active_circuit = project.active_circuit.min(self.circuits.len() - 1);
+        self.testbenches = project
+            .testbenches
+            .into_iter()
+            .map(GuiProjectTestbench::into_testbench_document)
+            .collect();
+        self.selected_testbench = project
+            .selected_testbench
+            .filter(|index| *index < self.testbenches.len());
         self.load_active_circuit_document();
 
         self.selected_instance_id = None;
@@ -1102,33 +1145,17 @@ impl SstadexApp {
             return;
         }
 
-        ui.horizontal(|ui| {
-            ui.vertical(|ui| {
-                ui.heading("Testbenches");
-                for (index, testbench) in self.testbenches.iter().enumerate() {
-                    let label = if testbench.name.trim().is_empty() {
-                        "(unnamed)"
-                    } else {
-                        testbench.name.as_str()
-                    };
-                    ui.selectable_value(&mut self.selected_testbench, Some(index), label);
-                }
-            });
+        let Some(selected_index) = self.selected_testbench else {
+            ui.label("Select a testbench from the project browser");
+            return;
+        };
+        let Some(testbench) = self.testbenches.get_mut(selected_index) else {
+            self.selected_testbench = None;
+            return;
+        };
 
-            ui.separator();
-
-            let Some(selected_index) = self.selected_testbench else {
-                ui.label("Select a testbench");
-                return;
-            };
-            let Some(testbench) = self.testbenches.get_mut(selected_index) else {
-                self.selected_testbench = None;
-                return;
-            };
-
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                show_testbench_editor(ui, selected_index, testbench);
-            });
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            show_testbench_editor(ui, selected_index, testbench);
         });
     }
 
@@ -1322,6 +1349,74 @@ impl GuiProjectCircuit {
     }
 }
 
+impl GuiProjectTestbench {
+    fn from_testbench_document(testbench: &GuiTestbenchDocument) -> Self {
+        Self {
+            name: testbench.name.clone(),
+            elements: testbench
+                .elements
+                .iter()
+                .map(GuiProjectTestbenchElement::from_testbench_element)
+                .collect(),
+            extra_body: testbench.extra_body.clone(),
+        }
+    }
+
+    fn into_testbench_document(self) -> GuiTestbenchDocument {
+        GuiTestbenchDocument {
+            name: self.name,
+            elements: self
+                .elements
+                .into_iter()
+                .map(GuiProjectTestbenchElement::into_testbench_element)
+                .collect(),
+            extra_body: self.extra_body,
+        }
+    }
+}
+
+impl GuiProjectTestbenchElement {
+    fn from_testbench_element(element: &GuiTestbenchElement) -> Self {
+        Self {
+            kind: GuiProjectTestbenchElementKind::from_testbench_kind(element.kind),
+            name: element.name.clone(),
+            nplus: element.nplus.clone(),
+            nminus: element.nminus.clone(),
+            value: element.value.clone(),
+        }
+    }
+
+    fn into_testbench_element(self) -> GuiTestbenchElement {
+        GuiTestbenchElement {
+            kind: self.kind.into_testbench_kind(),
+            name: self.name,
+            nplus: self.nplus,
+            nminus: self.nminus,
+            value: self.value,
+        }
+    }
+}
+
+impl GuiProjectTestbenchElementKind {
+    fn from_testbench_kind(kind: GuiTestbenchElementKind) -> Self {
+        match kind {
+            GuiTestbenchElementKind::VoltageSource => Self::VoltageSource,
+            GuiTestbenchElementKind::CurrentSource => Self::CurrentSource,
+            GuiTestbenchElementKind::Resistor => Self::Resistor,
+            GuiTestbenchElementKind::Capacitor => Self::Capacitor,
+        }
+    }
+
+    fn into_testbench_kind(self) -> GuiTestbenchElementKind {
+        match self {
+            Self::VoltageSource => GuiTestbenchElementKind::VoltageSource,
+            Self::CurrentSource => GuiTestbenchElementKind::CurrentSource,
+            Self::Resistor => GuiTestbenchElementKind::Resistor,
+            Self::Capacitor => GuiTestbenchElementKind::Capacitor,
+        }
+    }
+}
+
 impl GuiProjectConnection {
     fn from_canvas_connection(connection: &CanvasConnection) -> Self {
         Self {
@@ -1365,7 +1460,11 @@ impl GuiProjectEndpoint {
     }
 }
 
-fn show_testbench_editor(ui: &mut egui::Ui, testbench_index: usize, testbench: &mut GuiTestbench) {
+fn show_testbench_editor(
+    ui: &mut egui::Ui,
+    testbench_index: usize,
+    testbench: &mut GuiTestbenchDocument,
+) {
     ui.heading("Testbench");
     ui.horizontal(|ui| {
         ui.label("Name:");
@@ -1460,7 +1559,9 @@ fn node_b_label(kind: GuiTestbenchElementKind) -> &'static str {
     }
 }
 
-fn gui_testbenches_to_specs(testbenches: &[GuiTestbench]) -> Result<Vec<TestbenchSpec>, String> {
+fn gui_testbenches_to_specs(
+    testbenches: &[GuiTestbenchDocument],
+) -> Result<Vec<TestbenchSpec>, String> {
     let mut specs = Vec::with_capacity(testbenches.len());
 
     for (index, testbench) in testbenches.iter().enumerate() {
