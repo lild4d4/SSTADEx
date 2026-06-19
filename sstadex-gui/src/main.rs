@@ -391,8 +391,7 @@ impl SstadexApp {
 
         egui::Window::new("Insert primitive")
             .open(&mut is_open)
-            .default_width(440.0)
-            .default_height(300.0)
+            .fixed_size(egui::vec2(440.0, 300.0))
             .resizable(false)
             .show(ctx, |ui| {
                 if let Some(error) = &self.load_error {
@@ -419,6 +418,7 @@ impl SstadexApp {
                         ui.separator();
 
                         egui::ScrollArea::vertical()
+                            .id_salt("insert_primitive_catalog_scroll")
                             .max_height(190.0)
                             .show(ui, |ui| {
                                 for primitive in catalog.list() {
@@ -439,6 +439,7 @@ impl SstadexApp {
                         ui.separator();
 
                         egui::ScrollArea::vertical()
+                            .id_salt("insert_primitive_preview_scroll")
                             .max_height(210.0)
                             .show(ui, |ui| {
                                 if let Some(primitive) = self
