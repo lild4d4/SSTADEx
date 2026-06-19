@@ -20,7 +20,6 @@ fn main() -> eframe::Result {
 }
 
 struct SstadexApp {
-    primitives_dir: PathBuf,
     catalog: Option<PrimitiveCatalog>,
     load_error: Option<String>,
     show_insert_primitive_window: bool,
@@ -159,7 +158,6 @@ impl Default for SstadexApp {
         };
 
         Self {
-            primitives_dir,
             catalog,
             load_error,
             show_insert_primitive_window: false,
@@ -393,8 +391,9 @@ impl SstadexApp {
 
         egui::Window::new("Insert primitive")
             .open(&mut is_open)
-            .default_width(520.0)
-            .default_height(360.0)
+            .default_width(440.0)
+            .default_height(300.0)
+            .resizable(false)
             .show(ctx, |ui| {
                 if let Some(error) = &self.load_error {
                     ui.label(format!("Failed to load catalog: {error}"));
@@ -413,14 +412,14 @@ impl SstadexApp {
                         .map(|primitive| primitive.name.clone());
                 }
 
-                ui.horizontal(|ui| {
+                ui.horizontal_top(|ui| {
                     ui.vertical(|ui| {
+                        ui.set_width(180.0);
                         ui.heading("Primitives");
-                        ui.label(self.primitives_dir.display().to_string());
                         ui.separator();
 
                         egui::ScrollArea::vertical()
-                            .max_height(240.0)
+                            .max_height(190.0)
                             .show(ui, |ui| {
                                 for primitive in catalog.list() {
                                     ui.selectable_value(
@@ -435,6 +434,7 @@ impl SstadexApp {
                     ui.separator();
 
                     ui.vertical(|ui| {
+                        ui.set_width(220.0);
                         ui.heading("Preview");
                         ui.separator();
 
@@ -1246,35 +1246,32 @@ fn required_text(value: &str, owner: &str, field: &str) -> Result<String, String
 }
 
 fn show_primitive_details(ui: &mut egui::Ui, primitive: &PrimitiveManifest) {
-    ui.heading(&primitive.name);
+    ui.label(&primitive.name);
     ui.label(format!("Subckt: {}", primitive.subckt_name));
     ui.label(format!("Version: {}", primitive.version));
-    ui.label(format!("Netlist: {}", primitive.files.netlist));
 
     if let Some(description) = &primitive.description {
-        ui.separator();
         ui.label(description);
     }
 
-    ui.separator();
-    ui.heading("Pins");
-
-    for pin in &primitive.pins {
-        ui.horizontal(|ui| {
-            ui.label(&pin.name);
-            ui.label(pin_role_label(&pin.role));
-        });
-    }
+    ui.collapsing("Pins", |ui| {
+        for pin in &primitive.pins {
+            ui.horizontal(|ui| {
+                ui.label(&pin.name);
+                ui.label(pin_role_label(&pin.role));
+            });
+        }
+    });
 }
 
 fn draw_primitive_preview(ui: &mut egui::Ui, primitive: &PrimitiveManifest) {
-    let preview_size = egui::vec2(220.0, 140.0);
+    let preview_size = egui::vec2(200.0, 110.0);
     let (rect, _) = ui.allocate_exact_size(preview_size, egui::Sense::hover());
     let painter = ui.painter_at(rect);
 
     painter.rect_filled(rect, 4.0, egui::Color32::from_gray(28));
 
-    let symbol_rect = egui::Rect::from_center_size(rect.center(), egui::vec2(160.0, 72.0));
+    let symbol_rect = egui::Rect::from_center_size(rect.center(), egui::vec2(150.0, 64.0));
     painter.rect_filled(symbol_rect, 4.0, egui::Color32::from_rgb(45, 49, 56));
     painter.rect_stroke(
         symbol_rect,
@@ -1286,7 +1283,7 @@ fn draw_primitive_preview(ui: &mut egui::Ui, primitive: &PrimitiveManifest) {
         symbol_rect.center_top() + egui::vec2(0.0, 16.0),
         egui::Align2::CENTER_TOP,
         &primitive.name,
-        egui::FontId::proportional(15.0),
+        egui::FontId::proportional(13.0),
         egui::Color32::WHITE,
     );
 
