@@ -22,8 +22,9 @@ fn main() -> eframe::Result {
 struct SstadexApp {
     primitives_dir: PathBuf,
     catalog: Option<PrimitiveCatalog>,
-    selected_primitive: Option<String>,
     load_error: Option<String>,
+    show_insert_primitive_window: bool,
+    insert_primitive_selection: Option<String>,
     canvas_instances: Vec<CanvasInstance>,
     label_pins: Vec<CanvasLabelPin>,
     selected_instance_id: Option<usize>,
@@ -160,8 +161,9 @@ impl Default for SstadexApp {
         Self {
             primitives_dir,
             catalog,
-            selected_primitive: None,
             load_error,
+            show_insert_primitive_window: false,
+            insert_primitive_selection: None,
             canvas_instances: Vec::new(),
             label_pins: Vec::new(),
             selected_instance_id: None,
@@ -209,43 +211,16 @@ impl eframe::App for SstadexApp {
                 if ui.button("Add lab pin").clicked() {
                     self.add_label_pin();
                 }
+                if ui.button("Insert primitive").clicked() {
+                    self.show_insert_primitive_window = true;
+                }
                 if ui.button("Run MNA").clicked() {
                     self.output_log = self.run_mna_from_canvas();
                 }
             });
         });
 
-        egui::SidePanel::left("primitive_catalog")
-            .resizable(true)
-            .default_width(220.0)
-            .show(ctx, |ui| {
-                ui.heading("Primitive catalog");
-                ui.label(self.primitives_dir.display().to_string());
-                ui.separator();
-
-                if let Some(error) = &self.load_error {
-                    ui.label(format!("Failed to load catalog: {error}"));
-                    return;
-                }
-
-                if let Some(catalog) = &self.catalog {
-                    for primitive in catalog.list() {
-                        let response = ui.selectable_value(
-                            &mut self.selected_primitive,
-                            Some(primitive.name.clone()),
-                            &primitive.name,
-                        );
-
-                        if response.clicked() {
-                            self.selected_instance_id = None;
-                            self.selected_endpoint = None;
-                            self.pending_connection = None;
-                        }
-                    }
-                } else {
-                    ui.label("No primitives loaded yet");
-                }
-            });
+        self.show_insert_primitive_window(ctx);
 
         egui::SidePanel::right("details")
             .resizable(true)
@@ -261,13 +236,6 @@ impl eframe::App for SstadexApp {
 
                     if let Some(instance) = self.selected_instance_mut() {
                         show_instance_details(ui, instance, selected_endpoint.as_ref());
-                    } else if let Some(primitive) = self.selected_primitive().cloned() {
-                        show_primitive_details(ui, &primitive);
-
-                        ui.separator();
-                        if ui.button("Add to canvas").clicked() {
-                            self.add_canvas_instance(&primitive.name);
-                        }
                     } else {
                         ui.label("Nothing selected");
                     }
@@ -406,19 +374,107 @@ impl eframe::App for SstadexApp {
 }
 
 impl SstadexApp {
-    fn selected_primitive(&self) -> Option<&PrimitiveManifest> {
-        let catalog = self.catalog.as_ref()?;
-        let name = self.selected_primitive.as_ref()?;
-
-        catalog.get(name)
-    }
-
     fn selected_instance_mut(&mut self) -> Option<&mut CanvasInstance> {
         let id = self.selected_instance_id?;
 
         self.canvas_instances
             .iter_mut()
             .find(|instance| instance.id == id)
+    }
+
+    fn show_insert_primitive_window(&mut self, ctx: &egui::Context) {
+        if !self.show_insert_primitive_window {
+            return;
+        }
+
+        let mut is_open = self.show_insert_primitive_window;
+        let mut primitive_to_insert = None;
+        let mut close_requested = false;
+
+        egui::Window::new("Insert primitive")
+            .open(&mut is_open)
+            .default_width(520.0)
+            .default_height(360.0)
+            .show(ctx, |ui| {
+                if let Some(error) = &self.load_error {
+                    ui.label(format!("Failed to load catalog: {error}"));
+                    return;
+                }
+
+                let Some(catalog) = &self.catalog else {
+                    ui.label("No primitives loaded yet");
+                    return;
+                };
+
+                if self.insert_primitive_selection.is_none() {
+                    self.insert_primitive_selection = catalog
+                        .list()
+                        .first()
+                        .map(|primitive| primitive.name.clone());
+                }
+
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        ui.heading("Primitives");
+                        ui.label(self.primitives_dir.display().to_string());
+                        ui.separator();
+
+                        egui::ScrollArea::vertical()
+                            .max_height(240.0)
+                            .show(ui, |ui| {
+                                for primitive in catalog.list() {
+                                    ui.selectable_value(
+                                        &mut self.insert_primitive_selection,
+                                        Some(primitive.name.clone()),
+                                        &primitive.name,
+                                    );
+                                }
+                            });
+                    });
+
+                    ui.separator();
+
+                    ui.vertical(|ui| {
+                        ui.heading("Preview");
+                        ui.separator();
+
+                        if let Some(primitive) = self
+                            .insert_primitive_selection
+                            .as_ref()
+                            .and_then(|name| catalog.get(name))
+                        {
+                            show_primitive_details(ui, primitive);
+                            ui.separator();
+                            draw_primitive_preview(ui, primitive);
+                        } else {
+                            ui.label("Select a primitive");
+                        }
+                    });
+                });
+
+                ui.separator();
+                ui.horizontal(|ui| {
+                    let can_insert = self.insert_primitive_selection.is_some();
+                    if ui
+                        .add_enabled(can_insert, egui::Button::new("Insert"))
+                        .clicked()
+                    {
+                        primitive_to_insert = self.insert_primitive_selection.clone();
+                    }
+                    if ui.button("Cancel").clicked() {
+                        close_requested = true;
+                    }
+                });
+            });
+
+        if let Some(primitive_name) = primitive_to_insert {
+            self.add_canvas_instance(&primitive_name);
+            is_open = false;
+        } else if close_requested {
+            is_open = false;
+        }
+
+        self.show_insert_primitive_window = is_open;
     }
 
     fn selected_label_pin_mut(&mut self) -> Option<&mut CanvasLabelPin> {
@@ -804,10 +860,6 @@ impl SstadexApp {
     }
 
     fn show_logs_ui(&mut self, ui: &mut egui::Ui) {
-        ui.label(format!(
-            "Selected primitive: {}",
-            self.selected_primitive.as_deref().unwrap_or("none")
-        ));
         ui.label(format!(
             "Selected instance: {}",
             self.selected_instance_id
@@ -1213,6 +1265,32 @@ fn show_primitive_details(ui: &mut egui::Ui, primitive: &PrimitiveManifest) {
             ui.label(pin_role_label(&pin.role));
         });
     }
+}
+
+fn draw_primitive_preview(ui: &mut egui::Ui, primitive: &PrimitiveManifest) {
+    let preview_size = egui::vec2(220.0, 140.0);
+    let (rect, _) = ui.allocate_exact_size(preview_size, egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+
+    painter.rect_filled(rect, 4.0, egui::Color32::from_gray(28));
+
+    let symbol_rect = egui::Rect::from_center_size(rect.center(), egui::vec2(160.0, 72.0));
+    painter.rect_filled(symbol_rect, 4.0, egui::Color32::from_rgb(45, 49, 56));
+    painter.rect_stroke(
+        symbol_rect,
+        4.0,
+        egui::Stroke::new(1.0, egui::Color32::from_rgb(130, 150, 170)),
+        egui::StrokeKind::Inside,
+    );
+    painter.text(
+        symbol_rect.center_top() + egui::vec2(0.0, 16.0),
+        egui::Align2::CENTER_TOP,
+        &primitive.name,
+        egui::FontId::proportional(15.0),
+        egui::Color32::WHITE,
+    );
+
+    draw_instance_pins(&painter, symbol_rect, 0, primitive, None);
 }
 
 fn show_instance_details(
