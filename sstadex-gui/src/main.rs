@@ -7,6 +7,7 @@ use libsstadex::catalog::{load_primitive_catalog, PrimitiveCatalog};
 use libsstadex::circuit::{save_circuit, Circuit, Connection, Instance, PinRef};
 use libsstadex::exploration::{save_testbenches, TestbenchElement, TestbenchSpec};
 use libsstadex::primitive::manifest::{PinRole, PrimitiveManifest, SymbolPinSide};
+use serde::{Deserialize, Serialize};
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions::default();
@@ -32,6 +33,7 @@ struct SstadexApp {
     bottom_view: BottomView,
     testbenches: Vec<GuiTestbench>,
     selected_testbench: Option<usize>,
+    project_path: String,
     output_log: String,
     next_instance_id: usize,
     next_label_pin_id: usize,
@@ -94,6 +96,49 @@ enum GuiTestbenchElementKind {
     Capacitor,
 }
 
+#[derive(Serialize, Deserialize)]
+struct GuiProject {
+    version: u32,
+    circuit_name: String,
+    instances: Vec<GuiProjectInstance>,
+    label_pins: Vec<GuiProjectLabelPin>,
+    connections: Vec<GuiProjectConnection>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct GuiProjectInstance {
+    id: usize,
+    name: String,
+    primitive: String,
+    position: GuiProjectPosition,
+}
+
+#[derive(Serialize, Deserialize)]
+struct GuiProjectLabelPin {
+    id: usize,
+    name: String,
+    position: GuiProjectPosition,
+}
+
+#[derive(Serialize, Deserialize)]
+struct GuiProjectConnection {
+    from: GuiProjectEndpoint,
+    to: GuiProjectEndpoint,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum GuiProjectEndpoint {
+    PrimitivePin { instance_id: usize, pin: String },
+    LabelPin { label_id: usize },
+}
+
+#[derive(Serialize, Deserialize)]
+struct GuiProjectPosition {
+    x: f32,
+    y: f32,
+}
+
 struct CanvasView {
     rect: egui::Rect,
 }
@@ -126,6 +171,7 @@ impl Default for SstadexApp {
             bottom_view: BottomView::Logs,
             testbenches: Vec::new(),
             selected_testbench: None,
+            project_path: default_project_path().display().to_string(),
             output_log: "Logs, netlists, and MNA results will appear here".to_string(),
             next_instance_id: 1,
             next_label_pin_id: 1,
@@ -140,9 +186,26 @@ impl eframe::App for SstadexApp {
         }
 
         egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                let _ = ui.button("Open circuit");
-                let _ = ui.button("Save circuit");
+            ui.horizontal_wrapped(|ui| {
+                ui.label("Project:");
+                ui.add_sized(
+                    egui::vec2(320.0, 20.0),
+                    egui::TextEdit::singleline(&mut self.project_path),
+                );
+                if ui.button("Open...").clicked() {
+                    self.choose_open_project_path();
+                }
+                if ui.button("Save as...").clicked() {
+                    self.choose_save_project_path();
+                }
+                if ui.button("Open circuit").clicked() {
+                    self.output_log = self.open_gui_project();
+                    self.bottom_view = BottomView::Logs;
+                }
+                if ui.button("Save circuit").clicked() {
+                    self.output_log = self.save_gui_project();
+                    self.bottom_view = BottomView::Logs;
+                }
                 if ui.button("Add lab pin").clicked() {
                     self.add_label_pin();
                 }
@@ -482,6 +545,208 @@ impl SstadexApp {
         }
     }
 
+    fn choose_open_project_path(&mut self) {
+        if let Some(path) = rfd::FileDialog::new()
+            .set_directory(project_dialog_dir(&self.project_path))
+            .add_filter("SSTADEx GUI project", &["json"])
+            .pick_file()
+        {
+            self.project_path = path.display().to_string();
+        }
+    }
+
+    fn choose_save_project_path(&mut self) {
+        if let Some(path) = rfd::FileDialog::new()
+            .set_directory(project_dialog_dir(&self.project_path))
+            .set_file_name(project_dialog_file_name(&self.project_path))
+            .add_filter("SSTADEx GUI project", &["json"])
+            .save_file()
+        {
+            self.project_path = path.display().to_string();
+        }
+    }
+
+    fn save_gui_project(&self) -> String {
+        let project_path = match project_path_from_input(&self.project_path) {
+            Ok(path) => path,
+            Err(error) => return format!("Cannot save circuit: {error}"),
+        };
+        let output_dir = project_path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(default_project_dir);
+        let circuit_path = output_dir.join("gui_canvas.json");
+
+        if let Err(error) = std::fs::create_dir_all(&output_dir) {
+            return format!(
+                "Cannot save circuit: failed to create output directory '{}'\n\n{error}",
+                output_dir.display()
+            );
+        }
+
+        let project = self.gui_project();
+        let project_content = match serde_json::to_string_pretty(&project) {
+            Ok(content) => content,
+            Err(error) => {
+                return format!("Cannot save circuit: failed to serialize GUI project\n\n{error}");
+            }
+        };
+
+        if let Err(error) = std::fs::write(&project_path, project_content) {
+            return format!(
+                "Cannot save circuit: failed to write GUI project '{}'\n\n{error}",
+                project_path.display()
+            );
+        }
+
+        let circuit = self.build_circuit_from_canvas();
+        if let Err(error) = save_circuit(&circuit_path, &circuit) {
+            return format!(
+                "Saved GUI project but failed to export circuit JSON '{}'\n\n{error:?}",
+                circuit_path.display()
+            );
+        }
+
+        format!(
+            "Saved circuit project\n\nProject: {}\nCircuit JSON: {}\nInstances: {}\nConnections: {}",
+            project_path.display(),
+            circuit_path.display(),
+            self.canvas_instances.len(),
+            self.connections.len()
+        )
+    }
+
+    fn open_gui_project(&mut self) -> String {
+        let project_path = match project_path_from_input(&self.project_path) {
+            Ok(path) => path,
+            Err(error) => return format!("Cannot open circuit: {error}"),
+        };
+        let content = match std::fs::read_to_string(&project_path) {
+            Ok(content) => content,
+            Err(error) => {
+                return format!(
+                    "Cannot open circuit: failed to read GUI project '{}'\n\n{error}",
+                    project_path.display()
+                );
+            }
+        };
+
+        let project: GuiProject = match serde_json::from_str(&content) {
+            Ok(project) => project,
+            Err(error) => {
+                return format!(
+                    "Cannot open circuit: invalid GUI project '{}'\n\n{error}",
+                    project_path.display()
+                );
+            }
+        };
+
+        if project.version != 1 {
+            return format!(
+                "Cannot open circuit: unsupported GUI project version {}",
+                project.version
+            );
+        }
+
+        self.apply_gui_project(project);
+
+        format!(
+            "Opened circuit project\n\nProject: {}\nInstances: {}\nLab pins: {}\nConnections: {}",
+            project_path.display(),
+            self.canvas_instances.len(),
+            self.label_pins.len(),
+            self.connections.len()
+        )
+    }
+
+    fn gui_project(&self) -> GuiProject {
+        GuiProject {
+            version: 1,
+            circuit_name: "gui_canvas".to_string(),
+            instances: self
+                .canvas_instances
+                .iter()
+                .map(|instance| GuiProjectInstance {
+                    id: instance.id,
+                    name: exported_instance_name(instance),
+                    primitive: instance.primitive_name.clone(),
+                    position: GuiProjectPosition::from_pos(instance.position),
+                })
+                .collect(),
+            label_pins: self
+                .label_pins
+                .iter()
+                .map(|label_pin| GuiProjectLabelPin {
+                    id: label_pin.id,
+                    name: label_pin.name.clone(),
+                    position: GuiProjectPosition::from_pos(label_pin.position),
+                })
+                .collect(),
+            connections: self
+                .connections
+                .iter()
+                .map(GuiProjectConnection::from_canvas_connection)
+                .collect(),
+        }
+    }
+
+    fn apply_gui_project(&mut self, project: GuiProject) {
+        self.canvas_instances = project
+            .instances
+            .into_iter()
+            .map(|instance| CanvasInstance {
+                id: instance.id,
+                instance_name: instance.name,
+                primitive_name: instance.primitive,
+                position: instance.position.to_pos(),
+            })
+            .collect();
+        self.label_pins = project
+            .label_pins
+            .into_iter()
+            .map(|label_pin| CanvasLabelPin {
+                id: label_pin.id,
+                name: label_pin.name,
+                position: label_pin.position.to_pos(),
+            })
+            .collect();
+        self.connections = project
+            .connections
+            .into_iter()
+            .map(GuiProjectConnection::into_canvas_connection)
+            .filter(|connection| {
+                project_connection_endpoint_exists(
+                    &connection.from,
+                    &self.canvas_instances,
+                    &self.label_pins,
+                ) && project_connection_endpoint_exists(
+                    &connection.to,
+                    &self.canvas_instances,
+                    &self.label_pins,
+                )
+            })
+            .collect();
+
+        self.selected_instance_id = None;
+        self.selected_endpoint = None;
+        self.pending_connection = None;
+        self.next_instance_id = self
+            .canvas_instances
+            .iter()
+            .map(|instance| instance.id)
+            .max()
+            .unwrap_or(0)
+            + 1;
+        self.next_label_pin_id = self
+            .label_pins
+            .iter()
+            .map(|label_pin| label_pin.id)
+            .max()
+            .unwrap_or(0)
+            + 1;
+    }
+
     fn build_circuit_from_canvas(&self) -> Circuit {
         let mut circuit = Circuit::new("gui_canvas");
 
@@ -699,6 +964,62 @@ impl GuiTestbenchElement {
             nplus: String::new(),
             nminus: "0".to_string(),
             value: String::new(),
+        }
+    }
+}
+
+impl GuiProjectPosition {
+    fn from_pos(position: egui::Pos2) -> Self {
+        Self {
+            x: position.x,
+            y: position.y,
+        }
+    }
+
+    fn to_pos(&self) -> egui::Pos2 {
+        egui::pos2(self.x, self.y)
+    }
+}
+
+impl GuiProjectConnection {
+    fn from_canvas_connection(connection: &CanvasConnection) -> Self {
+        Self {
+            from: GuiProjectEndpoint::from_canvas_endpoint(&connection.from),
+            to: GuiProjectEndpoint::from_canvas_endpoint(&connection.to),
+        }
+    }
+
+    fn into_canvas_connection(self) -> CanvasConnection {
+        CanvasConnection {
+            from: self.from.into_canvas_endpoint(),
+            to: self.to.into_canvas_endpoint(),
+        }
+    }
+}
+
+impl GuiProjectEndpoint {
+    fn from_canvas_endpoint(endpoint: &CanvasEndpoint) -> Self {
+        match endpoint {
+            CanvasEndpoint::PrimitivePin {
+                instance_id,
+                pin_name,
+            } => Self::PrimitivePin {
+                instance_id: *instance_id,
+                pin: pin_name.clone(),
+            },
+            CanvasEndpoint::LabelPin { label_id } => Self::LabelPin {
+                label_id: *label_id,
+            },
+        }
+    }
+
+    fn into_canvas_endpoint(self) -> CanvasEndpoint {
+        match self {
+            Self::PrimitivePin { instance_id, pin } => CanvasEndpoint::PrimitivePin {
+                instance_id,
+                pin_name: pin,
+            },
+            Self::LabelPin { label_id } => CanvasEndpoint::LabelPin { label_id },
         }
     }
 }
@@ -955,6 +1276,21 @@ fn update_pending_connection(
     }
 }
 
+fn project_connection_endpoint_exists(
+    endpoint: &CanvasEndpoint,
+    instances: &[CanvasInstance],
+    label_pins: &[CanvasLabelPin],
+) -> bool {
+    match endpoint {
+        CanvasEndpoint::PrimitivePin { instance_id, .. } => {
+            instances.iter().any(|instance| instance.id == *instance_id)
+        }
+        CanvasEndpoint::LabelPin { label_id } => {
+            label_pins.iter().any(|label_pin| label_pin.id == *label_id)
+        }
+    }
+}
+
 fn draw_canvas_connections(
     painter: &egui::Painter,
     canvas: &CanvasView,
@@ -1055,6 +1391,46 @@ fn format_endpoint(endpoint: &CanvasEndpoint) -> String {
 
 fn circuit_instance_id(instance_id: usize) -> String {
     format!("x{instance_id}")
+}
+
+fn default_project_dir() -> PathBuf {
+    std::env::current_dir().unwrap_or_else(|_| std::env::temp_dir().join("sstadex-gui-mna"))
+}
+
+fn default_project_path() -> PathBuf {
+    default_project_dir().join("gui_project.json")
+}
+
+fn project_path_from_input(input: &str) -> Result<PathBuf, String> {
+    let trimmed = input.trim();
+
+    if trimmed.is_empty() {
+        return Err("project path is empty".to_string());
+    }
+
+    Ok(PathBuf::from(trimmed))
+}
+
+fn project_dialog_dir(input: &str) -> PathBuf {
+    project_path_from_input(input)
+        .ok()
+        .and_then(|path| {
+            path.parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .map(PathBuf::from)
+        })
+        .unwrap_or_else(default_project_dir)
+}
+
+fn project_dialog_file_name(input: &str) -> String {
+    project_path_from_input(input)
+        .ok()
+        .and_then(|path| {
+            path.file_name()
+                .filter(|name| !name.is_empty())
+                .map(|name| name.to_string_lossy().into_owned())
+        })
+        .unwrap_or_else(|| "gui_project.json".to_string())
 }
 
 fn next_available_instance_name(instances: &[CanvasInstance]) -> String {
