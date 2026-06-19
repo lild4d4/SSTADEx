@@ -101,8 +101,31 @@ enum ActiveDocument {
 struct GuiTestbenchDocument {
     name: String,
     elements: Vec<GuiTestbenchElement>,
+    connections: Vec<GuiTestbenchConnection>,
+    selected_endpoint: Option<TestbenchEndpoint>,
+    pending_connection: Option<TestbenchEndpoint>,
     extra_body: String,
     next_element_id: usize,
+}
+
+#[derive(Clone)]
+struct GuiTestbenchConnection {
+    from: TestbenchEndpoint,
+    to: TestbenchEndpoint,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+enum TestbenchEndpoint {
+    ElementPin {
+        element_id: usize,
+        pin: TestbenchPin,
+    },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TestbenchPin {
+    A,
+    B,
 }
 
 #[derive(Clone)]
@@ -147,8 +170,32 @@ struct GuiProjectCircuit {
 struct GuiProjectTestbench {
     name: String,
     elements: Vec<GuiProjectTestbenchElement>,
+    #[serde(default)]
+    connections: Vec<GuiProjectTestbenchConnection>,
     extra_body: String,
     next_element_id: usize,
+}
+
+#[derive(Serialize, Deserialize)]
+struct GuiProjectTestbenchConnection {
+    from: GuiProjectTestbenchEndpoint,
+    to: GuiProjectTestbenchEndpoint,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum GuiProjectTestbenchEndpoint {
+    ElementPin {
+        element_id: usize,
+        pin: GuiProjectTestbenchPin,
+    },
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum GuiProjectTestbenchPin {
+    A,
+    B,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -904,6 +951,9 @@ impl SstadexApp {
         self.testbenches.push(GuiTestbenchDocument {
             name: format!("tb_{index}"),
             elements: Vec::new(),
+            connections: Vec::new(),
+            selected_endpoint: None,
+            pending_connection: None,
             extra_body: String::new(),
             next_element_id: 1,
         });
@@ -1078,7 +1128,7 @@ impl SstadexApp {
             }
         };
 
-        if project.version != 4 {
+        if !(4..=5).contains(&project.version) {
             return format!(
                 "Cannot open circuit: unsupported GUI project version {}",
                 project.version
@@ -1098,7 +1148,7 @@ impl SstadexApp {
 
     fn gui_project(&self) -> GuiProject {
         GuiProject {
-            version: 4,
+            version: 5,
             active_circuit: self.active_circuit,
             circuits: self
                 .circuits
@@ -1338,6 +1388,46 @@ impl GuiTestbenchDocument {
             .push(GuiTestbenchElement::new(kind, id, index));
         self.next_element_id += 1;
     }
+
+    fn remove_element(&mut self, element_index: usize) {
+        let Some(element) = self.elements.get(element_index) else {
+            return;
+        };
+        let element_id = element.id;
+
+        self.elements.remove(element_index);
+        self.connections
+            .retain(|connection| !connection.references_element(element_id));
+
+        if self
+            .selected_endpoint
+            .as_ref()
+            .is_some_and(|endpoint| endpoint.references_element(element_id))
+        {
+            self.selected_endpoint = None;
+        }
+        if self
+            .pending_connection
+            .as_ref()
+            .is_some_and(|endpoint| endpoint.references_element(element_id))
+        {
+            self.pending_connection = None;
+        }
+    }
+}
+
+impl GuiTestbenchConnection {
+    fn references_element(&self, element_id: usize) -> bool {
+        self.from.references_element(element_id) || self.to.references_element(element_id)
+    }
+}
+
+impl TestbenchEndpoint {
+    fn references_element(&self, id: usize) -> bool {
+        match self {
+            TestbenchEndpoint::ElementPin { element_id, .. } => *element_id == id,
+        }
+    }
 }
 
 impl GuiTestbenchElementKind {
@@ -1476,21 +1566,92 @@ impl GuiProjectTestbench {
                 .iter()
                 .map(GuiProjectTestbenchElement::from_testbench_element)
                 .collect(),
+            connections: testbench
+                .connections
+                .iter()
+                .map(GuiProjectTestbenchConnection::from_testbench_connection)
+                .collect(),
             extra_body: testbench.extra_body.clone(),
             next_element_id: testbench.next_element_id,
         }
     }
 
     fn into_testbench_document(self) -> GuiTestbenchDocument {
+        let elements = self
+            .elements
+            .into_iter()
+            .map(GuiProjectTestbenchElement::into_testbench_element)
+            .collect::<Vec<_>>();
+        let connections = self
+            .connections
+            .into_iter()
+            .map(GuiProjectTestbenchConnection::into_testbench_connection)
+            .filter(|connection| {
+                testbench_connection_endpoint_exists(&connection.from, &elements)
+                    && testbench_connection_endpoint_exists(&connection.to, &elements)
+            })
+            .collect();
+
         GuiTestbenchDocument {
             name: self.name,
-            elements: self
-                .elements
-                .into_iter()
-                .map(GuiProjectTestbenchElement::into_testbench_element)
-                .collect(),
+            elements,
+            connections,
+            selected_endpoint: None,
+            pending_connection: None,
             extra_body: self.extra_body,
             next_element_id: self.next_element_id,
+        }
+    }
+}
+
+impl GuiProjectTestbenchConnection {
+    fn from_testbench_connection(connection: &GuiTestbenchConnection) -> Self {
+        Self {
+            from: GuiProjectTestbenchEndpoint::from_testbench_endpoint(&connection.from),
+            to: GuiProjectTestbenchEndpoint::from_testbench_endpoint(&connection.to),
+        }
+    }
+
+    fn into_testbench_connection(self) -> GuiTestbenchConnection {
+        GuiTestbenchConnection {
+            from: self.from.into_testbench_endpoint(),
+            to: self.to.into_testbench_endpoint(),
+        }
+    }
+}
+
+impl GuiProjectTestbenchEndpoint {
+    fn from_testbench_endpoint(endpoint: &TestbenchEndpoint) -> Self {
+        match endpoint {
+            TestbenchEndpoint::ElementPin { element_id, pin } => Self::ElementPin {
+                element_id: *element_id,
+                pin: GuiProjectTestbenchPin::from_testbench_pin(*pin),
+            },
+        }
+    }
+
+    fn into_testbench_endpoint(self) -> TestbenchEndpoint {
+        match self {
+            Self::ElementPin { element_id, pin } => TestbenchEndpoint::ElementPin {
+                element_id,
+                pin: pin.into_testbench_pin(),
+            },
+        }
+    }
+}
+
+impl GuiProjectTestbenchPin {
+    fn from_testbench_pin(pin: TestbenchPin) -> Self {
+        match pin {
+            TestbenchPin::A => Self::A,
+            TestbenchPin::B => Self::B,
+        }
+    }
+
+    fn into_testbench_pin(self) -> TestbenchPin {
+        match self {
+            Self::A => TestbenchPin::A,
+            Self::B => TestbenchPin::B,
         }
     }
 }
@@ -1653,7 +1814,7 @@ fn show_testbench_editor(
     }
 
     if let Some(element_index) = remove_element {
-        testbench.elements.remove(element_index);
+        testbench.remove_element(element_index);
     }
 
     ui.separator();
@@ -1818,6 +1979,14 @@ fn draw_testbench_canvas(ui: &mut egui::Ui, testbench: &mut GuiTestbenchDocument
         return;
     }
 
+    draw_testbench_connections(
+        &painter,
+        canvas_rect,
+        &testbench.elements,
+        &testbench.connections,
+    );
+
+    let mut clicked_endpoint = None;
     for element in &mut testbench.elements {
         let center = canvas_rect.min + element.position.to_vec2();
         let rect = egui::Rect::from_center_size(center, egui::vec2(88.0, 54.0));
@@ -1827,7 +1996,35 @@ fn draw_testbench_canvas(ui: &mut egui::Ui, testbench: &mut GuiTestbenchDocument
             element.position += response.drag_delta();
         }
 
-        draw_testbench_element_symbol(&painter, rect, element);
+        for pin in [TestbenchPin::A, TestbenchPin::B] {
+            let endpoint = TestbenchEndpoint::ElementPin {
+                element_id: element.id,
+                pin,
+            };
+            let pin_position = testbench_pin_position(rect, pin);
+            let pin_rect = egui::Rect::from_center_size(pin_position, egui::vec2(14.0, 14.0));
+            let pin_response = ui.allocate_rect(pin_rect, egui::Sense::click());
+
+            if pin_response.clicked() {
+                clicked_endpoint = Some(endpoint);
+            }
+        }
+
+        draw_testbench_element_symbol(
+            &painter,
+            rect,
+            element,
+            testbench.selected_endpoint.as_ref(),
+        );
+    }
+
+    if let Some(endpoint) = clicked_endpoint {
+        testbench.selected_endpoint = Some(endpoint.clone());
+        update_pending_testbench_connection(
+            &mut testbench.pending_connection,
+            &mut testbench.connections,
+            endpoint,
+        );
     }
 }
 
@@ -1835,10 +2032,22 @@ fn draw_testbench_element_symbol(
     painter: &egui::Painter,
     rect: egui::Rect,
     element: &GuiTestbenchElement,
+    selected_endpoint: Option<&TestbenchEndpoint>,
 ) {
     let stroke = egui::Stroke::new(1.5, egui::Color32::from_rgb(130, 150, 170));
     let body_color = egui::Color32::from_rgb(45, 49, 56);
     let pin_color = egui::Color32::from_rgb(120, 210, 150);
+    let selected_pin_color = egui::Color32::from_rgb(245, 200, 80);
+    let pin_a_selected = selected_endpoint
+        == Some(&TestbenchEndpoint::ElementPin {
+            element_id: element.id,
+            pin: TestbenchPin::A,
+        });
+    let pin_b_selected = selected_endpoint
+        == Some(&TestbenchEndpoint::ElementPin {
+            element_id: element.id,
+            pin: TestbenchPin::B,
+        });
 
     painter.line_segment(
         [
@@ -1854,8 +2063,24 @@ fn draw_testbench_element_symbol(
         ],
         stroke,
     );
-    painter.circle_filled(egui::pos2(rect.left(), rect.center().y), 3.5, pin_color);
-    painter.circle_filled(egui::pos2(rect.right(), rect.center().y), 3.5, pin_color);
+    painter.circle_filled(
+        testbench_pin_position(rect, TestbenchPin::A),
+        4.0,
+        if pin_a_selected {
+            selected_pin_color
+        } else {
+            pin_color
+        },
+    );
+    painter.circle_filled(
+        testbench_pin_position(rect, TestbenchPin::B),
+        4.0,
+        if pin_b_selected {
+            selected_pin_color
+        } else {
+            pin_color
+        },
+    );
 
     match element.kind {
         GuiTestbenchElementKind::VoltageSource | GuiTestbenchElementKind::CurrentSource => {
@@ -1899,6 +2124,92 @@ fn draw_testbench_element_symbol(
         egui::FontId::proportional(11.0),
         egui::Color32::from_gray(220),
     );
+}
+
+fn update_pending_testbench_connection(
+    pending_connection: &mut Option<TestbenchEndpoint>,
+    connections: &mut Vec<GuiTestbenchConnection>,
+    selected_endpoint: TestbenchEndpoint,
+) {
+    match pending_connection.take() {
+        Some(from) if from != selected_endpoint => {
+            connections.push(GuiTestbenchConnection {
+                from,
+                to: selected_endpoint,
+            });
+        }
+        _ => {
+            *pending_connection = Some(selected_endpoint);
+        }
+    }
+}
+
+fn draw_testbench_connections(
+    painter: &egui::Painter,
+    canvas_rect: egui::Rect,
+    elements: &[GuiTestbenchElement],
+    connections: &[GuiTestbenchConnection],
+) {
+    let stroke = egui::Stroke::new(1.5, egui::Color32::from_rgb(105, 190, 230));
+
+    for connection in connections {
+        let Some(from) = testbench_endpoint_position(canvas_rect, elements, &connection.from)
+        else {
+            continue;
+        };
+        let Some(to) = testbench_endpoint_position(canvas_rect, elements, &connection.to) else {
+            continue;
+        };
+
+        draw_testbench_manhattan_connection(painter, from, to, stroke);
+    }
+}
+
+fn testbench_endpoint_position(
+    canvas_rect: egui::Rect,
+    elements: &[GuiTestbenchElement],
+    endpoint: &TestbenchEndpoint,
+) -> Option<egui::Pos2> {
+    match endpoint {
+        TestbenchEndpoint::ElementPin { element_id, pin } => {
+            let element = elements.iter().find(|element| element.id == *element_id)?;
+            let center = canvas_rect.min + element.position.to_vec2();
+            let rect = egui::Rect::from_center_size(center, egui::vec2(88.0, 54.0));
+
+            Some(testbench_pin_position(rect, *pin))
+        }
+    }
+}
+
+fn testbench_pin_position(rect: egui::Rect, pin: TestbenchPin) -> egui::Pos2 {
+    match pin {
+        TestbenchPin::A => egui::pos2(rect.left(), rect.center().y),
+        TestbenchPin::B => egui::pos2(rect.right(), rect.center().y),
+    }
+}
+
+fn draw_testbench_manhattan_connection(
+    painter: &egui::Painter,
+    from: egui::Pos2,
+    to: egui::Pos2,
+    stroke: egui::Stroke,
+) {
+    let escape = 18.0;
+    let from_escape = from + egui::vec2(escape, 0.0);
+    let to_escape = to - egui::vec2(escape, 0.0);
+    let mid_x = (from_escape.x + to_escape.x) * 0.5;
+    let points = [
+        from,
+        from_escape,
+        egui::pos2(mid_x, from_escape.y),
+        egui::pos2(mid_x, to_escape.y),
+        to_escape,
+        to,
+    ];
+
+    for segment in points.windows(2) {
+        painter.line_segment([segment[0], segment[1]], stroke);
+    }
 }
 
 fn show_instance_details(
@@ -1973,6 +2284,17 @@ fn project_connection_endpoint_exists(
         }
         CanvasEndpoint::LabelPin { label_id } => {
             label_pins.iter().any(|label_pin| label_pin.id == *label_id)
+        }
+    }
+}
+
+fn testbench_connection_endpoint_exists(
+    endpoint: &TestbenchEndpoint,
+    elements: &[GuiTestbenchElement],
+) -> bool {
+    match endpoint {
+        TestbenchEndpoint::ElementPin { element_id, .. } => {
+            elements.iter().any(|element| element.id == *element_id)
         }
     }
 }
