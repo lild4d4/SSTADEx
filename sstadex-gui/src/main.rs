@@ -114,7 +114,7 @@ struct GuiTestbenchConnection {
     to: TestbenchEndpoint,
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Hash, PartialEq, Eq)]
 enum TestbenchEndpoint {
     ElementPin {
         element_id: usize,
@@ -122,7 +122,7 @@ enum TestbenchEndpoint {
     },
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Hash, PartialEq, Eq)]
 enum TestbenchPin {
     A,
     B,
@@ -1765,6 +1765,7 @@ fn show_testbench_editor(
     });
 
     let mut remove_element = None;
+    let resolved_nodes = resolve_testbench_nodes(testbench, testbench_index + 1);
     for (element_index, element) in testbench.elements.iter_mut().enumerate() {
         ui.group(|ui| {
             ui.horizontal(|ui| {
@@ -1810,6 +1811,21 @@ fn show_testbench_editor(
                 ui.label("Value:");
                 ui.text_edit_singleline(&mut element.value);
             });
+
+            match &resolved_nodes {
+                Ok(nodes) => {
+                    ui.label(format!(
+                        "Resolved: {} {}, {} {}",
+                        node_a_label(element.kind).trim_end_matches(':'),
+                        display_testbench_node(element, TestbenchPin::A, nodes),
+                        node_b_label(element.kind).trim_end_matches(':'),
+                        display_testbench_node(element, TestbenchPin::B, nodes),
+                    ));
+                }
+                Err(error) => {
+                    ui.colored_label(egui::Color32::from_rgb(230, 90, 90), error);
+                }
+            }
         });
     }
 
@@ -1840,6 +1856,28 @@ fn node_b_label(kind: GuiTestbenchElementKind) -> &'static str {
     }
 }
 
+fn display_testbench_node(
+    element: &GuiTestbenchElement,
+    pin: TestbenchPin,
+    resolved_nodes: &HashMap<TestbenchEndpoint, String>,
+) -> String {
+    let endpoint = TestbenchEndpoint::ElementPin {
+        element_id: element.id,
+        pin,
+    };
+
+    if let Some(node) = resolved_nodes.get(&endpoint) {
+        return node.clone();
+    }
+
+    let manual_node = testbench_element_pin_text(element, pin).trim();
+    if manual_node.is_empty() {
+        "(unset)".to_string()
+    } else {
+        manual_node.to_string()
+    }
+}
+
 fn gui_testbenches_to_specs(
     testbenches: &[GuiTestbenchDocument],
 ) -> Result<Vec<TestbenchSpec>, String> {
@@ -1848,10 +1886,12 @@ fn gui_testbenches_to_specs(
     for (index, testbench) in testbenches.iter().enumerate() {
         let name = required_text(&testbench.name, &format!("testbench {}", index + 1), "name")?;
         let mut spec = TestbenchSpec::new(name);
+        let resolved_nodes = resolve_testbench_nodes(testbench, index + 1)?;
 
         for (element_index, element) in testbench.elements.iter().enumerate() {
             spec = spec.with_element(gui_testbench_element_to_spec(
                 element,
+                &resolved_nodes,
                 index + 1,
                 element_index + 1,
             )?);
@@ -1869,13 +1909,26 @@ fn gui_testbenches_to_specs(
 
 fn gui_testbench_element_to_spec(
     element: &GuiTestbenchElement,
+    resolved_nodes: &HashMap<TestbenchEndpoint, String>,
     testbench_index: usize,
     element_index: usize,
 ) -> Result<TestbenchElement, String> {
     let context = format!("testbench {testbench_index}, element {element_index}");
     let name = required_text(&element.name, &context, "name")?;
-    let nplus = required_text(&element.nplus, &context, node_a_label(element.kind))?;
-    let nminus = required_text(&element.nminus, &context, node_b_label(element.kind))?;
+    let nplus = resolved_testbench_node(
+        element,
+        TestbenchPin::A,
+        resolved_nodes,
+        &context,
+        node_a_label(element.kind),
+    )?;
+    let nminus = resolved_testbench_node(
+        element,
+        TestbenchPin::B,
+        resolved_nodes,
+        &context,
+        node_b_label(element.kind),
+    )?;
     let value = required_text(&element.value, &context, "value")?;
 
     Ok(match element.kind {
@@ -1904,6 +1957,175 @@ fn gui_testbench_element_to_spec(
             value,
         },
     })
+}
+
+fn resolve_testbench_nodes(
+    testbench: &GuiTestbenchDocument,
+    testbench_index: usize,
+) -> Result<HashMap<TestbenchEndpoint, String>, String> {
+    let mut adjacency: HashMap<TestbenchEndpoint, Vec<TestbenchEndpoint>> = HashMap::new();
+
+    for element in &testbench.elements {
+        for pin in [TestbenchPin::A, TestbenchPin::B] {
+            adjacency
+                .entry(TestbenchEndpoint::ElementPin {
+                    element_id: element.id,
+                    pin,
+                })
+                .or_default();
+        }
+    }
+
+    for connection in &testbench.connections {
+        if !testbench_connection_endpoint_exists(&connection.from, &testbench.elements)
+            || !testbench_connection_endpoint_exists(&connection.to, &testbench.elements)
+        {
+            continue;
+        }
+
+        adjacency
+            .entry(connection.from.clone())
+            .or_default()
+            .push(connection.to.clone());
+        adjacency
+            .entry(connection.to.clone())
+            .or_default()
+            .push(connection.from.clone());
+    }
+
+    let mut resolved = HashMap::new();
+    let mut visited = HashMap::new();
+    let mut next_generated_net = 1;
+
+    for endpoint in adjacency.keys() {
+        if visited.contains_key(endpoint) {
+            continue;
+        }
+
+        let mut stack = vec![endpoint.clone()];
+        let mut component = Vec::new();
+
+        while let Some(current) = stack.pop() {
+            if visited.insert(current.clone(), true).is_some() {
+                continue;
+            }
+
+            component.push(current.clone());
+            if let Some(neighbors) = adjacency.get(&current) {
+                for neighbor in neighbors {
+                    if !visited.contains_key(neighbor) {
+                        stack.push(neighbor.clone());
+                    }
+                }
+            }
+        }
+
+        let mut explicit_nodes = Vec::new();
+        for endpoint in &component {
+            if let Some(node) = testbench_endpoint_node_text(testbench, endpoint) {
+                if !explicit_nodes.iter().any(|existing| existing == node) {
+                    explicit_nodes.push(node.to_string());
+                }
+            }
+        }
+
+        let node = match explicit_nodes.as_slice() {
+            [node] => Some(node.clone()),
+            [] if component.len() > 1 => {
+                let node = format!("tb_net_{next_generated_net}");
+                next_generated_net += 1;
+                Some(node)
+            }
+            [] => None,
+            _ => {
+                let endpoints = component
+                    .iter()
+                    .map(|endpoint| format_testbench_endpoint(testbench, endpoint))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Err(format!(
+                    "testbench {testbench_index} has conflicting node names on connected pins: {endpoints}"
+                ));
+            }
+        };
+
+        if let Some(node) = node {
+            for endpoint in component {
+                resolved.insert(endpoint, node.clone());
+            }
+        }
+    }
+
+    Ok(resolved)
+}
+
+fn resolved_testbench_node(
+    element: &GuiTestbenchElement,
+    pin: TestbenchPin,
+    resolved_nodes: &HashMap<TestbenchEndpoint, String>,
+    context: &str,
+    field: &str,
+) -> Result<String, String> {
+    let endpoint = TestbenchEndpoint::ElementPin {
+        element_id: element.id,
+        pin,
+    };
+
+    if let Some(node) = resolved_nodes.get(&endpoint) {
+        return Ok(node.clone());
+    }
+
+    required_text(testbench_element_pin_text(element, pin), context, field)
+}
+
+fn testbench_endpoint_node_text<'a>(
+    testbench: &'a GuiTestbenchDocument,
+    endpoint: &TestbenchEndpoint,
+) -> Option<&'a str> {
+    match endpoint {
+        TestbenchEndpoint::ElementPin { element_id, pin } => {
+            let element = testbench
+                .elements
+                .iter()
+                .find(|element| element.id == *element_id)?;
+            let value = testbench_element_pin_text(element, *pin).trim();
+
+            if value.is_empty() {
+                None
+            } else {
+                Some(value)
+            }
+        }
+    }
+}
+
+fn testbench_element_pin_text(element: &GuiTestbenchElement, pin: TestbenchPin) -> &str {
+    match pin {
+        TestbenchPin::A => &element.nplus,
+        TestbenchPin::B => &element.nminus,
+    }
+}
+
+fn format_testbench_endpoint(
+    testbench: &GuiTestbenchDocument,
+    endpoint: &TestbenchEndpoint,
+) -> String {
+    match endpoint {
+        TestbenchEndpoint::ElementPin { element_id, pin } => {
+            let element_name = testbench
+                .elements
+                .iter()
+                .find(|element| element.id == *element_id)
+                .map(|element| element.name.as_str())
+                .unwrap_or("unknown");
+            let pin_name = match pin {
+                TestbenchPin::A => "A",
+                TestbenchPin::B => "B",
+            };
+
+            format!("{element_name}.{pin_name}")
+        }
+    }
 }
 
 fn required_text(value: &str, owner: &str, field: &str) -> Result<String, String> {
