@@ -1,0 +1,76 @@
+{
+  "name": "current_source",
+  "subckt_name": "current_source",
+  "ports": [
+    {
+      "name": "VOUT",
+      "role": "output"
+    },
+    {
+      "name": "VSS",
+      "role": "ground"
+    },
+    {
+      "name": "VBIAS",
+      "role": "bias"
+    }
+  ],
+  "circuit": {
+    "name": "current_source",
+    "instances": [
+      {
+        "id": "xcs",
+        "block": {
+          "type": "primitive",
+          "name": "simplecurrentsource"
+        }
+      }
+    ],
+    "connections": [
+      {
+        "from": {
+          "instance": "xcs",
+          "pin": "VOUTP"
+        },
+        "net": "VOUT"
+      },
+      {
+        "from": {
+          "instance": "xcs",
+          "pin": "VSS"
+        },
+        "net": "VSS"
+      },
+      {
+        "from": {
+          "instance": "xcs",
+          "pin": "VINP"
+        },
+        "net": "VBIAS"
+      }
+    ]
+  },
+  "symbol": {
+    "pins": [
+      {
+        "name": "VOUT",
+        "side": "right",
+        "offset": 0.5
+      },
+      {
+        "name": "VBIAS",
+        "side": "left",
+        "offset": 0.5
+      },
+      {
+        "name": "VSS",
+        "side": "bottom",
+        "offset": 0.5
+      }
+    ]
+  },
+  "metadata": {
+    "version": "1.0",
+    "description": "Reusable current source macro"
+  }
+}

@@ -1409,6 +1409,12 @@ fn format_netlist_error(error: NetlistRenderError) -> String {
         NetlistRenderError::MissingPrimitive { primitive } => {
             format!("primitive '{primitive}' is missing from catalog")
         }
+        NetlistRenderError::UnsupportedMacroInstance {
+            instance,
+            macro_name,
+        } => {
+            format!("instance '{instance}' references macro '{macro_name}', but macro rendering is not implemented yet")
+        }
     }
 }
 
@@ -1426,6 +1432,12 @@ fn format_small_signal_error(error: SmallSignalRenderError) -> String {
         }
         SmallSignalRenderError::MissingSmallSignalModel { primitive } => {
             format!("primitive '{primitive}' has no small-signal model")
+        }
+        SmallSignalRenderError::UnsupportedMacroInstance {
+            instance,
+            macro_name,
+        } => {
+            format!("instance '{instance}' references macro '{macro_name}', but macro small-signal rendering is not implemented yet")
         }
         SmallSignalRenderError::MissingBranchPin {
             instance,

@@ -2793,7 +2793,12 @@ fn format_circuit_summary(circuit: &Circuit) -> String {
 
     lines.push(format!("instances: {}", circuit.instances.len()));
     for instance in &circuit.instances {
-        lines.push(format!("  {}: {}", instance.id, instance.primitive));
+        let block = instance
+            .primitive_name()
+            .map(|name| format!("primitive:{name}"))
+            .or_else(|| instance.macro_name().map(|name| format!("macro:{name}")))
+            .unwrap_or_else(|| "unknown".to_string());
+        lines.push(format!("  {}: {}", instance.id, block));
     }
 
     lines.push(format!("connections: {}", circuit.connections.len()));

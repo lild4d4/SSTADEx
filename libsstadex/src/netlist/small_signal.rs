@@ -1,5 +1,5 @@
 use crate::catalog::PrimitiveCatalog;
-use crate::circuit::{Circuit, CircuitValidationError, validate_circuit};
+use crate::circuit::{validate_circuit, Circuit, CircuitValidationError};
 use crate::exploration::TestbenchSpec;
 use crate::netlist::{small_signal_element_name, small_signal_param_name};
 
@@ -8,6 +8,10 @@ pub enum SmallSignalRenderError {
     InvalidCircuit(Vec<CircuitValidationError>),
     MissingPrimitive {
         primitive: String,
+    },
+    UnsupportedMacroInstance {
+        instance: String,
+        macro_name: String,
     },
     MissingSmallSignalModel {
         primitive: String,
@@ -32,9 +36,21 @@ pub fn render_small_signal_netlist(
     lines.push(format!("* Small-signal circuit: {}", circuit.name));
 
     for instance in &circuit.instances {
-        let primitive = catalog.get(&instance.primitive).ok_or_else(|| {
+        let primitive_name =
+            instance
+                .primitive_name()
+                .ok_or_else(|| match instance.macro_name() {
+                    Some(macro_name) => SmallSignalRenderError::UnsupportedMacroInstance {
+                        instance: instance.id.clone(),
+                        macro_name: macro_name.to_string(),
+                    },
+                    None => SmallSignalRenderError::MissingPrimitive {
+                        primitive: String::new(),
+                    },
+                })?;
+        let primitive = catalog.get(primitive_name).ok_or_else(|| {
             SmallSignalRenderError::MissingPrimitive {
-                primitive: instance.primitive.clone(),
+                primitive: primitive_name.to_string(),
             }
         })?;
         let small_signal = primitive.small_signal.as_ref().ok_or_else(|| {

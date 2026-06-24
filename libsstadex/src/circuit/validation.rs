@@ -13,6 +13,10 @@ pub enum CircuitValidationError {
         instance: String,
         primitive: String,
     },
+    UnknownMacro {
+        instance: String,
+        macro_name: String,
+    },
     UnknownInstance {
         instance: String,
     },
@@ -37,10 +41,20 @@ pub fn validate_circuit(
             });
         }
 
-        if !catalog.contains(&instance.primitive) {
+        let Some(primitive_name) = instance.primitive_name() else {
+            if let Some(macro_name) = instance.macro_name() {
+                errors.push(CircuitValidationError::UnknownMacro {
+                    instance: instance.id.clone(),
+                    macro_name: macro_name.to_string(),
+                });
+            }
+            continue;
+        };
+
+        if !catalog.contains(primitive_name) {
             errors.push(CircuitValidationError::UnknownPrimitive {
                 instance: instance.id.clone(),
-                primitive: instance.primitive.clone(),
+                primitive: primitive_name.to_string(),
             });
         }
     }
@@ -57,7 +71,10 @@ pub fn validate_circuit(
             continue;
         };
 
-        let Some(primitive) = catalog.get(&instance.primitive) else {
+        let Some(primitive_name) = instance.primitive_name() else {
+            continue;
+        };
+        let Some(primitive) = catalog.get(primitive_name) else {
             continue;
         };
 
@@ -69,7 +86,7 @@ pub fn validate_circuit(
         if !pin_exists {
             errors.push(CircuitValidationError::UnknownPin {
                 instance: instance.id.clone(),
-                primitive: instance.primitive.clone(),
+                primitive: primitive_name.to_string(),
                 pin: connection.from.pin.clone(),
             });
         }

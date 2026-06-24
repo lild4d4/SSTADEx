@@ -2,6 +2,7 @@ pub mod analysis;
 pub mod catalog;
 pub mod circuit;
 pub mod exploration;
+pub mod macro_model;
 pub mod mna;
 pub mod netlist;
 pub mod primitive;

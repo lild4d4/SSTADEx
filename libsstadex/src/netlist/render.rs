@@ -1,11 +1,20 @@
 use crate::catalog::PrimitiveCatalog;
-use crate::circuit::{Circuit, CircuitValidationError, validate_circuit};
+use crate::circuit::{validate_circuit, Circuit, CircuitValidationError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NetlistRenderError {
     InvalidCircuit(Vec<CircuitValidationError>),
-    UnconnectedPin { instance: String, pin: String },
-    MissingPrimitive { primitive: String },
+    UnconnectedPin {
+        instance: String,
+        pin: String,
+    },
+    MissingPrimitive {
+        primitive: String,
+    },
+    UnsupportedMacroInstance {
+        instance: String,
+        macro_name: String,
+    },
 }
 
 pub fn render_circuit_netlist(
@@ -21,11 +30,24 @@ pub fn render_circuit_netlist(
     lines.push(format!("* Circuit: {}", circuit.name));
 
     for instance in &circuit.instances {
-        let primitive = catalog.get(&instance.primitive).ok_or_else(|| {
-            NetlistRenderError::MissingPrimitive {
-                primitive: instance.primitive.clone(),
-            }
-        })?;
+        let primitive_name =
+            instance
+                .primitive_name()
+                .ok_or_else(|| match instance.macro_name() {
+                    Some(macro_name) => NetlistRenderError::UnsupportedMacroInstance {
+                        instance: instance.id.clone(),
+                        macro_name: macro_name.to_string(),
+                    },
+                    None => NetlistRenderError::MissingPrimitive {
+                        primitive: String::new(),
+                    },
+                })?;
+        let primitive =
+            catalog
+                .get(primitive_name)
+                .ok_or_else(|| NetlistRenderError::MissingPrimitive {
+                    primitive: primitive_name.to_string(),
+                })?;
 
         let mut nets = Vec::new();
         for pin in &primitive.pins {
