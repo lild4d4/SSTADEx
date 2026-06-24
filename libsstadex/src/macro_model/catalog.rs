@@ -74,8 +74,9 @@ mod tests {
         let catalog = load_macro_catalog(&macros_dir).unwrap();
 
         assert!(catalog.contains("current_source"));
+        assert!(catalog.contains("ota_1stage"));
         assert!(!catalog.contains("current_source_macro"));
         assert!(!catalog.contains("ota_1stage_macro"));
-        assert_eq!(catalog.list().len(), 1);
+        assert_eq!(catalog.list().len(), 2);
     }
 }

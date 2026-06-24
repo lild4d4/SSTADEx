@@ -1,0 +1,173 @@
+{
+  "name": "ota_1stage",
+  "subckt_name": "ota_1stage",
+  "ports": [
+    {
+      "name": "VINP",
+      "role": "input"
+    },
+    {
+      "name": "VINN",
+      "role": "input"
+    },
+    {
+      "name": "VOUT",
+      "role": "output"
+    },
+    {
+      "name": "VDD",
+      "role": "supply"
+    },
+    {
+      "name": "VSS",
+      "role": "ground"
+    },
+    {
+      "name": "VBIAS",
+      "role": "bias"
+    }
+  ],
+  "circuit": {
+    "name": "ota_1stage",
+    "instances": [
+      {
+        "id": "xdp",
+        "block": {
+          "type": "primitive",
+          "name": "simplediffpair"
+        }
+      },
+      {
+        "id": "xcm",
+        "block": {
+          "type": "primitive",
+          "name": "simplecurrentmirror"
+        }
+      },
+      {
+        "id": "xcs_macro",
+        "block": {
+          "type": "macro",
+          "name": "current_source"
+        }
+      }
+    ],
+    "connections": [
+      {
+        "from": {
+          "instance": "xdp",
+          "pin": "VINP"
+        },
+        "net": "VINP"
+      },
+      {
+        "from": {
+          "instance": "xdp",
+          "pin": "VINN"
+        },
+        "net": "VINN"
+      },
+      {
+        "from": {
+          "instance": "xdp",
+          "pin": "VOUTP"
+        },
+        "net": "VOUT"
+      },
+      {
+        "from": {
+          "instance": "xdp",
+          "pin": "VOUTN"
+        },
+        "net": "N1"
+      },
+      {
+        "from": {
+          "instance": "xdp",
+          "pin": "VTAIL"
+        },
+        "net": "IBIAS"
+      },
+      {
+        "from": {
+          "instance": "xcm",
+          "pin": "VINP"
+        },
+        "net": "N1"
+      },
+      {
+        "from": {
+          "instance": "xcm",
+          "pin": "VOUTP"
+        },
+        "net": "VOUT"
+      },
+      {
+        "from": {
+          "instance": "xcm",
+          "pin": "VDD"
+        },
+        "net": "VDD"
+      },
+      {
+        "from": {
+          "instance": "xcs_macro",
+          "pin": "VOUT"
+        },
+        "net": "IBIAS"
+      },
+      {
+        "from": {
+          "instance": "xcs_macro",
+          "pin": "VSS"
+        },
+        "net": "VSS"
+      },
+      {
+        "from": {
+          "instance": "xcs_macro",
+          "pin": "VBIAS"
+        },
+        "net": "VBIAS"
+      }
+    ]
+  },
+  "symbol": {
+    "pins": [
+      {
+        "name": "VINP",
+        "side": "left",
+        "offset": 0.3
+      },
+      {
+        "name": "VINN",
+        "side": "left",
+        "offset": 0.7
+      },
+      {
+        "name": "VOUT",
+        "side": "right",
+        "offset": 0.5
+      },
+      {
+        "name": "VDD",
+        "side": "top",
+        "offset": 0.5
+      },
+      {
+        "name": "VSS",
+        "side": "bottom",
+        "offset": 0.3
+      },
+      {
+        "name": "VBIAS",
+        "side": "bottom",
+        "offset": 0.7
+      }
+    ]
+  },
+  "metadata": {
+    "version": "1.0",
+    "description": "Reusable one-stage OTA macro"
+  }
+}
