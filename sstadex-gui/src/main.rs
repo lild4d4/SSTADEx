@@ -281,7 +281,7 @@ impl Default for SstadexApp {
             selected_endpoint: None,
             pending_connection: None,
             connections: Vec::new(),
-            circuits: vec![GuiCircuitDocument::empty("gui_canvas")],
+            circuits: vec![GuiCircuitDocument::empty("macro_1")],
             active_circuit: 0,
             active_document: ActiveDocument::Circuit,
             renaming_circuit: None,
@@ -318,11 +318,11 @@ impl eframe::App for SstadexApp {
                 if ui.button("Save as...").clicked() {
                     self.choose_save_project_path();
                 }
-                if ui.button("Open circuit").clicked() {
+                if ui.button("Open project").clicked() {
                     self.output_log = self.open_gui_project();
                     self.bottom_view = BottomView::Logs;
                 }
-                if ui.button("Save circuit").clicked() {
+                if ui.button("Save project").clicked() {
                     self.output_log = self.save_gui_project();
                     self.bottom_view = BottomView::Logs;
                 }
@@ -427,8 +427,8 @@ impl SstadexApp {
             .circuits
             .get(self.active_circuit)
             .map(|circuit| circuit.name.as_str())
-            .unwrap_or("gui_canvas");
-        ui.heading(format!("Canvas - {active_circuit_name}"));
+            .unwrap_or("macro_1");
+        ui.heading(format!("Macro - {active_circuit_name}"));
         ui.separator();
 
         let canvas_rect = ui.available_rect_before_wrap();
@@ -585,7 +585,7 @@ impl SstadexApp {
         ui.separator();
 
         ui.horizontal(|ui| {
-            ui.label("Circuits");
+            ui.label("Macros");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button("+").clicked() {
                     self.add_circuit_document();
@@ -1002,7 +1002,7 @@ impl SstadexApp {
 
         let circuit = self.build_circuit_from_canvas();
         let output_dir = std::env::temp_dir().join("sstadex-gui-mna");
-        let circuit_path = output_dir.join("gui_canvas.json");
+        let circuit_path = output_dir.join("generated_circuit.json");
 
         if let Err(error) = std::fs::create_dir_all(&output_dir) {
             return format!(
@@ -1023,7 +1023,7 @@ impl SstadexApp {
                 format_mna_output(&CircuitMnaOutput::from_analysis(&analysis), &circuit_path)
             }
             Err(error) => format!(
-                "MNA failed for circuit '{}'\n\nCircuit JSON: {}\n\n{error:?}\n\nGenerated circuit summary:\n{}",
+                "MNA failed for macro '{}'\n\nGenerated circuit JSON: {}\n\n{error:?}\n\nGenerated circuit summary:\n{}",
                 circuit.name,
                 circuit_path.display(),
                 format_circuit_summary(&circuit)
@@ -1057,18 +1057,18 @@ impl SstadexApp {
 
         let project_path = match project_path_from_input(&self.project_path) {
             Ok(path) => path,
-            Err(error) => return format!("Cannot save circuit: {error}"),
+            Err(error) => return format!("Cannot save project: {error}"),
         };
         let output_dir = project_path
             .parent()
             .filter(|parent| !parent.as_os_str().is_empty())
             .map(PathBuf::from)
             .unwrap_or_else(default_project_dir);
-        let circuit_path = output_dir.join("gui_canvas.json");
+        let circuit_path = output_dir.join("generated_circuit.json");
 
         if let Err(error) = std::fs::create_dir_all(&output_dir) {
             return format!(
-                "Cannot save circuit: failed to create output directory '{}'\n\n{error}",
+                "Cannot save project: failed to create output directory '{}'\n\n{error}",
                 output_dir.display()
             );
         }
@@ -1077,13 +1077,13 @@ impl SstadexApp {
         let project_content = match serde_json::to_string_pretty(&project) {
             Ok(content) => content,
             Err(error) => {
-                return format!("Cannot save circuit: failed to serialize GUI project\n\n{error}");
+                return format!("Cannot save project: failed to serialize GUI project\n\n{error}");
             }
         };
 
         if let Err(error) = std::fs::write(&project_path, project_content) {
             return format!(
-                "Cannot save circuit: failed to write GUI project '{}'\n\n{error}",
+                "Cannot save project: failed to write GUI project '{}'\n\n{error}",
                 project_path.display()
             );
         }
@@ -1091,13 +1091,13 @@ impl SstadexApp {
         let circuit = self.build_circuit_from_canvas();
         if let Err(error) = save_circuit(&circuit_path, &circuit) {
             return format!(
-                "Saved GUI project but failed to export circuit JSON '{}'\n\n{error:?}",
+                "Saved GUI project but failed to export generated circuit JSON '{}'\n\n{error:?}",
                 circuit_path.display()
             );
         }
 
         format!(
-            "Saved circuit project\n\nProject: {}\nCircuit JSON: {}\nInstances: {}\nConnections: {}",
+            "Saved macro project\n\nProject: {}\nGenerated circuit JSON: {}\nInstances: {}\nConnections: {}",
             project_path.display(),
             circuit_path.display(),
             self.canvas_instances.len(),
@@ -1108,13 +1108,13 @@ impl SstadexApp {
     fn open_gui_project(&mut self) -> String {
         let project_path = match project_path_from_input(&self.project_path) {
             Ok(path) => path,
-            Err(error) => return format!("Cannot open circuit: {error}"),
+            Err(error) => return format!("Cannot open project: {error}"),
         };
         let content = match std::fs::read_to_string(&project_path) {
             Ok(content) => content,
             Err(error) => {
                 return format!(
-                    "Cannot open circuit: failed to read GUI project '{}'\n\n{error}",
+                    "Cannot open project: failed to read GUI project '{}'\n\n{error}",
                     project_path.display()
                 );
             }
@@ -1124,7 +1124,7 @@ impl SstadexApp {
             Ok(project) => project,
             Err(error) => {
                 return format!(
-                    "Cannot open circuit: invalid GUI project '{}'\n\n{error}",
+                    "Cannot open project: invalid GUI project '{}'\n\n{error}",
                     project_path.display()
                 );
             }
@@ -1132,7 +1132,7 @@ impl SstadexApp {
 
         if !(4..=5).contains(&project.version) {
             return format!(
-                "Cannot open circuit: unsupported GUI project version {}",
+                "Cannot open project: unsupported GUI project version {}",
                 project.version
             );
         }
@@ -1140,7 +1140,7 @@ impl SstadexApp {
         self.apply_gui_project(project);
 
         format!(
-            "Opened circuit project\n\nProject: {}\nInstances: {}\nLab pins: {}\nConnections: {}",
+            "Opened macro project\n\nProject: {}\nInstances: {}\nLab pins: {}\nConnections: {}",
             project_path.display(),
             self.canvas_instances.len(),
             self.label_pins.len(),
@@ -1174,7 +1174,7 @@ impl SstadexApp {
             .collect::<Vec<_>>();
 
         if circuits.is_empty() {
-            circuits.push(GuiCircuitDocument::empty("gui_canvas"));
+            circuits.push(GuiCircuitDocument::empty("macro_1"));
         }
 
         self.circuits = circuits;
@@ -1199,7 +1199,7 @@ impl SstadexApp {
             .circuits
             .get(self.active_circuit)
             .map(|circuit| circuit.name.as_str())
-            .unwrap_or("gui_canvas");
+            .unwrap_or("macro_1");
         let mut circuit = Circuit::new(circuit_name);
 
         for instance in &self.canvas_instances {
@@ -2633,7 +2633,7 @@ fn next_available_circuit_name(circuits: &[GuiCircuitDocument]) -> String {
     let mut index = 1;
 
     loop {
-        let candidate = format!("circuit_{index}");
+        let candidate = format!("macro_{index}");
         let is_available = circuits.iter().all(|circuit| circuit.name != candidate);
 
         if is_available {
@@ -2763,7 +2763,10 @@ fn format_mna_output(output: &CircuitMnaOutput, circuit_path: &std::path::Path) 
     let mut lines = Vec::new();
 
     lines.push("MNA completed".to_string());
-    lines.push(format!("Circuit JSON: {}", circuit_path.display()));
+    lines.push(format!(
+        "Generated circuit JSON: {}",
+        circuit_path.display()
+    ));
     lines.push(format!("SPICE: {}", output.spice_path));
     lines.push(format!("CIR: {}", output.cir_path));
     lines.push(String::new());
