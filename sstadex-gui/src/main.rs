@@ -121,6 +121,7 @@ enum ActiveDocument {
 #[derive(Clone)]
 struct GuiTestbenchDocument {
     name: String,
+    dut_macro: String,
     elements: Vec<GuiTestbenchElement>,
     connections: Vec<GuiTestbenchConnection>,
     selected_endpoint: Option<TestbenchEndpoint>,
@@ -211,6 +212,8 @@ enum GuiProjectMacroPortRole {
 #[derive(Serialize, Deserialize)]
 struct GuiProjectTestbench {
     name: String,
+    #[serde(default)]
+    dut_macro: String,
     elements: Vec<GuiProjectTestbenchElement>,
     #[serde(default)]
     connections: Vec<GuiProjectTestbenchConnection>,
@@ -435,6 +438,10 @@ impl eframe::App for SstadexApp {
                     ActiveDocument::Testbench => {
                         if let Some(testbench) = self.selected_testbench_document() {
                             ui.heading(&testbench.name);
+                            ui.label(format!(
+                                "DUT macro: {}",
+                                display_optional_name(&testbench.dut_macro)
+                            ));
                             ui.label(format!("Elements: {}", testbench.elements.len()));
                             ui.label(if testbench.extra_body.trim().is_empty() {
                                 "Extra body: empty"
@@ -598,6 +605,7 @@ impl SstadexApp {
             return;
         };
 
+        let macro_names = self.macro_names();
         let Some(testbench) = self.testbenches.get_mut(selected_index) else {
             self.selected_testbench = None;
             ui.label("Selected testbench no longer exists");
@@ -605,6 +613,9 @@ impl SstadexApp {
         };
 
         ui.heading(format!("Testbench - {}", testbench.name));
+        ui.separator();
+
+        show_testbench_dut_selector(ui, testbench, &macro_names);
         ui.separator();
 
         ui.horizontal(|ui| {
@@ -672,6 +683,14 @@ impl SstadexApp {
             let response = ui.text_edit_singleline(&mut self.circuits[index].name);
             if self.circuits[index].subckt_name == old_name {
                 self.circuits[index].subckt_name = self.circuits[index].name.clone();
+            }
+            let new_name = self.circuits[index].name.clone();
+            if new_name != old_name {
+                for testbench in &mut self.testbenches {
+                    if testbench.dut_macro == old_name {
+                        testbench.dut_macro = new_name.clone();
+                    }
+                }
             }
             if response.lost_focus()
                 || ui.input(|input| {
@@ -789,6 +808,8 @@ impl SstadexApp {
                 self.renaming_circuit = Some(renaming_index - 1);
             }
         }
+
+        self.ensure_testbench_dut_macros();
     }
 
     fn delete_testbench(&mut self, index: usize) {
@@ -1005,9 +1026,11 @@ impl SstadexApp {
 
     fn add_testbench(&mut self) {
         let index = self.testbenches.len() + 1;
+        let dut_macro = self.default_dut_macro_name();
 
         self.testbenches.push(GuiTestbenchDocument {
             name: format!("tb_{index}"),
+            dut_macro,
             elements: Vec::new(),
             connections: Vec::new(),
             selected_endpoint: None,
@@ -1018,6 +1041,21 @@ impl SstadexApp {
         self.selected_testbench = Some(self.testbenches.len() - 1);
         self.active_document = ActiveDocument::Testbench;
         self.bottom_view = BottomView::Testbenches;
+    }
+
+    fn default_dut_macro_name(&self) -> String {
+        self.circuits
+            .get(self.active_circuit)
+            .or_else(|| self.circuits.first())
+            .map(|circuit| circuit.name.clone())
+            .unwrap_or_default()
+    }
+
+    fn macro_names(&self) -> Vec<String> {
+        self.circuits
+            .iter()
+            .map(|circuit| circuit.name.clone())
+            .collect()
     }
 
     fn delete_selected_instance(&mut self) {
@@ -1276,11 +1314,24 @@ impl SstadexApp {
         self.selected_testbench = project
             .selected_testbench
             .filter(|index| *index < self.testbenches.len());
+        self.ensure_testbench_dut_macros();
         self.load_active_circuit_document();
 
         self.selected_instance_id = None;
         self.selected_endpoint = None;
         self.pending_connection = None;
+    }
+
+    fn ensure_testbench_dut_macros(&mut self) {
+        let default_dut = self.default_dut_macro_name();
+        let macro_names = self.macro_names();
+        for testbench in &mut self.testbenches {
+            if testbench.dut_macro.trim().is_empty()
+                || !macro_names.iter().any(|name| name == &testbench.dut_macro)
+            {
+                testbench.dut_macro = default_dut.clone();
+            }
+        }
     }
 
     fn build_macro_from_canvas(&self) -> Result<MacroModel, String> {
@@ -1437,6 +1488,10 @@ impl SstadexApp {
         };
 
         ui.label(format!("Selected testbench: {}", testbench.name));
+        ui.label(format!(
+            "DUT macro: {}",
+            display_optional_name(&testbench.dut_macro)
+        ));
         ui.label(format!("Elements: {}", testbench.elements.len()));
         ui.label("Edit the selected testbench in the central panel.");
     }
@@ -1776,6 +1831,7 @@ impl GuiProjectTestbench {
     fn from_testbench_document(testbench: &GuiTestbenchDocument) -> Self {
         Self {
             name: testbench.name.clone(),
+            dut_macro: testbench.dut_macro.clone(),
             elements: testbench
                 .elements
                 .iter()
@@ -1809,6 +1865,7 @@ impl GuiProjectTestbench {
 
         GuiTestbenchDocument {
             name: self.name,
+            dut_macro: self.dut_macro,
             elements,
             connections,
             selected_endpoint: None,
@@ -2692,6 +2749,27 @@ fn show_macro_document_details(ui: &mut egui::Ui, circuit: &mut GuiCircuitDocume
     }
 }
 
+fn show_testbench_dut_selector(
+    ui: &mut egui::Ui,
+    testbench: &mut GuiTestbenchDocument,
+    macro_names: &[String],
+) {
+    ui.horizontal(|ui| {
+        ui.label("DUT macro:");
+        egui::ComboBox::from_id_salt("testbench_dut_macro")
+            .selected_text(display_optional_name(&testbench.dut_macro))
+            .show_ui(ui, |ui| {
+                for macro_name in macro_names {
+                    ui.selectable_value(&mut testbench.dut_macro, macro_name.clone(), macro_name);
+                }
+            });
+    });
+
+    if macro_names.is_empty() {
+        ui.label("Create a macro before using this testbench.");
+    }
+}
+
 fn show_instance_details(
     ui: &mut egui::Ui,
     instance: &mut CanvasInstance,
@@ -2912,6 +2990,14 @@ fn macro_port_role(role: GuiMacroPortRole) -> MacroPortRole {
         GuiMacroPortRole::Bias => MacroPortRole::Bias,
         GuiMacroPortRole::Supply => MacroPortRole::Supply,
         GuiMacroPortRole::Ground => MacroPortRole::Ground,
+    }
+}
+
+fn display_optional_name(name: &str) -> &str {
+    if name.trim().is_empty() {
+        "(none)"
+    } else {
+        name
     }
 }
 
