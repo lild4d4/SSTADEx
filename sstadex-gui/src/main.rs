@@ -30,6 +30,7 @@ struct SstadexApp {
     insert_primitive_selection: Option<String>,
     canvas_instances: Vec<CanvasInstance>,
     label_pins: Vec<CanvasLabelPin>,
+    macro_ports: Vec<CanvasMacroPort>,
     selected_instance_id: Option<usize>,
     selected_endpoint: Option<CanvasEndpoint>,
     pending_connection: Option<CanvasEndpoint>,
@@ -46,6 +47,7 @@ struct SstadexApp {
     output_log: String,
     next_instance_id: usize,
     next_label_pin_id: usize,
+    next_macro_port_id: usize,
 }
 
 #[derive(Clone)]
@@ -65,12 +67,25 @@ enum CanvasEndpoint {
     LabelPin {
         label_id: usize,
     },
+    MacroPort {
+        port_id: usize,
+    },
 }
 
 #[derive(Clone)]
 struct CanvasLabelPin {
     id: usize,
     name: String,
+    position: egui::Pos2,
+}
+
+#[derive(Clone)]
+struct CanvasMacroPort {
+    id: usize,
+    name: String,
+    role: GuiMacroPortRole,
+    symbol_side: SymbolPinSide,
+    symbol_offset: f32,
     position: egui::Pos2,
 }
 
@@ -86,9 +101,11 @@ struct GuiCircuitDocument {
     ports: Vec<GuiMacroPort>,
     canvas_instances: Vec<CanvasInstance>,
     label_pins: Vec<CanvasLabelPin>,
+    macro_ports: Vec<CanvasMacroPort>,
     connections: Vec<CanvasConnection>,
     next_instance_id: usize,
     next_label_pin_id: usize,
+    next_macro_port_id: usize,
 }
 
 #[derive(Clone)]
@@ -103,6 +120,12 @@ struct GuiMacroPort {
 struct GuiDutMacroView {
     name: String,
     ports: Vec<GuiMacroPort>,
+}
+
+#[derive(Clone, Copy)]
+enum GuiMacroPortView<'a> {
+    Canvas(&'a CanvasMacroPort),
+    Metadata(&'a GuiMacroPort),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -196,9 +219,13 @@ struct GuiProjectCircuit {
     ports: Vec<GuiProjectMacroPort>,
     instances: Vec<GuiProjectInstance>,
     label_pins: Vec<GuiProjectLabelPin>,
+    #[serde(default)]
+    macro_ports: Vec<GuiProjectCanvasMacroPort>,
     connections: Vec<GuiProjectConnection>,
     next_instance_id: usize,
     next_label_pin_id: usize,
+    #[serde(default)]
+    next_macro_port_id: usize,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -212,6 +239,16 @@ struct GuiProjectMacroPort {
 }
 
 #[derive(Serialize, Deserialize)]
+struct GuiProjectCanvasMacroPort {
+    id: usize,
+    name: String,
+    role: GuiProjectMacroPortRole,
+    symbol_side: SymbolPinSide,
+    symbol_offset: f32,
+    position: GuiProjectPosition,
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum GuiProjectMacroPortRole {
     Input,
@@ -302,6 +339,7 @@ struct GuiProjectConnection {
 enum GuiProjectEndpoint {
     PrimitivePin { instance_id: usize, pin: String },
     LabelPin { label_id: usize },
+    MacroPort { port_id: usize },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -335,6 +373,7 @@ impl Default for SstadexApp {
             insert_primitive_selection: None,
             canvas_instances: Vec::new(),
             label_pins: Vec::new(),
+            macro_ports: Vec::new(),
             selected_instance_id: None,
             selected_endpoint: None,
             pending_connection: None,
@@ -351,6 +390,7 @@ impl Default for SstadexApp {
             output_log: "Logs, netlists, and MNA results will appear here".to_string(),
             next_instance_id: 1,
             next_label_pin_id: 1,
+            next_macro_port_id: 1,
         }
     }
 }
@@ -390,6 +430,12 @@ impl eframe::App for SstadexApp {
                     .clicked()
                 {
                     self.add_label_pin();
+                }
+                if ui
+                    .add_enabled(is_circuit_active, egui::Button::new("Add port"))
+                    .clicked()
+                {
+                    self.add_macro_port();
                 }
                 if ui
                     .add_enabled(is_circuit_active, egui::Button::new("Insert primitive"))
@@ -442,6 +488,8 @@ impl eframe::App for SstadexApp {
 
                         if let Some(label_pin) = self.selected_label_pin_mut() {
                             show_label_pin_details(ui, label_pin);
+                        } else if let Some(macro_port) = self.selected_macro_port_mut() {
+                            show_macro_port_details(ui, macro_port);
                         } else {
                             let selected_endpoint = self.selected_endpoint.clone();
 
@@ -524,6 +572,7 @@ impl SstadexApp {
             &canvas,
             &self.canvas_instances,
             &self.label_pins,
+            &self.macro_ports,
             self.catalog.as_ref(),
             &self.connections,
         );
@@ -611,6 +660,40 @@ impl SstadexApp {
                     label_id: label_pin.id,
                 });
             draw_label_pin(&painter, position, label_pin, selected);
+        }
+
+        for macro_port in &mut self.macro_ports {
+            let position = canvas.to_screen(macro_port.position);
+            let hit_rect = egui::Rect::from_center_size(position, egui::vec2(18.0, 18.0));
+            let response = ui.allocate_rect(hit_rect, egui::Sense::click_and_drag());
+
+            if response.clicked() || response.dragged() {
+                self.selected_instance_id = None;
+                self.selected_endpoint = Some(CanvasEndpoint::MacroPort {
+                    port_id: macro_port.id,
+                });
+            }
+
+            if response.clicked() {
+                let selected_endpoint = CanvasEndpoint::MacroPort {
+                    port_id: macro_port.id,
+                };
+                update_pending_connection(
+                    &mut self.pending_connection,
+                    &mut self.connections,
+                    selected_endpoint,
+                );
+            }
+
+            if response.dragged() {
+                macro_port.position += response.drag_delta();
+            }
+
+            let selected = self.selected_endpoint.as_ref()
+                == Some(&CanvasEndpoint::MacroPort {
+                    port_id: macro_port.id,
+                });
+            draw_macro_port_pin(&painter, position, macro_port, selected);
         }
     }
 
@@ -869,9 +952,11 @@ impl SstadexApp {
 
         circuit.canvas_instances = self.canvas_instances.clone();
         circuit.label_pins = self.label_pins.clone();
+        circuit.macro_ports = self.macro_ports.clone();
         circuit.connections = self.connections.clone();
         circuit.next_instance_id = self.next_instance_id;
         circuit.next_label_pin_id = self.next_label_pin_id;
+        circuit.next_macro_port_id = self.next_macro_port_id;
     }
 
     fn load_active_circuit_document(&mut self) {
@@ -881,9 +966,11 @@ impl SstadexApp {
 
         self.canvas_instances = circuit.canvas_instances.clone();
         self.label_pins = circuit.label_pins.clone();
+        self.macro_ports = circuit.macro_ports.clone();
         self.connections = circuit.connections.clone();
         self.next_instance_id = circuit.next_instance_id;
         self.next_label_pin_id = circuit.next_label_pin_id;
+        self.next_macro_port_id = circuit.next_macro_port_id;
         self.selected_instance_id = None;
         self.selected_endpoint = None;
         self.pending_connection = None;
@@ -1016,6 +1103,17 @@ impl SstadexApp {
             .find(|label_pin| label_pin.id == label_id)
     }
 
+    fn selected_macro_port_mut(&mut self) -> Option<&mut CanvasMacroPort> {
+        let Some(CanvasEndpoint::MacroPort { port_id }) = self.selected_endpoint.as_ref() else {
+            return None;
+        };
+        let port_id = *port_id;
+
+        self.macro_ports
+            .iter_mut()
+            .find(|macro_port| macro_port.id == port_id)
+    }
+
     fn add_canvas_instance(&mut self, primitive_name: &str) {
         let offset = 28.0 * self.canvas_instances.len() as f32;
         let id = self.next_instance_id;
@@ -1048,6 +1146,26 @@ impl SstadexApp {
         self.selected_endpoint = Some(CanvasEndpoint::LabelPin { label_id: id });
         self.pending_connection = None;
         self.next_label_pin_id += 1;
+    }
+
+    fn add_macro_port(&mut self) {
+        let offset = 24.0 * self.macro_ports.len() as f32;
+        let id = self.next_macro_port_id;
+        let role = GuiMacroPortRole::Inout;
+
+        self.macro_ports.push(CanvasMacroPort {
+            id,
+            name: format!("PORT{id}"),
+            role,
+            symbol_side: default_symbol_side_for_role(role),
+            symbol_offset: 0.5,
+            position: egui::pos2(112.0 + offset, 112.0 + offset),
+        });
+
+        self.selected_instance_id = None;
+        self.selected_endpoint = Some(CanvasEndpoint::MacroPort { port_id: id });
+        self.pending_connection = None;
+        self.next_macro_port_id += 1;
     }
 
     fn add_testbench(&mut self) {
@@ -1435,20 +1553,24 @@ impl SstadexApp {
         if subckt_name.is_empty() {
             return Err("macro subckt name cannot be empty".to_string());
         }
-        if let Some(index) = document
-            .ports
+        let macro_ports = document_macro_ports(document);
+        if let Some(index) = macro_ports
             .iter()
-            .position(|port| port.name.trim().is_empty())
+            .position(|port| macro_port_name(*port).trim().is_empty())
         {
             return Err(format!("macro port {} name cannot be empty", index + 1));
         }
 
         let mut macro_model = MacroModel::new(
             name,
-            document
-                .ports
+            macro_ports
                 .iter()
-                .map(|port| MacroPort::new(port.name.trim(), macro_port_role(port.role)))
+                .map(|port| {
+                    MacroPort::new(
+                        macro_port_name(*port).trim(),
+                        macro_port_role(macro_port_role_value(*port)),
+                    )
+                })
                 .collect(),
             self.build_circuit_from_document(document),
         );
@@ -1458,13 +1580,12 @@ impl SstadexApp {
             description: Some("Generated by SSTADEx GUI".to_string()),
         };
         macro_model.symbol = Some(MacroSymbol {
-            pins: document
-                .ports
+            pins: macro_ports
                 .iter()
                 .map(|port| MacroSymbolPin {
-                    name: port.name.trim().to_string(),
-                    side: port.symbol_side,
-                    offset: port.symbol_offset.clamp(0.0, 1.0),
+                    name: macro_port_name(*port).trim().to_string(),
+                    side: macro_port_symbol_side(*port),
+                    offset: macro_port_symbol_offset(*port).clamp(0.0, 1.0),
                 })
                 .collect(),
         });
@@ -1494,7 +1615,7 @@ impl SstadexApp {
             .into_iter()
             .enumerate()
         {
-            let net = label_net_name(&endpoints, &document.label_pins)
+            let net = canvas_net_name(&endpoints, &document.label_pins, &document.macro_ports)
                 .unwrap_or_else(|| format!("N{}", net_index + 1));
 
             for endpoint in endpoints {
@@ -1633,7 +1754,7 @@ impl CanvasEndpoint {
                 instance_id: endpoint_instance_id,
                 ..
             } => *endpoint_instance_id == instance_id,
-            CanvasEndpoint::LabelPin { .. } => false,
+            CanvasEndpoint::LabelPin { .. } | CanvasEndpoint::MacroPort { .. } => false,
         }
     }
 }
@@ -1648,9 +1769,11 @@ impl GuiCircuitDocument {
             ports: Vec::new(),
             canvas_instances: Vec::new(),
             label_pins: Vec::new(),
+            macro_ports: Vec::new(),
             connections: Vec::new(),
             next_instance_id: 1,
             next_label_pin_id: 1,
+            next_macro_port_id: 1,
         }
     }
 }
@@ -1683,7 +1806,10 @@ impl GuiDutMacroView {
     fn from_circuit_document(circuit: &GuiCircuitDocument) -> Self {
         Self {
             name: circuit.name.clone(),
-            ports: circuit.ports.clone(),
+            ports: document_macro_ports(circuit)
+                .into_iter()
+                .map(gui_macro_port_from_view)
+                .collect(),
         }
     }
 }
@@ -1817,6 +1943,11 @@ impl GuiProjectCircuit {
                     position: GuiProjectPosition::from_pos(label_pin.position),
                 })
                 .collect(),
+            macro_ports: circuit
+                .macro_ports
+                .iter()
+                .map(GuiProjectCanvasMacroPort::from_canvas_macro_port)
+                .collect(),
             connections: circuit
                 .connections
                 .iter()
@@ -1824,10 +1955,16 @@ impl GuiProjectCircuit {
                 .collect(),
             next_instance_id: circuit.next_instance_id,
             next_label_pin_id: circuit.next_label_pin_id,
+            next_macro_port_id: circuit.next_macro_port_id,
         }
     }
 
     fn into_circuit_document(self) -> GuiCircuitDocument {
+        let legacy_ports = self
+            .ports
+            .into_iter()
+            .map(GuiProjectMacroPort::into_macro_port)
+            .collect::<Vec<_>>();
         let canvas_instances = self
             .instances
             .into_iter()
@@ -1847,17 +1984,46 @@ impl GuiProjectCircuit {
                 position: label_pin.position.to_pos(),
             })
             .collect::<Vec<_>>();
+        let mut macro_ports = self
+            .macro_ports
+            .into_iter()
+            .map(GuiProjectCanvasMacroPort::into_canvas_macro_port)
+            .collect::<Vec<_>>();
+        if macro_ports.is_empty() {
+            macro_ports = legacy_ports
+                .iter()
+                .enumerate()
+                .map(|(index, port)| CanvasMacroPort {
+                    id: index + 1,
+                    name: port.name.clone(),
+                    role: port.role,
+                    symbol_side: port.symbol_side,
+                    symbol_offset: port.symbol_offset,
+                    position: egui::pos2(112.0 + 24.0 * index as f32, 112.0 + 24.0 * index as f32),
+                })
+                .collect();
+        }
+        let next_macro_port_id = if self.next_macro_port_id == 0 {
+            legacy_ports.len() + 1
+        } else {
+            self.next_macro_port_id
+        };
         let connections = self
             .connections
             .into_iter()
             .map(GuiProjectConnection::into_canvas_connection)
             .filter(|connection| {
-                project_connection_endpoint_exists(&connection.from, &canvas_instances, &label_pins)
-                    && project_connection_endpoint_exists(
-                        &connection.to,
-                        &canvas_instances,
-                        &label_pins,
-                    )
+                project_connection_endpoint_exists(
+                    &connection.from,
+                    &canvas_instances,
+                    &label_pins,
+                    &macro_ports,
+                ) && project_connection_endpoint_exists(
+                    &connection.to,
+                    &canvas_instances,
+                    &label_pins,
+                    &macro_ports,
+                )
             })
             .collect();
 
@@ -1870,16 +2036,38 @@ impl GuiProjectCircuit {
         GuiCircuitDocument {
             name: self.name,
             subckt_name,
-            ports: self
-                .ports
-                .into_iter()
-                .map(GuiProjectMacroPort::into_macro_port)
-                .collect(),
+            ports: legacy_ports,
             canvas_instances,
             label_pins,
+            macro_ports,
             connections,
             next_instance_id: self.next_instance_id,
             next_label_pin_id: self.next_label_pin_id,
+            next_macro_port_id,
+        }
+    }
+}
+
+impl GuiProjectCanvasMacroPort {
+    fn from_canvas_macro_port(port: &CanvasMacroPort) -> Self {
+        Self {
+            id: port.id,
+            name: port.name.clone(),
+            role: GuiProjectMacroPortRole::from_macro_port_role(port.role),
+            symbol_side: port.symbol_side,
+            symbol_offset: port.symbol_offset,
+            position: GuiProjectPosition::from_pos(port.position),
+        }
+    }
+
+    fn into_canvas_macro_port(self) -> CanvasMacroPort {
+        CanvasMacroPort {
+            id: self.id,
+            name: self.name,
+            role: self.role.into_macro_port_role(),
+            symbol_side: self.symbol_side,
+            symbol_offset: self.symbol_offset.clamp(0.0, 1.0),
+            position: self.position.to_pos(),
         }
     }
 }
@@ -2107,6 +2295,7 @@ impl GuiProjectEndpoint {
             CanvasEndpoint::LabelPin { label_id } => Self::LabelPin {
                 label_id: *label_id,
             },
+            CanvasEndpoint::MacroPort { port_id } => Self::MacroPort { port_id: *port_id },
         }
     }
 
@@ -2117,6 +2306,7 @@ impl GuiProjectEndpoint {
                 pin_name: pin,
             },
             Self::LabelPin { label_id } => CanvasEndpoint::LabelPin { label_id },
+            Self::MacroPort { port_id } => CanvasEndpoint::MacroPort { port_id },
         }
     }
 }
@@ -2915,62 +3105,23 @@ fn show_macro_document_details(ui: &mut egui::Ui, circuit: &mut GuiCircuitDocume
     });
     ui.label(format!("Instances: {}", circuit.canvas_instances.len()));
     ui.label(format!("Lab pins: {}", circuit.label_pins.len()));
+    ui.label(format!("Macro ports: {}", circuit.macro_ports.len()));
     ui.label(format!("Connections: {}", circuit.connections.len()));
 
     ui.separator();
-    ui.horizontal(|ui| {
-        ui.heading("Ports");
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.button("+").clicked() {
-                let index = circuit.ports.len() + 1;
-                let role = GuiMacroPortRole::Inout;
-                circuit.ports.push(GuiMacroPort {
-                    name: format!("PORT{index}"),
-                    role,
-                    symbol_side: default_symbol_side_for_role(role),
-                    symbol_offset: 0.5,
-                });
-            }
-        });
-    });
-
-    let mut remove_port = None;
-    for (index, port) in circuit.ports.iter_mut().enumerate() {
-        ui.horizontal(|ui| {
-            ui.text_edit_singleline(&mut port.name);
-            egui::ComboBox::from_id_salt(format!("macro_port_role_{index}"))
-                .selected_text(port.role.label())
-                .show_ui(ui, |ui| {
-                    for role in GuiMacroPortRole::all() {
-                        ui.selectable_value(&mut port.role, role, role.label());
-                    }
-                });
-            egui::ComboBox::from_id_salt(format!("macro_port_symbol_side_{index}"))
-                .selected_text(symbol_pin_side_label(port.symbol_side))
-                .show_ui(ui, |ui| {
-                    for side in symbol_pin_sides() {
-                        ui.selectable_value(
-                            &mut port.symbol_side,
-                            side,
-                            symbol_pin_side_label(side),
-                        );
-                    }
-                });
-            ui.add(
-                egui::DragValue::new(&mut port.symbol_offset)
-                    .range(0.0..=1.0)
-                    .speed(0.01)
-                    .prefix("offset "),
-            );
-            if ui.button("Delete").clicked() {
-                remove_port = Some(index);
-            }
-        });
-        port.symbol_offset = port.symbol_offset.clamp(0.0, 1.0);
-    }
-
-    if let Some(index) = remove_port {
-        circuit.ports.remove(index);
+    ui.heading("Ports");
+    if circuit.macro_ports.is_empty() {
+        ui.label("Use Add port to place a connectable macro port on the canvas.");
+    } else {
+        for port in &circuit.macro_ports {
+            ui.label(format!(
+                "{} [{}] {} {:.2}",
+                port.name,
+                port.role.label(),
+                symbol_pin_side_label(port.symbol_side),
+                port.symbol_offset
+            ));
+        }
     }
 }
 
@@ -3017,7 +3168,7 @@ fn show_instance_details(
         pin_name,
     }) = selected_endpoint.filter(|endpoint| match endpoint {
         CanvasEndpoint::PrimitivePin { instance_id, .. } => *instance_id == instance.id,
-        CanvasEndpoint::LabelPin { .. } => false,
+        CanvasEndpoint::LabelPin { .. } | CanvasEndpoint::MacroPort { .. } => false,
     }) {
         let _ = instance_id;
         ui.separator();
@@ -3035,6 +3186,50 @@ fn show_label_pin_details(ui: &mut egui::Ui, label_pin: &mut CanvasLabelPin) {
     ui.label(format!(
         "Position: {:.0}, {:.0}",
         label_pin.position.x, label_pin.position.y
+    ));
+}
+
+fn show_macro_port_details(ui: &mut egui::Ui, macro_port: &mut CanvasMacroPort) {
+    ui.heading("Macro port");
+    ui.label(format!("ID: {}", macro_port.id));
+    ui.horizontal(|ui| {
+        ui.label("Name:");
+        ui.text_edit_singleline(&mut macro_port.name);
+    });
+    ui.horizontal(|ui| {
+        ui.label("Role:");
+        egui::ComboBox::from_id_salt(format!("selected_macro_port_role_{}", macro_port.id))
+            .selected_text(macro_port.role.label())
+            .show_ui(ui, |ui| {
+                for role in GuiMacroPortRole::all() {
+                    ui.selectable_value(&mut macro_port.role, role, role.label());
+                }
+            });
+    });
+    ui.horizontal(|ui| {
+        ui.label("Symbol side:");
+        egui::ComboBox::from_id_salt(format!("selected_macro_port_side_{}", macro_port.id))
+            .selected_text(symbol_pin_side_label(macro_port.symbol_side))
+            .show_ui(ui, |ui| {
+                for side in symbol_pin_sides() {
+                    ui.selectable_value(
+                        &mut macro_port.symbol_side,
+                        side,
+                        symbol_pin_side_label(side),
+                    );
+                }
+            });
+    });
+    ui.add(
+        egui::DragValue::new(&mut macro_port.symbol_offset)
+            .range(0.0..=1.0)
+            .speed(0.01)
+            .prefix("Symbol offset "),
+    );
+    macro_port.symbol_offset = macro_port.symbol_offset.clamp(0.0, 1.0);
+    ui.label(format!(
+        "Canvas position: {:.0}, {:.0}",
+        macro_port.position.x, macro_port.position.y
     ));
 }
 
@@ -3060,6 +3255,7 @@ fn project_connection_endpoint_exists(
     endpoint: &CanvasEndpoint,
     instances: &[CanvasInstance],
     label_pins: &[CanvasLabelPin],
+    macro_ports: &[CanvasMacroPort],
 ) -> bool {
     match endpoint {
         CanvasEndpoint::PrimitivePin { instance_id, .. } => {
@@ -3068,6 +3264,9 @@ fn project_connection_endpoint_exists(
         CanvasEndpoint::LabelPin { label_id } => {
             label_pins.iter().any(|label_pin| label_pin.id == *label_id)
         }
+        CanvasEndpoint::MacroPort { port_id } => macro_ports
+            .iter()
+            .any(|macro_port| macro_port.id == *port_id),
     }
 }
 
@@ -3087,15 +3286,29 @@ fn draw_canvas_connections(
     canvas: &CanvasView,
     instances: &[CanvasInstance],
     label_pins: &[CanvasLabelPin],
+    macro_ports: &[CanvasMacroPort],
     catalog: Option<&PrimitiveCatalog>,
     connections: &[CanvasConnection],
 ) {
     for connection in connections {
-        let Some(from) = endpoint_view(canvas, instances, label_pins, catalog, &connection.from)
-        else {
+        let Some(from) = endpoint_view(
+            canvas,
+            instances,
+            label_pins,
+            macro_ports,
+            catalog,
+            &connection.from,
+        ) else {
             continue;
         };
-        let Some(to) = endpoint_view(canvas, instances, label_pins, catalog, &connection.to) else {
+        let Some(to) = endpoint_view(
+            canvas,
+            instances,
+            label_pins,
+            macro_ports,
+            catalog,
+            &connection.to,
+        ) else {
             continue;
         };
 
@@ -3107,6 +3320,7 @@ fn endpoint_view(
     canvas: &CanvasView,
     instances: &[CanvasInstance],
     label_pins: &[CanvasLabelPin],
+    macro_ports: &[CanvasMacroPort],
     catalog: Option<&PrimitiveCatalog>,
     endpoint: &CanvasEndpoint,
 ) -> Option<EndpointView> {
@@ -3135,6 +3349,16 @@ fn endpoint_view(
             Some(EndpointView {
                 position: canvas.to_screen(label_pin.position),
                 side: PinSide::Left,
+            })
+        }
+        CanvasEndpoint::MacroPort { port_id } => {
+            let macro_port = macro_ports
+                .iter()
+                .find(|macro_port| macro_port.id == *port_id)?;
+
+            Some(EndpointView {
+                position: canvas.to_screen(macro_port.position),
+                side: symbol_pin_side_to_pin_side(macro_port.symbol_side),
             })
         }
     }
@@ -3177,6 +3401,7 @@ fn format_endpoint(endpoint: &CanvasEndpoint) -> String {
             pin_name,
         } => format!("{instance_id}:{pin_name}"),
         CanvasEndpoint::LabelPin { label_id } => format!("lab:{label_id}"),
+        CanvasEndpoint::MacroPort { port_id } => format!("port:{port_id}"),
     }
 }
 
@@ -3218,6 +3443,59 @@ fn macro_port_role(role: GuiMacroPortRole) -> MacroPortRole {
     }
 }
 
+fn document_macro_ports(document: &GuiCircuitDocument) -> Vec<GuiMacroPortView<'_>> {
+    if document.macro_ports.is_empty() {
+        document
+            .ports
+            .iter()
+            .map(GuiMacroPortView::Metadata)
+            .collect()
+    } else {
+        document
+            .macro_ports
+            .iter()
+            .map(GuiMacroPortView::Canvas)
+            .collect()
+    }
+}
+
+fn gui_macro_port_from_view(port: GuiMacroPortView<'_>) -> GuiMacroPort {
+    GuiMacroPort {
+        name: macro_port_name(port).to_string(),
+        role: macro_port_role_value(port),
+        symbol_side: macro_port_symbol_side(port),
+        symbol_offset: macro_port_symbol_offset(port),
+    }
+}
+
+fn macro_port_name(port: GuiMacroPortView<'_>) -> &str {
+    match port {
+        GuiMacroPortView::Canvas(port) => &port.name,
+        GuiMacroPortView::Metadata(port) => &port.name,
+    }
+}
+
+fn macro_port_role_value(port: GuiMacroPortView<'_>) -> GuiMacroPortRole {
+    match port {
+        GuiMacroPortView::Canvas(port) => port.role,
+        GuiMacroPortView::Metadata(port) => port.role,
+    }
+}
+
+fn macro_port_symbol_side(port: GuiMacroPortView<'_>) -> SymbolPinSide {
+    match port {
+        GuiMacroPortView::Canvas(port) => port.symbol_side,
+        GuiMacroPortView::Metadata(port) => port.symbol_side,
+    }
+}
+
+fn macro_port_symbol_offset(port: GuiMacroPortView<'_>) -> f32 {
+    match port {
+        GuiMacroPortView::Canvas(port) => port.symbol_offset,
+        GuiMacroPortView::Metadata(port) => port.symbol_offset,
+    }
+}
+
 fn default_symbol_side_for_role(role: GuiMacroPortRole) -> SymbolPinSide {
     match role {
         GuiMacroPortRole::Input | GuiMacroPortRole::Bias => SymbolPinSide::Left,
@@ -3242,6 +3520,15 @@ fn symbol_pin_side_label(side: SymbolPinSide) -> &'static str {
         SymbolPinSide::Right => "right",
         SymbolPinSide::Top => "top",
         SymbolPinSide::Bottom => "bottom",
+    }
+}
+
+fn symbol_pin_side_to_pin_side(side: SymbolPinSide) -> PinSide {
+    match side {
+        SymbolPinSide::Left => PinSide::Left,
+        SymbolPinSide::Right => PinSide::Right,
+        SymbolPinSide::Top => PinSide::Top,
+        SymbolPinSide::Bottom => PinSide::Bottom,
     }
 }
 
@@ -3312,7 +3599,11 @@ fn exported_instance_name(instance: &CanvasInstance) -> String {
     }
 }
 
-fn label_net_name(endpoints: &[CanvasEndpoint], label_pins: &[CanvasLabelPin]) -> Option<String> {
+fn canvas_net_name(
+    endpoints: &[CanvasEndpoint],
+    label_pins: &[CanvasLabelPin],
+    macro_ports: &[CanvasMacroPort],
+) -> Option<String> {
     endpoints
         .iter()
         .filter_map(|endpoint| match endpoint {
@@ -3320,6 +3611,10 @@ fn label_net_name(endpoints: &[CanvasEndpoint], label_pins: &[CanvasLabelPin]) -
                 .iter()
                 .find(|label_pin| label_pin.id == *label_id)
                 .map(|label_pin| label_pin.name.trim().to_string()),
+            CanvasEndpoint::MacroPort { port_id } => macro_ports
+                .iter()
+                .find(|macro_port| macro_port.id == *port_id)
+                .map(|macro_port| macro_port.name.trim().to_string()),
             CanvasEndpoint::PrimitivePin { .. } => None,
         })
         .find(|name| !name.is_empty())
@@ -3378,6 +3673,7 @@ fn endpoint_sort_key(endpoint: &CanvasEndpoint) -> String {
             pin_name,
         } => format!("p:{instance_id}:{pin_name}"),
         CanvasEndpoint::LabelPin { label_id } => format!("l:{label_id}"),
+        CanvasEndpoint::MacroPort { port_id } => format!("m:{port_id}"),
     }
 }
 
@@ -3498,6 +3794,36 @@ fn draw_label_pin(
         &label_pin.name,
         egui::FontId::proportional(12.0),
         egui::Color32::from_gray(230),
+    );
+}
+
+fn draw_macro_port_pin(
+    painter: &egui::Painter,
+    position: egui::Pos2,
+    macro_port: &CanvasMacroPort,
+    selected: bool,
+) {
+    let color = if selected {
+        egui::Color32::from_rgb(240, 210, 90)
+    } else {
+        egui::Color32::from_rgb(235, 195, 105)
+    };
+    let rect = egui::Rect::from_center_size(position, egui::vec2(10.0, 10.0));
+
+    painter.rect_filled(rect, 2.0, color);
+    painter.text(
+        position + egui::vec2(9.0, -6.0),
+        egui::Align2::LEFT_CENTER,
+        &macro_port.name,
+        egui::FontId::proportional(12.0),
+        egui::Color32::from_gray(235),
+    );
+    painter.text(
+        position + egui::vec2(9.0, 7.0),
+        egui::Align2::LEFT_CENTER,
+        "port",
+        egui::FontId::proportional(9.0),
+        egui::Color32::from_gray(170),
     );
 }
 
