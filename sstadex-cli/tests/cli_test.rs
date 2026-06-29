@@ -252,14 +252,16 @@ fn circuit_mna_json_outputs_structured_result() {
     assert_eq!(json["nodes"][0]["number"], 1);
     assert_eq!(json["variables"][0]["variable"], "v1");
     assert_eq!(json["variables"][0]["node_name"], "VOUT");
-    assert!(json["equations"]
-        .as_array()
-        .expect("equations should be an array")
-        .iter()
-        .any(|equation| equation["text"]
-            .as_str()
-            .expect("equation text should be a string")
-            .contains("gm__xdp__m1")));
+    assert!(
+        json["equations"]
+            .as_array()
+            .expect("equations should be an array")
+            .iter()
+            .any(|equation| equation["text"]
+                .as_str()
+                .expect("equation text should be a string")
+                .contains("gm__xdp__m1"))
+    );
 
     fs::remove_dir_all(output_dir).expect("failed to remove temporary test directory");
 }

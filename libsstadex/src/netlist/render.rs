@@ -1,5 +1,5 @@
 use crate::catalog::PrimitiveCatalog;
-use crate::circuit::{validate_circuit, Circuit, CircuitValidationError};
+use crate::circuit::{Circuit, CircuitValidationError, validate_circuit};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NetlistRenderError {

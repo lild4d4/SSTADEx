@@ -8,7 +8,7 @@ use super::candidate::{CandidateAxis, CandidatePoint, CandidateSet};
 use super::conditions::RangeCondition;
 use super::conditions::{ExplorationFilter, FilterPhase};
 use super::spec::{
-    CircuitView, ExplorationSpec, FrequencySweep, SpecOutput, SpecParameter, SpecSource,
+    CircuitView, DutRef, ExplorationSpec, FrequencySweep, SpecOutput, SpecParameter, SpecSource,
     SpecVariable, TestbenchElement, TestbenchSpec,
 };
 
@@ -129,6 +129,8 @@ impl TestbenchDocument {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 struct RawTestbenchSpec {
     name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    dut: Option<RawDutRef>,
     #[serde(default)]
     view: RawCircuitView,
     #[serde(default)]
@@ -141,6 +143,7 @@ impl RawTestbenchSpec {
     fn into_spec(self) -> TestbenchSpec {
         TestbenchSpec {
             name: self.name,
+            dut: self.dut.map(RawDutRef::into_dut_ref),
             view: self.view.into_view(),
             elements: self
                 .elements
@@ -154,6 +157,7 @@ impl RawTestbenchSpec {
     fn from_spec(spec: &TestbenchSpec) -> Self {
         Self {
             name: spec.name.clone(),
+            dut: spec.dut.as_ref().map(RawDutRef::from_dut_ref),
             view: RawCircuitView::from_view(spec.view),
             elements: spec
                 .elements
@@ -161,6 +165,29 @@ impl RawTestbenchSpec {
                 .map(RawTestbenchElement::from_element)
                 .collect(),
             extra_body: spec.extra_body.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum RawDutRef {
+    Macro { name: String },
+    Circuit { name: String },
+}
+
+impl RawDutRef {
+    fn into_dut_ref(self) -> DutRef {
+        match self {
+            Self::Macro { name } => DutRef::Macro(name),
+            Self::Circuit { name } => DutRef::Circuit(name),
+        }
+    }
+
+    fn from_dut_ref(dut: &DutRef) -> Self {
+        match dut {
+            DutRef::Macro(name) => Self::Macro { name: name.clone() },
+            DutRef::Circuit(name) => Self::Circuit { name: name.clone() },
         }
     }
 }
@@ -807,6 +834,7 @@ mod tests {
               "testbenches": [
                 {
                   "name": "ota_gain",
+                  "dut": { "type": "macro", "name": "ota_1stage" },
                   "view": "small_signal",
                   "elements": [
                     {
@@ -834,6 +862,10 @@ mod tests {
 
         assert_eq!(testbenches.len(), 1);
         assert_eq!(testbenches[0].name, "ota_gain");
+        assert_eq!(
+            testbenches[0].dut,
+            Some(DutRef::Macro("ota_1stage".to_string()))
+        );
         assert_eq!(testbenches[0].view, CircuitView::SmallSignal);
         assert_eq!(testbenches[0].elements.len(), 2);
         assert_eq!(
@@ -845,18 +877,43 @@ mod tests {
     }
 
     #[test]
+    fn loads_legacy_testbench_without_dut() {
+        let dir = make_temp_dir("load_legacy_testbench_without_dut");
+        let path = dir.join("testbenches.json");
+        write_file(
+            &path,
+            r#"{
+              "testbenches": [
+                {
+                  "name": "legacy_gain",
+                  "elements": []
+                }
+              ]
+            }"#,
+        );
+
+        let testbenches = load_testbenches(&path).unwrap();
+
+        assert_eq!(testbenches[0].name, "legacy_gain");
+        assert_eq!(testbenches[0].dut, None);
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn saves_and_loads_testbenches_roundtrip() {
         let dir = make_temp_dir("roundtrip_testbenches");
         let path = dir.join("testbenches.json");
-        let testbenches =
-            vec![
-                TestbenchSpec::new("ota_gain").with_element(TestbenchElement::VoltageSource {
+        let testbenches = vec![
+            TestbenchSpec::new("ota_gain")
+                .with_macro_dut("ota_1stage")
+                .with_element(TestbenchElement::VoltageSource {
                     name: "Vin".to_string(),
                     nplus: "VINP".to_string(),
                     nminus: "VSS".to_string(),
                     value: "vin".to_string(),
                 }),
-            ];
+        ];
 
         save_testbenches(&path, &testbenches).unwrap();
         let loaded = load_testbenches(&path).unwrap();

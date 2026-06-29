@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-use crate::macro_model::{load_macro_model, MacroModel, MacroModelIoError};
+use crate::macro_model::{MacroModel, MacroModelIoError, load_macro_model};
 
 #[derive(Debug, Clone, Default)]
 pub struct MacroCatalog {

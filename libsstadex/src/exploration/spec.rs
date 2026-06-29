@@ -115,19 +115,37 @@ pub enum CircuitView {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TestbenchSpec {
     pub name: String,
+    pub dut: Option<DutRef>,
     pub view: CircuitView,
     pub elements: Vec<TestbenchElement>,
     pub extra_body: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DutRef {
+    Macro(String),
+    Circuit(String),
 }
 
 impl TestbenchSpec {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
+            dut: None,
             view: CircuitView::SmallSignal,
             elements: Vec::new(),
             extra_body: None,
         }
+    }
+
+    pub fn with_macro_dut(mut self, macro_name: impl Into<String>) -> Self {
+        self.dut = Some(DutRef::Macro(macro_name.into()));
+        self
+    }
+
+    pub fn with_circuit_dut(mut self, circuit_name: impl Into<String>) -> Self {
+        self.dut = Some(DutRef::Circuit(circuit_name.into()));
+        self
     }
 
     pub fn with_element(mut self, element: TestbenchElement) -> Self {

@@ -58,5 +58,6 @@ mod tests {
             Some("simplecurrentsource")
         );
         assert_eq!(macro_model.circuit.connections.len(), 3);
+        assert_eq!(macro_model.small_signal.as_ref().unwrap().elements.len(), 2);
     }
 }

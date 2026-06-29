@@ -3,20 +3,20 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use libsstadex::analysis::{analyze_circuit_mna, CircuitMnaAnalysisError, CircuitMnaOutput};
-use libsstadex::catalog::{load_primitive_catalog, PrimitiveLoadError};
-use libsstadex::circuit::{load_circuit, Circuit, CircuitIoError, Connection, Instance, PinRef};
+use libsstadex::analysis::{CircuitMnaAnalysisError, CircuitMnaOutput, analyze_circuit_mna};
+use libsstadex::catalog::{PrimitiveLoadError, load_primitive_catalog};
+use libsstadex::circuit::{Circuit, CircuitIoError, Connection, Instance, PinRef, load_circuit};
 use libsstadex::exploration::{
-    load_exploration_candidates, load_exploration_specs, load_testbenches,
+    ExplorationIoError, ExplorationTable, PreparedSpec, PreparedSpecSource, SpecPrepareError,
+    SpecSource, load_exploration_candidates, load_exploration_specs, load_testbenches,
     prepare_candidate_expression_spec, prepare_transfer_function_spec,
-    run_prepared_expression_flow, ExplorationIoError, ExplorationTable, PreparedSpec,
-    PreparedSpecSource, SpecPrepareError, SpecSource,
+    run_prepared_expression_flow,
 };
-use libsstadex::mna::mna::{mna, mna_solve, MnaError};
+use libsstadex::mna::mna::{MnaError, mna, mna_solve};
 use libsstadex::mna::pretty::{pretty_solutions, pretty_system};
 use libsstadex::netlist::{
-    render_circuit_netlist, render_small_signal_netlist, render_testbench_small_signal_netlist,
-    NetlistRenderError, SmallSignalRenderError,
+    NetlistRenderError, SmallSignalRenderError, render_circuit_netlist,
+    render_small_signal_netlist, render_testbench_small_signal_netlist,
 };
 
 #[derive(Debug)]
@@ -1413,7 +1413,9 @@ fn format_netlist_error(error: NetlistRenderError) -> String {
             instance,
             macro_name,
         } => {
-            format!("instance '{instance}' references macro '{macro_name}', but macro rendering is not implemented yet")
+            format!(
+                "instance '{instance}' references macro '{macro_name}', but macro rendering is not implemented yet"
+            )
         }
     }
 }
@@ -1437,7 +1439,9 @@ fn format_small_signal_error(error: SmallSignalRenderError) -> String {
             instance,
             macro_name,
         } => {
-            format!("instance '{instance}' references macro '{macro_name}', but macro small-signal rendering is not implemented yet")
+            format!(
+                "instance '{instance}' references macro '{macro_name}', but macro small-signal rendering is not implemented yet"
+            )
         }
         SmallSignalRenderError::MissingBranchPin {
             instance,
@@ -1453,6 +1457,9 @@ fn format_circuit_mna_error(error: CircuitMnaAnalysisError) -> String {
     match error {
         CircuitMnaAnalysisError::Io(error) => format!("I/O failure during circuit MNA: {error}"),
         CircuitMnaAnalysisError::SmallSignalRender(error) => format_small_signal_error(error),
+        CircuitMnaAnalysisError::MacroRender(error) => {
+            format!("failed to render macro small-signal netlist: {error:?}")
+        }
         CircuitMnaAnalysisError::Mna(error) => format_mna_error(error),
     }
 }

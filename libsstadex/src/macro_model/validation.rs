@@ -211,7 +211,7 @@ mod tests {
     use super::*;
     use crate::catalog::load_primitive_catalog;
     use crate::circuit::{Circuit, Connection, Instance, PinRef};
-    use crate::macro_model::{load_macro_catalog, MacroPort, MacroPortRole};
+    use crate::macro_model::{MacroPort, MacroPortRole, load_macro_catalog};
 
     #[test]
     fn validates_current_source_macro() {

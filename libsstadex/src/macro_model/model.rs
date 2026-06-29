@@ -9,6 +9,8 @@ pub struct MacroModel {
     pub subckt_name: String,
     pub ports: Vec<MacroPort>,
     pub circuit: Circuit,
+    #[serde(default)]
+    pub small_signal: Option<MacroSmallSignalModel>,
     pub symbol: Option<MacroSymbol>,
     pub metadata: MacroMetadata,
 }
@@ -36,6 +38,17 @@ pub struct MacroMetadata {
     pub description: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MacroSmallSignalModel {
+    pub elements: Vec<MacroSmallSignalElement>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MacroSmallSignalElement {
+    pub name: String,
+    pub template: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MacroSymbol {
     pub pins: Vec<MacroSymbolPin>,
@@ -57,8 +70,18 @@ impl MacroModel {
             name,
             ports,
             circuit,
+            small_signal: None,
             symbol: None,
             metadata: MacroMetadata::default(),
+        }
+    }
+}
+
+impl MacroSmallSignalElement {
+    pub fn new(name: impl Into<String>, template: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            template: template.into(),
         }
     }
 }

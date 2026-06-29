@@ -1,5 +1,5 @@
 use crate::catalog::PrimitiveCatalog;
-use crate::circuit::{validate_circuit, Circuit, CircuitValidationError};
+use crate::circuit::{Circuit, CircuitValidationError, validate_circuit};
 use crate::exploration::TestbenchSpec;
 use crate::netlist::{small_signal_element_name, small_signal_param_name};
 

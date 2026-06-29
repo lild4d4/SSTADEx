@@ -2,10 +2,12 @@ use std::fmt::Debug;
 use std::path::Path;
 
 use crate::analysis::{
-    TransferFunctionError, analyze_small_signal_netlist_mna, transfer_function_expression,
+    TransferFunctionError, analyze_macro_testbench_mna_with_mode, analyze_small_signal_netlist_mna,
+    transfer_function_expression,
 };
 use crate::catalog::PrimitiveCatalog;
 use crate::circuit::Circuit;
+use crate::macro_model::{MacroCatalog, MacroSmallSignalMode};
 use crate::mna::mna::{MnaResult, MnaSolveResult};
 use crate::netlist::render_testbench_small_signal_netlist;
 
@@ -93,6 +95,46 @@ pub fn prepare_candidate_expression_specs(
         .collect()
 }
 
+pub fn prepare_macro_testbench_specs(
+    specs: &[ExplorationSpec],
+    primitive_catalog: &PrimitiveCatalog,
+    macro_catalog: &MacroCatalog,
+    output_dir: &Path,
+) -> Result<Vec<PreparedSpec>, SpecPrepareError> {
+    prepare_macro_testbench_specs_with_mode(
+        specs,
+        primitive_catalog,
+        macro_catalog,
+        output_dir,
+        MacroSmallSignalMode::CompactWhenAvailable,
+    )
+}
+
+pub fn prepare_macro_testbench_specs_with_mode(
+    specs: &[ExplorationSpec],
+    primitive_catalog: &PrimitiveCatalog,
+    macro_catalog: &MacroCatalog,
+    output_dir: &Path,
+    mode: MacroSmallSignalMode,
+) -> Result<Vec<PreparedSpec>, SpecPrepareError> {
+    specs
+        .iter()
+        .map(|spec| match &spec.source {
+            SpecSource::CandidateExpression { .. } => prepare_candidate_expression_spec(spec),
+            SpecSource::TransferFunction { .. } => {
+                prepare_transfer_function_spec_for_macro_testbench_with_mode(
+                    spec,
+                    primitive_catalog,
+                    macro_catalog,
+                    output_dir,
+                    mode,
+                )
+            }
+            SpecSource::Composed => Err(SpecPrepareError::UnsupportedSource { source: "composed" }),
+        })
+        .collect()
+}
+
 pub fn prepare_transfer_function_spec_from_analysis(
     spec: &ExplorationSpec,
     mna: &MnaResult,
@@ -138,6 +180,57 @@ pub fn prepare_transfer_function_spec(
     let analysis =
         analyze_small_signal_netlist_mna(&testbench.name, small_signal_netlist, output_dir, true)
             .map_err(mna_analysis_error)?;
+    let solution = analysis
+        .solution
+        .as_ref()
+        .ok_or(SpecPrepareError::MissingMnaSolution)?;
+
+    prepare_transfer_function_spec_from_analysis(spec, &analysis.mna, solution)
+}
+
+pub fn prepare_transfer_function_spec_for_macro_testbench(
+    spec: &ExplorationSpec,
+    primitive_catalog: &PrimitiveCatalog,
+    macro_catalog: &MacroCatalog,
+    output_dir: &Path,
+) -> Result<PreparedSpec, SpecPrepareError> {
+    prepare_transfer_function_spec_for_macro_testbench_with_mode(
+        spec,
+        primitive_catalog,
+        macro_catalog,
+        output_dir,
+        MacroSmallSignalMode::CompactWhenAvailable,
+    )
+}
+
+pub fn prepare_transfer_function_spec_for_macro_testbench_with_mode(
+    spec: &ExplorationSpec,
+    primitive_catalog: &PrimitiveCatalog,
+    macro_catalog: &MacroCatalog,
+    output_dir: &Path,
+    mode: MacroSmallSignalMode,
+) -> Result<PreparedSpec, SpecPrepareError> {
+    let testbench = match &spec.source {
+        SpecSource::TransferFunction { testbench, .. } => testbench,
+        SpecSource::CandidateExpression { .. } => {
+            return Err(SpecPrepareError::UnsupportedSource {
+                source: "candidate_expression",
+            });
+        }
+        SpecSource::Composed => {
+            return Err(SpecPrepareError::UnsupportedSource { source: "composed" });
+        }
+    };
+
+    let analysis = analyze_macro_testbench_mna_with_mode(
+        testbench,
+        primitive_catalog,
+        macro_catalog,
+        output_dir,
+        true,
+        mode,
+    )
+    .map_err(mna_analysis_error)?;
     let solution = analysis
         .solution
         .as_ref()

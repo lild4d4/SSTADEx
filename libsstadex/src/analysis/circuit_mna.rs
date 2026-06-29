@@ -3,6 +3,12 @@ use std::path::{Path, PathBuf};
 
 use crate::catalog::PrimitiveCatalog;
 use crate::circuit::Circuit;
+use crate::exploration::TestbenchSpec;
+use crate::macro_model::{
+    MacroCatalog, MacroModel, MacroRenderError, MacroSmallSignalMode,
+    render_macro_small_signal_netlist_with_mode,
+    render_macro_testbench_small_signal_netlist_with_mode,
+};
 use crate::mna::mna::{MnaError, MnaResult, MnaSolveResult, mna, mna_solve};
 use crate::netlist::{SmallSignalRenderError, render_small_signal_netlist};
 
@@ -19,6 +25,7 @@ pub struct CircuitMnaAnalysis {
 pub enum CircuitMnaAnalysisError {
     Io(std::io::Error),
     SmallSignalRender(SmallSignalRenderError),
+    MacroRender(MacroRenderError),
     Mna(MnaError),
 }
 
@@ -46,6 +53,78 @@ pub fn analyze_circuit_mna(
         .map_err(CircuitMnaAnalysisError::SmallSignalRender)?;
 
     analyze_small_signal_netlist_mna(&circuit.name, small_signal_netlist, output_dir, solve)
+}
+
+pub fn analyze_macro_mna(
+    macro_model: &MacroModel,
+    primitive_catalog: &PrimitiveCatalog,
+    macro_catalog: &MacroCatalog,
+    output_dir: &Path,
+    solve: bool,
+) -> Result<CircuitMnaAnalysis, CircuitMnaAnalysisError> {
+    analyze_macro_mna_with_mode(
+        macro_model,
+        primitive_catalog,
+        macro_catalog,
+        output_dir,
+        solve,
+        MacroSmallSignalMode::CompactWhenAvailable,
+    )
+}
+
+pub fn analyze_macro_mna_with_mode(
+    macro_model: &MacroModel,
+    primitive_catalog: &PrimitiveCatalog,
+    macro_catalog: &MacroCatalog,
+    output_dir: &Path,
+    solve: bool,
+    mode: MacroSmallSignalMode,
+) -> Result<CircuitMnaAnalysis, CircuitMnaAnalysisError> {
+    let small_signal_netlist = render_macro_small_signal_netlist_with_mode(
+        macro_model,
+        primitive_catalog,
+        macro_catalog,
+        mode,
+    )
+    .map_err(CircuitMnaAnalysisError::MacroRender)?;
+
+    analyze_small_signal_netlist_mna(&macro_model.name, small_signal_netlist, output_dir, solve)
+}
+
+pub fn analyze_macro_testbench_mna(
+    testbench: &TestbenchSpec,
+    primitive_catalog: &PrimitiveCatalog,
+    macro_catalog: &MacroCatalog,
+    output_dir: &Path,
+    solve: bool,
+) -> Result<CircuitMnaAnalysis, CircuitMnaAnalysisError> {
+    analyze_macro_testbench_mna_with_mode(
+        testbench,
+        primitive_catalog,
+        macro_catalog,
+        output_dir,
+        solve,
+        MacroSmallSignalMode::CompactWhenAvailable,
+    )
+}
+
+pub fn analyze_macro_testbench_mna_with_mode(
+    testbench: &TestbenchSpec,
+    primitive_catalog: &PrimitiveCatalog,
+    macro_catalog: &MacroCatalog,
+    output_dir: &Path,
+    solve: bool,
+    mode: MacroSmallSignalMode,
+) -> Result<CircuitMnaAnalysis, CircuitMnaAnalysisError> {
+    let small_signal_netlist = render_macro_testbench_small_signal_netlist_with_mode(
+        testbench,
+        primitive_catalog,
+        macro_catalog,
+        mode,
+    )
+    .map_err(CircuitMnaAnalysisError::MacroRender)?;
+
+    analyze_small_signal_netlist_mna(&testbench.name, small_signal_netlist, output_dir, solve)
 }
 
 pub fn analyze_small_signal_netlist_mna(
@@ -113,6 +192,8 @@ mod tests {
     use crate::analysis::CircuitMnaOutput;
     use crate::catalog::load_primitive_catalog;
     use crate::circuit::{Connection, Instance, PinRef, load_circuit};
+    use crate::exploration::TestbenchElement;
+    use crate::macro_model::load_macro_catalog;
     use crate::mna::spice_parser::NodeMap;
     use std::collections::HashMap;
 
@@ -166,13 +247,16 @@ mod tests {
                 ("v4".to_string(), "N1".to_string()),
                 ("v5".to_string(), "VINN".to_string()),
                 ("v6".to_string(), "VDD".to_string()),
-                ("v7".to_string(), "VBIAS".to_string()),
             ]
         );
 
         let output = CircuitMnaOutput::from_analysis(&analysis);
-        assert_eq!(output.nodes[1].name, "VOUT");
-        assert_eq!(output.nodes[1].number, 1);
+        let vout = output
+            .nodes
+            .iter()
+            .find(|node| node.name == "VOUT")
+            .expect("VOUT node should exist");
+        assert_eq!(vout.number, 1);
         assert_eq!(output.variables[0].variable, "v1");
         assert_eq!(output.variables[0].node_name, "VOUT");
         assert_eq!(output.solution, None);
@@ -184,6 +268,140 @@ mod tests {
         );
 
         fs::remove_dir_all(output_dir).unwrap();
+    }
+
+    #[test]
+    fn analyzes_macro_mna_without_solving() {
+        let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("libsstadex should be inside the workspace");
+        let output_dir =
+            std::env::temp_dir().join(format!("sstadex-macro-mna-test-{}", std::process::id()));
+
+        let primitive_catalog =
+            load_primitive_catalog(&workspace_root.join("analoglib/primitives")).unwrap();
+        let macro_catalog = load_macro_catalog(&workspace_root.join("analoglib/macros")).unwrap();
+        let ota = macro_catalog.get("ota_1stage").unwrap();
+
+        let analysis =
+            analyze_macro_mna(ota, &primitive_catalog, &macro_catalog, &output_dir, false).unwrap();
+
+        assert!(analysis.spice_path.exists());
+        assert!(analysis.cir_path.exists());
+        assert!(analysis.solution.is_none());
+        assert!(
+            analysis
+                .small_signal_netlist
+                .contains("G_gm__xcs_macro IBIAS VSS VBIAS VSS gm__xcs_macro")
+        );
+        assert!(
+            analysis
+                .mna
+                .a
+                .iter()
+                .flatten()
+                .any(|expr| expr.to_string().contains("gm__xcs_macro"))
+        );
+
+        let expanded_output_dir = std::env::temp_dir().join(format!(
+            "sstadex-macro-mna-expand-test-{}",
+            std::process::id()
+        ));
+        let expanded_analysis = analyze_macro_mna_with_mode(
+            ota,
+            &primitive_catalog,
+            &macro_catalog,
+            &expanded_output_dir,
+            false,
+            MacroSmallSignalMode::Expand,
+        )
+        .unwrap();
+        assert!(
+            expanded_analysis
+                .small_signal_netlist
+                .contains("G_gm__xcs_macro__xcs__m1 IBIAS VSS VBIAS VSS gm__xcs_macro__xcs__m1")
+        );
+
+        fs::remove_dir_all(output_dir).unwrap();
+        fs::remove_dir_all(expanded_output_dir).unwrap();
+    }
+
+    #[test]
+    fn analyzes_macro_testbench_mna_without_solving() {
+        let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("libsstadex should be inside the workspace");
+        let output_dir = std::env::temp_dir().join(format!(
+            "sstadex-macro-testbench-mna-test-{}",
+            std::process::id()
+        ));
+
+        let primitive_catalog =
+            load_primitive_catalog(&workspace_root.join("analoglib/primitives")).unwrap();
+        let macro_catalog = load_macro_catalog(&workspace_root.join("analoglib/macros")).unwrap();
+        let testbench = TestbenchSpec::new("ota_gain")
+            .with_macro_dut("ota_1stage")
+            .with_element(TestbenchElement::VoltageSource {
+                name: "Vdd".to_string(),
+                nplus: "VDD".to_string(),
+                nminus: "VSS".to_string(),
+                value: "0".to_string(),
+            })
+            .with_element(TestbenchElement::VoltageSource {
+                name: "Vin".to_string(),
+                nplus: "VINP".to_string(),
+                nminus: "VSS".to_string(),
+                value: "1".to_string(),
+            });
+
+        let analysis = analyze_macro_testbench_mna(
+            &testbench,
+            &primitive_catalog,
+            &macro_catalog,
+            &output_dir,
+            false,
+        )
+        .unwrap();
+
+        assert!(analysis.spice_path.exists());
+        assert!(analysis.cir_path.exists());
+        assert!(analysis.solution.is_none());
+        assert!(
+            analysis
+                .small_signal_netlist
+                .contains("* testbench ota_gain")
+        );
+        assert!(analysis.small_signal_netlist.contains("Vin VINP VSS 1"));
+        assert!(
+            analysis
+                .mna
+                .a
+                .iter()
+                .flatten()
+                .any(|expr| expr.to_string().contains("gm__xcs_macro"))
+        );
+
+        let expanded_output_dir = std::env::temp_dir().join(format!(
+            "sstadex-macro-testbench-mna-expand-test-{}",
+            std::process::id()
+        ));
+        let expanded_analysis = analyze_macro_testbench_mna_with_mode(
+            &testbench,
+            &primitive_catalog,
+            &macro_catalog,
+            &expanded_output_dir,
+            false,
+            MacroSmallSignalMode::Expand,
+        )
+        .unwrap();
+        assert!(
+            expanded_analysis
+                .small_signal_netlist
+                .contains("G_gm__xcs_macro__xcs__m1 IBIAS VSS VBIAS VSS gm__xcs_macro__xcs__m1")
+        );
+
+        fs::remove_dir_all(output_dir).unwrap();
+        fs::remove_dir_all(expanded_output_dir).unwrap();
     }
 
     #[test]

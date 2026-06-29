@@ -30,7 +30,7 @@ fn main() -> Result<(), String> {
         .map_err(|error| format!("{error:?}"))?;
     let prepared_rout = prepare_transfer_function_spec(&rout_spec, &circuit, &catalog, &output_dir)
         .map_err(|error| format!("{error:?}"))?;
-    
+
     let candidates = vec![
         operating_point(2.6688e-4, 7.739160e4, 1.192103e-4, 5.579659e5),
         operating_point(1.5e-3, 8.0e4, 1.0e-3, 1.0e5),
@@ -156,12 +156,7 @@ fn current_source(name: &str, nplus: &str, nminus: &str, value: &str) -> Testben
     }
 }
 
-fn operating_point(
-    xdp_gm: f64,
-    xdp_ro: f64,
-    xcm_gm: f64,
-    xcm_ro: f64,
-) -> CandidatePoint {
+fn operating_point(xdp_gm: f64, xdp_ro: f64, xcm_gm: f64, xcm_ro: f64) -> CandidatePoint {
     CandidatePoint::new(vec![
         ("gm__xdp__m1".to_string(), xdp_gm),
         ("ro__xdp__m1".to_string(), xdp_ro),

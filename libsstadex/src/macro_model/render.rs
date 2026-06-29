@@ -1,7 +1,8 @@
 use std::collections::HashSet;
 
 use crate::catalog::PrimitiveCatalog;
-use crate::macro_model::{validate_macro_model, MacroCatalog, MacroModel, MacroValidationError};
+use crate::exploration::{DutRef, TestbenchSpec};
+use crate::macro_model::{MacroCatalog, MacroModel, MacroValidationError, validate_macro_model};
 use crate::netlist::{small_signal_element_name, small_signal_param_name};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,6 +22,23 @@ pub enum MacroRenderError {
     MissingSmallSignalModel {
         primitive: String,
     },
+    MissingCompactSmallSignalModel {
+        macro_name: String,
+    },
+    MissingTestbenchDut {
+        testbench: String,
+    },
+    UnsupportedCircuitDut {
+        testbench: String,
+        circuit: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MacroSmallSignalMode {
+    Expand,
+    Compact,
+    CompactWhenAvailable,
 }
 
 pub fn render_macro_netlist(
@@ -53,6 +71,67 @@ pub fn render_macro_small_signal_netlist(
     primitive_catalog: &PrimitiveCatalog,
     macro_catalog: &MacroCatalog,
 ) -> Result<String, MacroRenderError> {
+    render_macro_small_signal_netlist_with_mode(
+        macro_model,
+        primitive_catalog,
+        macro_catalog,
+        MacroSmallSignalMode::CompactWhenAvailable,
+    )
+}
+
+pub fn render_macro_small_signal_netlist_with_mode(
+    macro_model: &MacroModel,
+    primitive_catalog: &PrimitiveCatalog,
+    macro_catalog: &MacroCatalog,
+    mode: MacroSmallSignalMode,
+) -> Result<String, MacroRenderError> {
+    match mode {
+        MacroSmallSignalMode::Expand => render_macro_expanded_small_signal_netlist(
+            macro_model,
+            primitive_catalog,
+            macro_catalog,
+        ),
+        MacroSmallSignalMode::Compact => {
+            render_macro_compact_small_signal_netlist(macro_model, primitive_catalog, macro_catalog)
+        }
+        MacroSmallSignalMode::CompactWhenAvailable => {
+            if macro_model.small_signal.is_some() {
+                render_macro_compact_small_signal_netlist(
+                    macro_model,
+                    primitive_catalog,
+                    macro_catalog,
+                )
+            } else {
+                render_macro_expandable_small_signal_netlist(
+                    macro_model,
+                    primitive_catalog,
+                    macro_catalog,
+                    MacroSmallSignalMode::CompactWhenAvailable,
+                )
+            }
+        }
+    }
+}
+
+fn render_macro_expanded_small_signal_netlist(
+    macro_model: &MacroModel,
+    primitive_catalog: &PrimitiveCatalog,
+    macro_catalog: &MacroCatalog,
+) -> Result<String, MacroRenderError> {
+    render_macro_expandable_small_signal_netlist(
+        macro_model,
+        primitive_catalog,
+        macro_catalog,
+        MacroSmallSignalMode::Expand,
+    )
+}
+
+fn render_macro_expandable_small_signal_netlist(
+    macro_model: &MacroModel,
+    primitive_catalog: &PrimitiveCatalog,
+    macro_catalog: &MacroCatalog,
+    mode: MacroSmallSignalMode,
+) -> Result<String, MacroRenderError> {
     let validation_errors = validate_macro_model(macro_model, primitive_catalog, macro_catalog);
     if !validation_errors.is_empty() {
         return Err(MacroRenderError::InvalidMacro(validation_errors));
@@ -65,10 +144,92 @@ pub fn render_macro_small_signal_netlist(
         macro_catalog,
         &mut Vec::new(),
         &PortNetMap::identity(macro_model),
+        mode,
         &mut lines,
     )?;
 
     Ok(format!("{}\n", lines.join("\n")))
+}
+
+pub fn render_macro_compact_small_signal_netlist(
+    macro_model: &MacroModel,
+    primitive_catalog: &PrimitiveCatalog,
+    macro_catalog: &MacroCatalog,
+) -> Result<String, MacroRenderError> {
+    let validation_errors = validate_macro_model(macro_model, primitive_catalog, macro_catalog);
+    if !validation_errors.is_empty() {
+        return Err(MacroRenderError::InvalidMacro(validation_errors));
+    }
+
+    let port_map = PortNetMap::identity(macro_model);
+    let mut lines = vec![format!(
+        "* Compact small-signal macro: {}",
+        macro_model.name
+    )];
+    push_compact_small_signal_lines(macro_model, &macro_model.name, &port_map, &mut lines)?;
+
+    Ok(format!("{}\n", lines.join("\n")))
+}
+
+pub fn render_macro_testbench_small_signal_netlist(
+    testbench: &TestbenchSpec,
+    primitive_catalog: &PrimitiveCatalog,
+    macro_catalog: &MacroCatalog,
+) -> Result<String, MacroRenderError> {
+    render_macro_testbench_small_signal_netlist_with_mode(
+        testbench,
+        primitive_catalog,
+        macro_catalog,
+        MacroSmallSignalMode::CompactWhenAvailable,
+    )
+}
+
+pub fn render_macro_testbench_small_signal_netlist_with_mode(
+    testbench: &TestbenchSpec,
+    primitive_catalog: &PrimitiveCatalog,
+    macro_catalog: &MacroCatalog,
+    mode: MacroSmallSignalMode,
+) -> Result<String, MacroRenderError> {
+    let macro_name = match testbench.dut.as_ref() {
+        Some(DutRef::Macro(name)) => name,
+        Some(DutRef::Circuit(circuit)) => {
+            return Err(MacroRenderError::UnsupportedCircuitDut {
+                testbench: testbench.name.clone(),
+                circuit: circuit.clone(),
+            });
+        }
+        None => {
+            return Err(MacroRenderError::MissingTestbenchDut {
+                testbench: testbench.name.clone(),
+            });
+        }
+    };
+    let macro_model =
+        macro_catalog
+            .get(macro_name)
+            .ok_or_else(|| MacroRenderError::MissingMacro {
+                macro_name: macro_name.clone(),
+            })?;
+    let mut netlist = render_macro_small_signal_netlist_with_mode(
+        macro_model,
+        primitive_catalog,
+        macro_catalog,
+        mode,
+    )?;
+    let testbench_body = testbench.body_text();
+
+    if !testbench_body.trim().is_empty() {
+        if !netlist.ends_with('\n') {
+            netlist.push('\n');
+        }
+        netlist.push_str("\n* testbench ");
+        netlist.push_str(&testbench.name);
+        netlist.push('\n');
+        netlist.push_str(testbench_body.trim());
+        netlist.push('\n');
+    }
+
+    Ok(netlist)
 }
 
 pub fn render_macro_subckt(
@@ -182,6 +343,7 @@ fn expand_macro_small_signal(
     macro_catalog: &MacroCatalog,
     path: &mut Vec<String>,
     port_map: &PortNetMap,
+    mode: MacroSmallSignalMode,
     lines: &mut Vec<String>,
 ) -> Result<(), MacroRenderError> {
     for instance in &macro_model.circuit.instances {
@@ -226,23 +388,94 @@ fn expand_macro_small_signal(
             })?;
             let nested_port_map =
                 PortNetMap::from_instance(macro_model, &instance.id, nested_macro, port_map)?;
+            let instance_path = path.join("__");
 
             lines.push(String::new());
-            lines.push(format!("* nested macro instance {}", path.join("__")));
-            expand_macro_small_signal(
-                nested_macro,
-                primitive_catalog,
-                macro_catalog,
-                path,
-                &nested_port_map,
-                lines,
-            )?;
+            lines.push(format!("* nested macro instance {instance_path}"));
+
+            match mode {
+                MacroSmallSignalMode::Expand => expand_macro_small_signal(
+                    nested_macro,
+                    primitive_catalog,
+                    macro_catalog,
+                    path,
+                    &nested_port_map,
+                    mode,
+                    lines,
+                )?,
+                MacroSmallSignalMode::Compact => push_compact_small_signal_lines(
+                    nested_macro,
+                    &instance_path,
+                    &nested_port_map,
+                    lines,
+                )?,
+                MacroSmallSignalMode::CompactWhenAvailable => {
+                    if nested_macro.small_signal.is_some() {
+                        push_compact_small_signal_lines(
+                            nested_macro,
+                            &instance_path,
+                            &nested_port_map,
+                            lines,
+                        )?;
+                    } else {
+                        expand_macro_small_signal(
+                            nested_macro,
+                            primitive_catalog,
+                            macro_catalog,
+                            path,
+                            &nested_port_map,
+                            mode,
+                            lines,
+                        )?;
+                    }
+                }
+            }
         }
 
         path.pop();
     }
 
     Ok(())
+}
+
+fn push_compact_small_signal_lines(
+    macro_model: &MacroModel,
+    instance_path: &str,
+    port_map: &PortNetMap,
+    lines: &mut Vec<String>,
+) -> Result<(), MacroRenderError> {
+    let small_signal = macro_model.small_signal.as_ref().ok_or_else(|| {
+        MacroRenderError::MissingCompactSmallSignalModel {
+            macro_name: macro_model.name.clone(),
+        }
+    })?;
+
+    for element in &small_signal.elements {
+        lines.push(render_compact_small_signal_template(
+            &element.template,
+            instance_path,
+            macro_model,
+            port_map,
+        ));
+    }
+
+    Ok(())
+}
+
+fn render_compact_small_signal_template(
+    template: &str,
+    instance_path: &str,
+    macro_model: &MacroModel,
+    port_map: &PortNetMap,
+) -> String {
+    let mut rendered = template.replace("{instance}", instance_path);
+
+    for port in &macro_model.ports {
+        let placeholder = format!("{{{}}}", port.name);
+        rendered = rendered.replace(&placeholder, &port_map.resolve(&port.name));
+    }
+
+    rendered
 }
 
 struct PortNetMap {
@@ -320,8 +553,9 @@ mod tests {
     use super::*;
     use crate::catalog::load_primitive_catalog;
     use crate::circuit::{Circuit, Connection, Instance, PinRef};
+    use crate::exploration::TestbenchElement;
     use crate::macro_model::{
-        load_macro_catalog, load_macro_model, MacroModel, MacroPort, MacroPortRole,
+        MacroModel, MacroPort, MacroPortRole, load_macro_catalog, load_macro_model,
     };
     use std::path::Path;
 
@@ -395,7 +629,7 @@ mod tests {
     }
 
     #[test]
-    fn renders_ota_1stage_small_signal_with_hierarchical_names() {
+    fn renders_ota_1stage_small_signal_with_compact_nested_macro_by_default() {
         let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .expect("libsstadex should be inside the workspace");
@@ -415,9 +649,183 @@ mod tests {
         assert!(netlist.contains("R_ro__xdp__m1 VOUT IBIAS ro__xdp__m1"));
         assert!(netlist.contains("G_gm__xdp__m1 VOUT IBIAS VINP IBIAS gm__xdp__m1"));
         assert!(netlist.contains("R_ro__xcm__m1 VOUT VDD ro__xcm__m1"));
-        assert!(netlist.contains("R_ro__xcs_macro__xcs__m1 IBIAS VSS ro__xcs_macro__xcs__m1"));
+        assert!(netlist.contains("R_ro__xcs_macro IBIAS VSS ro__xcs_macro"));
+        assert!(netlist.contains("G_gm__xcs_macro IBIAS VSS VBIAS VSS gm__xcs_macro"));
+        assert!(!netlist.contains("R_ro__xcs_macro__xcs__m1"));
+    }
+
+    #[test]
+    fn renders_current_source_compact_small_signal_model() {
+        let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("libsstadex should be inside the workspace");
+        let primitive_catalog =
+            load_primitive_catalog(&workspace_root.join("analoglib/primitives"))
+                .expect("primitive catalog should load");
+        let macro_catalog = load_macro_catalog(&workspace_root.join("analoglib/macros"))
+            .expect("macro catalog should load");
+        let current_source = macro_catalog
+            .get("current_source")
+            .expect("current_source macro should load");
+
+        let netlist = render_macro_compact_small_signal_netlist(
+            current_source,
+            &primitive_catalog,
+            &macro_catalog,
+        )
+        .unwrap();
+
+        assert!(netlist.contains("* Compact small-signal macro: current_source"));
+        assert!(netlist.contains("R_ro__current_source VOUT VSS ro__current_source"));
+        assert!(netlist.contains("G_gm__current_source VOUT VSS VBIAS VSS gm__current_source"));
+    }
+
+    #[test]
+    fn renders_top_level_small_signal_with_selected_mode() {
+        let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("libsstadex should be inside the workspace");
+        let primitive_catalog =
+            load_primitive_catalog(&workspace_root.join("analoglib/primitives"))
+                .expect("primitive catalog should load");
+        let macro_catalog = load_macro_catalog(&workspace_root.join("analoglib/macros"))
+            .expect("macro catalog should load");
+        let current_source = macro_catalog
+            .get("current_source")
+            .expect("current_source macro should load");
+        let ota = macro_catalog
+            .get("ota_1stage")
+            .expect("ota_1stage macro should load");
+
+        let compact_current_source = render_macro_small_signal_netlist_with_mode(
+            current_source,
+            &primitive_catalog,
+            &macro_catalog,
+            MacroSmallSignalMode::CompactWhenAvailable,
+        )
+        .unwrap();
         assert!(
-            netlist.contains("G_gm__xcs_macro__xcs__m1 IBIAS VSS VBIAS VSS gm__xcs_macro__xcs__m1")
+            compact_current_source.contains("* Compact small-signal macro: current_source"),
+            "{compact_current_source}"
+        );
+        assert!(
+            compact_current_source.contains("R_ro__current_source VOUT VSS ro__current_source")
+        );
+
+        let expanded_ota = render_macro_small_signal_netlist_with_mode(
+            ota,
+            &primitive_catalog,
+            &macro_catalog,
+            MacroSmallSignalMode::CompactWhenAvailable,
+        )
+        .unwrap();
+        assert!(expanded_ota.contains("* Small-signal macro: ota_1stage"));
+        assert!(expanded_ota.contains("R_ro__xcs_macro IBIAS VSS ro__xcs_macro"));
+        assert!(expanded_ota.contains("G_gm__xcs_macro IBIAS VSS VBIAS VSS gm__xcs_macro"));
+        assert!(!expanded_ota.contains("R_ro__xcs_macro__xcs__m1"));
+
+        let fully_expanded_ota = render_macro_small_signal_netlist_with_mode(
+            ota,
+            &primitive_catalog,
+            &macro_catalog,
+            MacroSmallSignalMode::Expand,
+        )
+        .unwrap();
+        assert!(
+            fully_expanded_ota
+                .contains("R_ro__xcs_macro__xcs__m1 IBIAS VSS ro__xcs_macro__xcs__m1")
+        );
+
+        let compact_error = render_macro_small_signal_netlist_with_mode(
+            ota,
+            &primitive_catalog,
+            &macro_catalog,
+            MacroSmallSignalMode::Compact,
+        )
+        .unwrap_err();
+        assert_eq!(
+            compact_error,
+            MacroRenderError::MissingCompactSmallSignalModel {
+                macro_name: "ota_1stage".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn renders_macro_testbench_small_signal_netlist() {
+        let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("libsstadex should be inside the workspace");
+        let primitive_catalog =
+            load_primitive_catalog(&workspace_root.join("analoglib/primitives"))
+                .expect("primitive catalog should load");
+        let macro_catalog = load_macro_catalog(&workspace_root.join("analoglib/macros"))
+            .expect("macro catalog should load");
+        let testbench = TestbenchSpec::new("ota_gain")
+            .with_macro_dut("ota_1stage")
+            .with_element(TestbenchElement::VoltageSource {
+                name: "Vdd".to_string(),
+                nplus: "VDD".to_string(),
+                nminus: "VSS".to_string(),
+                value: "0".to_string(),
+            })
+            .with_element(TestbenchElement::VoltageSource {
+                name: "Vin".to_string(),
+                nplus: "VINP".to_string(),
+                nminus: "VSS".to_string(),
+                value: "1".to_string(),
+            });
+
+        let netlist = render_macro_testbench_small_signal_netlist(
+            &testbench,
+            &primitive_catalog,
+            &macro_catalog,
+        )
+        .unwrap();
+
+        assert!(netlist.contains("G_gm__xcs_macro IBIAS VSS VBIAS VSS gm__xcs_macro"));
+        assert!(!netlist.contains("G_gm__xcs_macro__xcs__m1"));
+        assert!(netlist.contains("* testbench ota_gain"));
+        assert!(netlist.contains("Vdd VDD VSS 0"));
+        assert!(netlist.contains("Vin VINP VSS 1"));
+
+        let expanded_netlist = render_macro_testbench_small_signal_netlist_with_mode(
+            &testbench,
+            &primitive_catalog,
+            &macro_catalog,
+            MacroSmallSignalMode::Expand,
+        )
+        .unwrap();
+        assert!(
+            expanded_netlist
+                .contains("G_gm__xcs_macro__xcs__m1 IBIAS VSS VBIAS VSS gm__xcs_macro__xcs__m1")
+        );
+    }
+
+    #[test]
+    fn reports_missing_testbench_dut_for_macro_testbench_render() {
+        let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("libsstadex should be inside the workspace");
+        let primitive_catalog =
+            load_primitive_catalog(&workspace_root.join("analoglib/primitives"))
+                .expect("primitive catalog should load");
+        let macro_catalog = load_macro_catalog(&workspace_root.join("analoglib/macros"))
+            .expect("macro catalog should load");
+        let testbench = TestbenchSpec::new("legacy_gain");
+
+        let error = render_macro_testbench_small_signal_netlist(
+            &testbench,
+            &primitive_catalog,
+            &macro_catalog,
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            MacroRenderError::MissingTestbenchDut {
+                testbench: "legacy_gain".to_string(),
+            }
         );
     }
 

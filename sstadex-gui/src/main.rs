@@ -2,10 +2,10 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use eframe::egui;
-use libsstadex::analysis::{analyze_circuit_mna, CircuitMnaOutput};
-use libsstadex::catalog::{load_primitive_catalog, PrimitiveCatalog};
-use libsstadex::circuit::{save_circuit, Circuit, Connection, Instance, PinRef};
-use libsstadex::exploration::{save_testbenches, TestbenchElement, TestbenchSpec};
+use libsstadex::analysis::{CircuitMnaOutput, analyze_circuit_mna};
+use libsstadex::catalog::{PrimitiveCatalog, load_primitive_catalog};
+use libsstadex::circuit::{Circuit, Connection, Instance, PinRef, save_circuit};
+use libsstadex::exploration::{TestbenchElement, TestbenchSpec, save_testbenches};
 use libsstadex::primitive::manifest::{PinRole, PrimitiveManifest, SymbolPinSide};
 use serde::{Deserialize, Serialize};
 
@@ -1019,7 +1019,9 @@ impl SstadexApp {
         }
 
         match analyze_circuit_mna(&circuit, catalog, &output_dir, false) {
-            Ok(analysis) => format_mna_output(&CircuitMnaOutput::from_analysis(&analysis), &circuit_path),
+            Ok(analysis) => {
+                format_mna_output(&CircuitMnaOutput::from_analysis(&analysis), &circuit_path)
+            }
             Err(error) => format!(
                 "MNA failed for circuit '{}'\n\nCircuit JSON: {}\n\n{error:?}\n\nGenerated circuit summary:\n{}",
                 circuit.name,
@@ -2090,11 +2092,7 @@ fn testbench_endpoint_node_text<'a>(
                 .find(|element| element.id == *element_id)?;
             let value = testbench_element_pin_text(element, *pin).trim();
 
-            if value.is_empty() {
-                None
-            } else {
-                Some(value)
-            }
+            if value.is_empty() { None } else { Some(value) }
         }
     }
 }
