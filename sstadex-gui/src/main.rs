@@ -96,6 +96,12 @@ struct GuiMacroPort {
     role: GuiMacroPortRole,
 }
 
+#[derive(Clone)]
+struct GuiDutMacroView {
+    name: String,
+    ports: Vec<GuiMacroPort>,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum GuiMacroPortRole {
     Input,
@@ -391,6 +397,10 @@ impl eframe::App for SstadexApp {
                     self.output_log = self.save_active_macro_model();
                     self.bottom_view = BottomView::Logs;
                 }
+                if ui.button("Save flow inputs").clicked() {
+                    self.output_log = self.save_flow_inputs();
+                    self.bottom_view = BottomView::Logs;
+                }
                 if ui
                     .add_enabled(is_circuit_active, egui::Button::new("Run MNA"))
                     .clicked()
@@ -606,6 +616,15 @@ impl SstadexApp {
         };
 
         let macro_names = self.macro_names();
+        let dut_macro_view = self
+            .testbenches
+            .get(selected_index)
+            .and_then(|testbench| {
+                self.circuits
+                    .iter()
+                    .find(|circuit| circuit.name == testbench.dut_macro)
+            })
+            .map(GuiDutMacroView::from_circuit_document);
         let Some(testbench) = self.testbenches.get_mut(selected_index) else {
             self.selected_testbench = None;
             ui.label("Selected testbench no longer exists");
@@ -635,7 +654,7 @@ impl SstadexApp {
         });
         ui.separator();
 
-        draw_testbench_canvas(ui, testbench);
+        draw_testbench_canvas(ui, testbench, dut_macro_view.as_ref());
 
         ui.separator();
         egui::ScrollArea::vertical()
@@ -1158,6 +1177,55 @@ impl SstadexApp {
         )
     }
 
+    fn save_flow_inputs(&mut self) -> String {
+        self.save_active_circuit_document();
+
+        let output_dir = std::env::temp_dir().join("sstadex-gui-mna");
+        let macro_dir = output_dir.join("gui_macros");
+        let testbench_path = output_dir.join("gui_testbenches.json");
+
+        if let Err(error) = std::fs::create_dir_all(&output_dir) {
+            return format!(
+                "Cannot save flow inputs: failed to create output directory '{}'\n\n{error}",
+                output_dir.display()
+            );
+        }
+
+        let macro_models = match self.build_macro_models() {
+            Ok(macro_models) => macro_models,
+            Err(error) => return format!("Cannot save flow inputs: {error}"),
+        };
+        let testbenches = match gui_testbenches_to_specs(&self.testbenches, &self.circuits) {
+            Ok(testbenches) => testbenches,
+            Err(error) => return format!("Cannot save flow inputs: {error}"),
+        };
+
+        for macro_model in &macro_models {
+            let macro_path = macro_dir.join(&macro_model.name).join("macro.json");
+            if let Err(error) = save_macro_model(&macro_path, macro_model) {
+                return format!(
+                    "Cannot save flow inputs: failed to write macro JSON '{}'\n\n{error:?}",
+                    macro_path.display()
+                );
+            }
+        }
+
+        if let Err(error) = save_testbenches(&testbench_path, &testbenches) {
+            return format!(
+                "Cannot save flow inputs: failed to write testbench JSON '{}'\n\n{error:?}",
+                testbench_path.display()
+            );
+        }
+
+        format!(
+            "Saved flow inputs\n\nMacros: {}\nTestbenches: {}\nMacro dir: {}\nTestbenches: {}",
+            macro_models.len(),
+            testbenches.len(),
+            macro_dir.display(),
+            testbench_path.display()
+        )
+    }
+
     fn choose_open_project_path(&mut self) {
         if let Some(path) = rfd::FileDialog::new()
             .set_directory(project_dialog_dir(&self.project_path))
@@ -1338,6 +1406,20 @@ impl SstadexApp {
         let Some(document) = self.circuits.get(self.active_circuit) else {
             return Err("no active macro document".to_string());
         };
+        self.build_macro_from_document(document)
+    }
+
+    fn build_macro_models(&self) -> Result<Vec<MacroModel>, String> {
+        self.circuits
+            .iter()
+            .map(|document| self.build_macro_from_document(document))
+            .collect()
+    }
+
+    fn build_macro_from_document(
+        &self,
+        document: &GuiCircuitDocument,
+    ) -> Result<MacroModel, String> {
         let name = document.name.trim();
         if name.is_empty() {
             return Err("macro name cannot be empty".to_string());
@@ -1361,7 +1443,7 @@ impl SstadexApp {
                 .iter()
                 .map(|port| MacroPort::new(port.name.trim(), macro_port_role(port.role)))
                 .collect(),
-            self.build_circuit_from_canvas(),
+            self.build_circuit_from_document(document),
         );
         macro_model.subckt_name = subckt_name.to_string();
         macro_model.metadata = MacroMetadata {
@@ -1373,26 +1455,28 @@ impl SstadexApp {
     }
 
     fn build_circuit_from_canvas(&self) -> Circuit {
-        let circuit_name = self
-            .circuits
-            .get(self.active_circuit)
-            .map(|circuit| circuit.name.as_str())
-            .unwrap_or("macro_1");
+        let Some(document) = self.circuits.get(self.active_circuit) else {
+            return Circuit::new("macro_1");
+        };
+        self.build_circuit_from_document(document)
+    }
+
+    fn build_circuit_from_document(&self, document: &GuiCircuitDocument) -> Circuit {
+        let circuit_name = document.name.as_str();
         let mut circuit = Circuit::new(circuit_name);
 
-        for instance in &self.canvas_instances {
+        for instance in &document.canvas_instances {
             circuit.add_instance(Instance::new(
                 exported_instance_name(instance),
                 instance.primitive_name.clone(),
             ));
         }
 
-        for (net_index, endpoints) in connected_endpoint_groups(&self.connections)
+        for (net_index, endpoints) in connected_endpoint_groups(&document.connections)
             .into_iter()
             .enumerate()
         {
-            let net = self
-                .label_net_name(&endpoints)
+            let net = label_net_name(&endpoints, &document.label_pins)
                 .unwrap_or_else(|| format!("N{}", net_index + 1));
 
             for endpoint in endpoints {
@@ -1401,7 +1485,7 @@ impl SstadexApp {
                     pin_name,
                 } = endpoint
                 {
-                    let instance_name = self
+                    let instance_name = document
                         .canvas_instances
                         .iter()
                         .find(|instance| instance.id == instance_id)
@@ -1417,20 +1501,6 @@ impl SstadexApp {
         }
 
         circuit
-    }
-
-    fn label_net_name(&self, endpoints: &[CanvasEndpoint]) -> Option<String> {
-        endpoints
-            .iter()
-            .filter_map(|endpoint| match endpoint {
-                CanvasEndpoint::LabelPin { label_id } => self
-                    .label_pins
-                    .iter()
-                    .find(|label_pin| label_pin.id == *label_id)
-                    .map(|label_pin| label_pin.name.trim().to_string()),
-                CanvasEndpoint::PrimitivePin { .. } => None,
-            })
-            .find(|name| !name.is_empty())
     }
 
     fn show_logs_ui(&mut self, ui: &mut egui::Ui) {
@@ -1507,14 +1577,14 @@ impl SstadexApp {
             );
         }
 
-        let testbenches = match gui_testbenches_to_specs(&self.testbenches) {
+        let testbenches = match gui_testbenches_to_specs(&self.testbenches, &self.circuits) {
             Ok(testbenches) => testbenches,
             Err(error) => return format!("Cannot save testbenches: {error}"),
         };
 
         match save_testbenches(&output_path, &testbenches) {
             Ok(()) => format!(
-                "Saved {} testbench(es)\n\nPath: {}",
+                "Saved {} macro-linked testbench(es)\n\nPath: {}",
                 testbenches.len(),
                 output_path.display()
             ),
@@ -1587,6 +1657,15 @@ impl GuiMacroPortRole {
             Self::Bias => "bias",
             Self::Supply => "supply",
             Self::Ground => "ground",
+        }
+    }
+}
+
+impl GuiDutMacroView {
+    fn from_circuit_document(circuit: &GuiCircuitDocument) -> Self {
+        Self {
+            name: circuit.name.clone(),
+            ports: circuit.ports.clone(),
         }
     }
 }
@@ -2152,12 +2231,26 @@ fn display_testbench_node(
 
 fn gui_testbenches_to_specs(
     testbenches: &[GuiTestbenchDocument],
+    circuits: &[GuiCircuitDocument],
 ) -> Result<Vec<TestbenchSpec>, String> {
     let mut specs = Vec::with_capacity(testbenches.len());
 
     for (index, testbench) in testbenches.iter().enumerate() {
         let name = required_text(&testbench.name, &format!("testbench {}", index + 1), "name")?;
-        let mut spec = TestbenchSpec::new(name);
+        let dut_macro = required_text(
+            &testbench.dut_macro,
+            &format!("testbench {}", index + 1),
+            "DUT macro",
+        )?;
+        if !circuits.iter().any(|circuit| circuit.name == dut_macro) {
+            return Err(format!(
+                "testbench {} references unknown DUT macro '{}'",
+                index + 1,
+                dut_macro
+            ));
+        }
+
+        let mut spec = TestbenchSpec::new(name).with_macro_dut(dut_macro);
         let resolved_nodes = resolve_testbench_nodes(testbench, index + 1)?;
 
         for (element_index, element) in testbench.elements.iter().enumerate() {
@@ -2451,16 +2544,21 @@ fn draw_primitive_preview(ui: &mut egui::Ui, primitive: &PrimitiveManifest) {
     draw_instance_pins(&painter, symbol_rect, 0, primitive, None);
 }
 
-fn draw_testbench_canvas(ui: &mut egui::Ui, testbench: &mut GuiTestbenchDocument) {
+fn draw_testbench_canvas(
+    ui: &mut egui::Ui,
+    testbench: &mut GuiTestbenchDocument,
+    dut_macro: Option<&GuiDutMacroView>,
+) {
     let canvas_size = egui::vec2(ui.available_width(), 180.0);
     let (canvas_rect, _) = ui.allocate_exact_size(canvas_size, egui::Sense::hover());
     let painter = ui.painter_at(canvas_rect);
 
     painter.rect_filled(canvas_rect, 0.0, egui::Color32::from_gray(24));
+    draw_dut_macro_symbol(&painter, canvas_rect, dut_macro);
 
     if testbench.elements.is_empty() {
         painter.text(
-            canvas_rect.center(),
+            canvas_rect.center_bottom() - egui::vec2(0.0, 22.0),
             egui::Align2::CENTER_CENTER,
             "Insert a testbench element",
             egui::FontId::proportional(14.0),
@@ -2516,6 +2614,121 @@ fn draw_testbench_canvas(ui: &mut egui::Ui, testbench: &mut GuiTestbenchDocument
             endpoint,
         );
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DutPortSide {
+    Left,
+    Right,
+    Top,
+    Bottom,
+}
+
+fn draw_dut_macro_symbol(
+    painter: &egui::Painter,
+    canvas_rect: egui::Rect,
+    dut_macro: Option<&GuiDutMacroView>,
+) {
+    let Some(dut_macro) = dut_macro else {
+        return;
+    };
+
+    let rect = dut_macro_rect(canvas_rect);
+    let stroke = egui::Stroke::new(1.5, egui::Color32::from_rgb(205, 175, 90));
+    let fill = egui::Color32::from_rgb(54, 50, 38);
+    let port_color = egui::Color32::from_rgb(235, 195, 105);
+
+    painter.rect_filled(rect, 3.0, fill);
+    painter.rect_stroke(rect, 3.0, stroke, egui::StrokeKind::Inside);
+    painter.text(
+        rect.center_top() + egui::vec2(0.0, 24.0),
+        egui::Align2::CENTER_CENTER,
+        "DUT",
+        egui::FontId::proportional(16.0),
+        egui::Color32::WHITE,
+    );
+    painter.text(
+        rect.center() + egui::vec2(0.0, 12.0),
+        egui::Align2::CENTER_CENTER,
+        &dut_macro.name,
+        egui::FontId::proportional(12.0),
+        egui::Color32::from_gray(220),
+    );
+
+    for side in [
+        DutPortSide::Left,
+        DutPortSide::Right,
+        DutPortSide::Top,
+        DutPortSide::Bottom,
+    ] {
+        let ports = dut_macro
+            .ports
+            .iter()
+            .filter(|port| dut_port_side(port.role) == side)
+            .collect::<Vec<_>>();
+        for (index, port) in ports.iter().enumerate() {
+            let position = dut_port_position(rect, side, index, ports.len());
+            painter.circle_filled(position, 3.5, port_color);
+            draw_dut_port_label(painter, position, side, &port.name);
+        }
+    }
+}
+
+fn dut_macro_rect(canvas_rect: egui::Rect) -> egui::Rect {
+    let size = egui::vec2(150.0, 106.0);
+    let left_margin = 24.0;
+    let right_margin = 32.0;
+    let min_x = if canvas_rect.width() >= size.x + left_margin + right_margin {
+        canvas_rect.right() - size.x - right_margin
+    } else {
+        canvas_rect.center().x - size.x * 0.5
+    };
+    let min_y = canvas_rect.center().y - size.y * 0.5;
+
+    egui::Rect::from_min_size(egui::pos2(min_x, min_y), size)
+}
+
+fn dut_port_side(role: GuiMacroPortRole) -> DutPortSide {
+    match role {
+        GuiMacroPortRole::Input | GuiMacroPortRole::Bias => DutPortSide::Left,
+        GuiMacroPortRole::Output | GuiMacroPortRole::Inout => DutPortSide::Right,
+        GuiMacroPortRole::Supply => DutPortSide::Top,
+        GuiMacroPortRole::Ground => DutPortSide::Bottom,
+    }
+}
+
+fn dut_port_position(
+    rect: egui::Rect,
+    side: DutPortSide,
+    index: usize,
+    total: usize,
+) -> egui::Pos2 {
+    let fraction = (index + 1) as f32 / (total + 1) as f32;
+
+    match side {
+        DutPortSide::Left => egui::pos2(rect.left(), rect.top() + rect.height() * fraction),
+        DutPortSide::Right => egui::pos2(rect.right(), rect.top() + rect.height() * fraction),
+        DutPortSide::Top => egui::pos2(rect.left() + rect.width() * fraction, rect.top()),
+        DutPortSide::Bottom => egui::pos2(rect.left() + rect.width() * fraction, rect.bottom()),
+    }
+}
+
+fn draw_dut_port_label(
+    painter: &egui::Painter,
+    position: egui::Pos2,
+    side: DutPortSide,
+    name: &str,
+) {
+    let text_color = egui::Color32::from_gray(225);
+    let font = egui::FontId::proportional(10.0);
+    let (offset, align) = match side {
+        DutPortSide::Left => (egui::vec2(7.0, 0.0), egui::Align2::LEFT_CENTER),
+        DutPortSide::Right => (egui::vec2(-7.0, 0.0), egui::Align2::RIGHT_CENTER),
+        DutPortSide::Top => (egui::vec2(0.0, 7.0), egui::Align2::CENTER_TOP),
+        DutPortSide::Bottom => (egui::vec2(0.0, -7.0), egui::Align2::CENTER_BOTTOM),
+    };
+
+    painter.text(position + offset, align, name, font, text_color);
 }
 
 fn draw_testbench_element_symbol(
@@ -3058,6 +3271,19 @@ fn exported_instance_name(instance: &CanvasInstance) -> String {
     } else {
         name.to_string()
     }
+}
+
+fn label_net_name(endpoints: &[CanvasEndpoint], label_pins: &[CanvasLabelPin]) -> Option<String> {
+    endpoints
+        .iter()
+        .filter_map(|endpoint| match endpoint {
+            CanvasEndpoint::LabelPin { label_id } => label_pins
+                .iter()
+                .find(|label_pin| label_pin.id == *label_id)
+                .map(|label_pin| label_pin.name.trim().to_string()),
+            CanvasEndpoint::PrimitivePin { .. } => None,
+        })
+        .find(|name| !name.is_empty())
 }
 
 fn connected_endpoint_groups(connections: &[CanvasConnection]) -> Vec<Vec<CanvasEndpoint>> {
