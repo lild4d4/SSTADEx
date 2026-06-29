@@ -174,6 +174,9 @@ enum TestbenchEndpoint {
         element_id: usize,
         pin: TestbenchPin,
     },
+    DutPort {
+        port_name: String,
+    },
 }
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
@@ -283,6 +286,9 @@ enum GuiProjectTestbenchEndpoint {
     ElementPin {
         element_id: usize,
         pin: GuiProjectTestbenchPin,
+    },
+    DutPort {
+        port_name: String,
     },
 }
 
@@ -400,7 +406,7 @@ impl eframe::App for SstadexApp {
         if self.active_document == ActiveDocument::Circuit
             && ctx.input(|input| input.key_pressed(egui::Key::Delete))
         {
-            self.delete_selected_instance();
+            self.delete_selected_canvas_item();
         }
 
         egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
@@ -1202,6 +1208,14 @@ impl SstadexApp {
             .collect()
     }
 
+    fn delete_selected_canvas_item(&mut self) {
+        if self.delete_selected_macro_port() {
+            return;
+        }
+
+        self.delete_selected_instance();
+    }
+
     fn delete_selected_instance(&mut self) {
         let Some(instance_id) = self.selected_instance_id else {
             return;
@@ -1229,6 +1243,29 @@ impl SstadexApp {
         }
 
         self.selected_instance_id = None;
+    }
+
+    fn delete_selected_macro_port(&mut self) -> bool {
+        let Some(CanvasEndpoint::MacroPort { port_id }) = self.selected_endpoint.as_ref() else {
+            return false;
+        };
+        let port_id = *port_id;
+
+        self.macro_ports
+            .retain(|macro_port| macro_port.id != port_id);
+        self.connections
+            .retain(|connection| !connection.references_macro_port(port_id));
+
+        if self
+            .pending_connection
+            .as_ref()
+            .is_some_and(|endpoint| endpoint.references_macro_port(port_id))
+        {
+            self.pending_connection = None;
+        }
+
+        self.selected_endpoint = None;
+        true
     }
 
     fn run_mna_from_canvas(&self) -> String {
@@ -1745,6 +1782,10 @@ impl CanvasConnection {
     fn references_instance(&self, instance_id: usize) -> bool {
         self.from.references_instance(instance_id) || self.to.references_instance(instance_id)
     }
+
+    fn references_macro_port(&self, port_id: usize) -> bool {
+        self.from.references_macro_port(port_id) || self.to.references_macro_port(port_id)
+    }
 }
 
 impl CanvasEndpoint {
@@ -1755,6 +1796,15 @@ impl CanvasEndpoint {
                 ..
             } => *endpoint_instance_id == instance_id,
             CanvasEndpoint::LabelPin { .. } | CanvasEndpoint::MacroPort { .. } => false,
+        }
+    }
+
+    fn references_macro_port(&self, port_id: usize) -> bool {
+        match self {
+            CanvasEndpoint::MacroPort {
+                port_id: endpoint_port_id,
+            } => *endpoint_port_id == port_id,
+            CanvasEndpoint::PrimitivePin { .. } | CanvasEndpoint::LabelPin { .. } => false,
         }
     }
 }
@@ -1861,6 +1911,7 @@ impl TestbenchEndpoint {
     fn references_element(&self, id: usize) -> bool {
         match self {
             TestbenchEndpoint::ElementPin { element_id, .. } => *element_id == id,
+            TestbenchEndpoint::DutPort { .. } => false,
         }
     }
 }
@@ -2191,6 +2242,9 @@ impl GuiProjectTestbenchEndpoint {
                 element_id: *element_id,
                 pin: GuiProjectTestbenchPin::from_testbench_pin(*pin),
             },
+            TestbenchEndpoint::DutPort { port_name } => Self::DutPort {
+                port_name: port_name.clone(),
+            },
         }
     }
 
@@ -2200,6 +2254,7 @@ impl GuiProjectTestbenchEndpoint {
                 element_id,
                 pin: pin.into_testbench_pin(),
             },
+            Self::DutPort { port_name } => TestbenchEndpoint::DutPort { port_name },
         }
     }
 }
@@ -2660,7 +2715,7 @@ fn resolved_testbench_node(
 
 fn testbench_endpoint_node_text<'a>(
     testbench: &'a GuiTestbenchDocument,
-    endpoint: &TestbenchEndpoint,
+    endpoint: &'a TestbenchEndpoint,
 ) -> Option<&'a str> {
     match endpoint {
         TestbenchEndpoint::ElementPin { element_id, pin } => {
@@ -2669,6 +2724,11 @@ fn testbench_endpoint_node_text<'a>(
                 .iter()
                 .find(|element| element.id == *element_id)?;
             let value = testbench_element_pin_text(element, *pin).trim();
+
+            if value.is_empty() { None } else { Some(value) }
+        }
+        TestbenchEndpoint::DutPort { port_name } => {
+            let value = port_name.trim();
 
             if value.is_empty() { None } else { Some(value) }
         }
@@ -2701,6 +2761,7 @@ fn format_testbench_endpoint(
 
             format!("{element_name}.{pin_name}")
         }
+        TestbenchEndpoint::DutPort { port_name } => format!("DUT.{port_name}"),
     }
 }
 
@@ -2769,7 +2830,28 @@ fn draw_testbench_canvas(
     let painter = ui.painter_at(canvas_rect);
 
     painter.rect_filled(canvas_rect, 0.0, egui::Color32::from_gray(24));
-    draw_dut_macro_symbol(&painter, canvas_rect, dut_macro);
+    draw_dut_macro_symbol(
+        &painter,
+        canvas_rect,
+        dut_macro,
+        testbench.selected_endpoint.as_ref(),
+    );
+
+    let mut clicked_endpoint = None;
+    if let Some(dut_macro) = dut_macro {
+        let dut_rect = dut_macro_rect(canvas_rect);
+        for port in &dut_macro.ports {
+            let position = dut_port_position(dut_rect, port.symbol_side, port.symbol_offset);
+            let hit_rect = egui::Rect::from_center_size(position, egui::vec2(14.0, 14.0));
+            let response = ui.allocate_rect(hit_rect, egui::Sense::click());
+
+            if response.clicked() {
+                clicked_endpoint = Some(TestbenchEndpoint::DutPort {
+                    port_name: port.name.clone(),
+                });
+            }
+        }
+    }
 
     if testbench.elements.is_empty() {
         painter.text(
@@ -2779,6 +2861,14 @@ fn draw_testbench_canvas(
             egui::FontId::proportional(14.0),
             egui::Color32::from_gray(210),
         );
+        if let Some(endpoint) = clicked_endpoint {
+            testbench.selected_endpoint = Some(endpoint.clone());
+            update_pending_testbench_connection(
+                &mut testbench.pending_connection,
+                &mut testbench.connections,
+                endpoint,
+            );
+        }
         return;
     }
 
@@ -2786,10 +2876,10 @@ fn draw_testbench_canvas(
         &painter,
         canvas_rect,
         &testbench.elements,
+        dut_macro,
         &testbench.connections,
     );
 
-    let mut clicked_endpoint = None;
     for element in &mut testbench.elements {
         let center = canvas_rect.min + element.position.to_vec2();
         let rect = egui::Rect::from_center_size(center, egui::vec2(88.0, 54.0));
@@ -2835,6 +2925,7 @@ fn draw_dut_macro_symbol(
     painter: &egui::Painter,
     canvas_rect: egui::Rect,
     dut_macro: Option<&GuiDutMacroView>,
+    selected_endpoint: Option<&TestbenchEndpoint>,
 ) {
     let Some(dut_macro) = dut_macro else {
         return;
@@ -2864,7 +2955,19 @@ fn draw_dut_macro_symbol(
 
     for port in &dut_macro.ports {
         let position = dut_port_position(rect, port.symbol_side, port.symbol_offset);
-        painter.circle_filled(position, 3.5, port_color);
+        let selected = selected_endpoint
+            == Some(&TestbenchEndpoint::DutPort {
+                port_name: port.name.clone(),
+            });
+        painter.circle_filled(
+            position,
+            if selected { 5.0 } else { 3.5 },
+            if selected {
+                egui::Color32::from_rgb(245, 200, 80)
+            } else {
+                port_color
+            },
+        );
         draw_dut_port_label(painter, position, port.symbol_side, &port.name);
     }
 }
@@ -3032,16 +3135,20 @@ fn draw_testbench_connections(
     painter: &egui::Painter,
     canvas_rect: egui::Rect,
     elements: &[GuiTestbenchElement],
+    dut_macro: Option<&GuiDutMacroView>,
     connections: &[GuiTestbenchConnection],
 ) {
     let stroke = egui::Stroke::new(1.5, egui::Color32::from_rgb(105, 190, 230));
 
     for connection in connections {
-        let Some(from) = testbench_endpoint_position(canvas_rect, elements, &connection.from)
+        let Some(from) =
+            testbench_endpoint_position(canvas_rect, elements, dut_macro, &connection.from)
         else {
             continue;
         };
-        let Some(to) = testbench_endpoint_position(canvas_rect, elements, &connection.to) else {
+        let Some(to) =
+            testbench_endpoint_position(canvas_rect, elements, dut_macro, &connection.to)
+        else {
             continue;
         };
 
@@ -3052,6 +3159,7 @@ fn draw_testbench_connections(
 fn testbench_endpoint_position(
     canvas_rect: egui::Rect,
     elements: &[GuiTestbenchElement],
+    dut_macro: Option<&GuiDutMacroView>,
     endpoint: &TestbenchEndpoint,
 ) -> Option<egui::Pos2> {
     match endpoint {
@@ -3061,6 +3169,20 @@ fn testbench_endpoint_position(
             let rect = egui::Rect::from_center_size(center, egui::vec2(88.0, 54.0));
 
             Some(testbench_pin_position(rect, *pin))
+        }
+        TestbenchEndpoint::DutPort { port_name } => {
+            let dut_macro = dut_macro?;
+            let port = dut_macro
+                .ports
+                .iter()
+                .find(|port| port.name == *port_name)?;
+            let rect = dut_macro_rect(canvas_rect);
+
+            Some(dut_port_position(
+                rect,
+                port.symbol_side,
+                port.symbol_offset,
+            ))
         }
     }
 }
@@ -3278,6 +3400,7 @@ fn testbench_connection_endpoint_exists(
         TestbenchEndpoint::ElementPin { element_id, .. } => {
             elements.iter().any(|element| element.id == *element_id)
         }
+        TestbenchEndpoint::DutPort { .. } => true,
     }
 }
 
