@@ -6,6 +6,9 @@ use libsstadex::analysis::{CircuitMnaOutput, analyze_circuit_mna};
 use libsstadex::catalog::{PrimitiveCatalog, load_primitive_catalog};
 use libsstadex::circuit::{Circuit, Connection, Instance, PinRef, save_circuit};
 use libsstadex::exploration::{TestbenchElement, TestbenchSpec, save_testbenches};
+use libsstadex::macro_model::{
+    MacroMetadata, MacroModel, MacroPort, MacroPortRole, save_macro_model,
+};
 use libsstadex::primitive::manifest::{PinRole, PrimitiveManifest, SymbolPinSide};
 use serde::{Deserialize, Serialize};
 
@@ -78,11 +81,29 @@ struct CanvasConnection {
 
 struct GuiCircuitDocument {
     name: String,
+    subckt_name: String,
+    ports: Vec<GuiMacroPort>,
     canvas_instances: Vec<CanvasInstance>,
     label_pins: Vec<CanvasLabelPin>,
     connections: Vec<CanvasConnection>,
     next_instance_id: usize,
     next_label_pin_id: usize,
+}
+
+#[derive(Clone)]
+struct GuiMacroPort {
+    name: String,
+    role: GuiMacroPortRole,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GuiMacroPortRole {
+    Input,
+    Output,
+    Inout,
+    Bias,
+    Supply,
+    Ground,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -159,11 +180,32 @@ struct GuiProject {
 #[derive(Serialize, Deserialize)]
 struct GuiProjectCircuit {
     name: String,
+    #[serde(default)]
+    subckt_name: String,
+    #[serde(default)]
+    ports: Vec<GuiProjectMacroPort>,
     instances: Vec<GuiProjectInstance>,
     label_pins: Vec<GuiProjectLabelPin>,
     connections: Vec<GuiProjectConnection>,
     next_instance_id: usize,
     next_label_pin_id: usize,
+}
+
+#[derive(Serialize, Deserialize)]
+struct GuiProjectMacroPort {
+    name: String,
+    role: GuiProjectMacroPortRole,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum GuiProjectMacroPortRole {
+    Input,
+    Output,
+    Inout,
+    Bias,
+    Supply,
+    Ground,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -340,6 +382,13 @@ impl eframe::App for SstadexApp {
                     self.show_insert_primitive_window = true;
                 }
                 if ui
+                    .add_enabled(is_circuit_active, egui::Button::new("Save macro"))
+                    .clicked()
+                {
+                    self.output_log = self.save_active_macro_model();
+                    self.bottom_view = BottomView::Logs;
+                }
+                if ui
                     .add_enabled(is_circuit_active, egui::Button::new("Run MNA"))
                     .clicked()
                 {
@@ -366,6 +415,11 @@ impl eframe::App for SstadexApp {
 
                 match self.active_document {
                     ActiveDocument::Circuit => {
+                        if let Some(circuit) = self.circuits.get_mut(self.active_circuit) {
+                            show_macro_document_details(ui, circuit);
+                            ui.separator();
+                        }
+
                         if let Some(label_pin) = self.selected_label_pin_mut() {
                             show_label_pin_details(ui, label_pin);
                         } else {
@@ -614,7 +668,11 @@ impl SstadexApp {
 
     fn show_circuit_browser_item(&mut self, ui: &mut egui::Ui, index: usize) {
         if self.renaming_circuit == Some(index) {
+            let old_name = self.circuits[index].name.clone();
             let response = ui.text_edit_singleline(&mut self.circuits[index].name);
+            if self.circuits[index].subckt_name == old_name {
+                self.circuits[index].subckt_name = self.circuits[index].name.clone();
+            }
             if response.lost_focus()
                 || ui.input(|input| {
                     input.key_pressed(egui::Key::Enter) || input.key_pressed(egui::Key::Escape)
@@ -1031,6 +1089,37 @@ impl SstadexApp {
         }
     }
 
+    fn save_active_macro_model(&mut self) -> String {
+        self.save_active_circuit_document();
+
+        let macro_model = match self.build_macro_from_canvas() {
+            Ok(macro_model) => macro_model,
+            Err(error) => return format!("Cannot save macro: {error}"),
+        };
+        let output_dir = std::env::temp_dir()
+            .join("sstadex-gui-mna")
+            .join("gui_macros")
+            .join(&macro_model.name);
+        let macro_path = output_dir.join("macro.json");
+
+        if let Err(error) = save_macro_model(&macro_path, &macro_model) {
+            return format!(
+                "Cannot save macro: failed to write macro JSON '{}'\n\n{error:?}",
+                macro_path.display()
+            );
+        }
+
+        format!(
+            "Saved macro\n\nMacro JSON: {}\nName: {}\nSubckt: {}\nPorts: {}\nInstances: {}\nConnections: {}",
+            macro_path.display(),
+            macro_model.name,
+            macro_model.subckt_name,
+            macro_model.ports.len(),
+            macro_model.circuit.instances.len(),
+            macro_model.circuit.connections.len()
+        )
+    }
+
     fn choose_open_project_path(&mut self) {
         if let Some(path) = rfd::FileDialog::new()
             .set_directory(project_dialog_dir(&self.project_path))
@@ -1192,6 +1281,44 @@ impl SstadexApp {
         self.selected_instance_id = None;
         self.selected_endpoint = None;
         self.pending_connection = None;
+    }
+
+    fn build_macro_from_canvas(&self) -> Result<MacroModel, String> {
+        let Some(document) = self.circuits.get(self.active_circuit) else {
+            return Err("no active macro document".to_string());
+        };
+        let name = document.name.trim();
+        if name.is_empty() {
+            return Err("macro name cannot be empty".to_string());
+        }
+        let subckt_name = document.subckt_name.trim();
+        if subckt_name.is_empty() {
+            return Err("macro subckt name cannot be empty".to_string());
+        }
+        if let Some(index) = document
+            .ports
+            .iter()
+            .position(|port| port.name.trim().is_empty())
+        {
+            return Err(format!("macro port {} name cannot be empty", index + 1));
+        }
+
+        let mut macro_model = MacroModel::new(
+            name,
+            document
+                .ports
+                .iter()
+                .map(|port| MacroPort::new(port.name.trim(), macro_port_role(port.role)))
+                .collect(),
+            self.build_circuit_from_canvas(),
+        );
+        macro_model.subckt_name = subckt_name.to_string();
+        macro_model.metadata = MacroMetadata {
+            version: "1.0".to_string(),
+            description: Some("Generated by SSTADEx GUI".to_string()),
+        };
+
+        Ok(macro_model)
     }
 
     fn build_circuit_from_canvas(&self) -> Circuit {
@@ -1370,13 +1497,41 @@ impl CanvasEndpoint {
 
 impl GuiCircuitDocument {
     fn empty(name: impl Into<String>) -> Self {
+        let name = name.into();
+
         Self {
-            name: name.into(),
+            subckt_name: name.clone(),
+            name,
+            ports: Vec::new(),
             canvas_instances: Vec::new(),
             label_pins: Vec::new(),
             connections: Vec::new(),
             next_instance_id: 1,
             next_label_pin_id: 1,
+        }
+    }
+}
+
+impl GuiMacroPortRole {
+    fn all() -> [Self; 6] {
+        [
+            Self::Input,
+            Self::Output,
+            Self::Inout,
+            Self::Bias,
+            Self::Supply,
+            Self::Ground,
+        ]
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Input => "input",
+            Self::Output => "output",
+            Self::Inout => "inout",
+            Self::Bias => "bias",
+            Self::Supply => "supply",
+            Self::Ground => "ground",
         }
     }
 }
@@ -1485,6 +1640,12 @@ impl GuiProjectCircuit {
     fn from_circuit_document(circuit: &GuiCircuitDocument) -> Self {
         Self {
             name: circuit.name.clone(),
+            subckt_name: circuit.subckt_name.clone(),
+            ports: circuit
+                .ports
+                .iter()
+                .map(GuiProjectMacroPort::from_macro_port)
+                .collect(),
             instances: circuit
                 .canvas_instances
                 .iter()
@@ -1548,13 +1709,65 @@ impl GuiProjectCircuit {
             })
             .collect();
 
+        let subckt_name = if self.subckt_name.trim().is_empty() {
+            self.name.clone()
+        } else {
+            self.subckt_name
+        };
+
         GuiCircuitDocument {
             name: self.name,
+            subckt_name,
+            ports: self
+                .ports
+                .into_iter()
+                .map(GuiProjectMacroPort::into_macro_port)
+                .collect(),
             canvas_instances,
             label_pins,
             connections,
             next_instance_id: self.next_instance_id,
             next_label_pin_id: self.next_label_pin_id,
+        }
+    }
+}
+
+impl GuiProjectMacroPort {
+    fn from_macro_port(port: &GuiMacroPort) -> Self {
+        Self {
+            name: port.name.clone(),
+            role: GuiProjectMacroPortRole::from_macro_port_role(port.role),
+        }
+    }
+
+    fn into_macro_port(self) -> GuiMacroPort {
+        GuiMacroPort {
+            name: self.name,
+            role: self.role.into_macro_port_role(),
+        }
+    }
+}
+
+impl GuiProjectMacroPortRole {
+    fn from_macro_port_role(role: GuiMacroPortRole) -> Self {
+        match role {
+            GuiMacroPortRole::Input => Self::Input,
+            GuiMacroPortRole::Output => Self::Output,
+            GuiMacroPortRole::Inout => Self::Inout,
+            GuiMacroPortRole::Bias => Self::Bias,
+            GuiMacroPortRole::Supply => Self::Supply,
+            GuiMacroPortRole::Ground => Self::Ground,
+        }
+    }
+
+    fn into_macro_port_role(self) -> GuiMacroPortRole {
+        match self {
+            Self::Input => GuiMacroPortRole::Input,
+            Self::Output => GuiMacroPortRole::Output,
+            Self::Inout => GuiMacroPortRole::Inout,
+            Self::Bias => GuiMacroPortRole::Bias,
+            Self::Supply => GuiMacroPortRole::Supply,
+            Self::Ground => GuiMacroPortRole::Ground,
         }
     }
 }
@@ -2432,6 +2645,53 @@ fn draw_testbench_manhattan_connection(
     }
 }
 
+fn show_macro_document_details(ui: &mut egui::Ui, circuit: &mut GuiCircuitDocument) {
+    ui.heading("Macro");
+    ui.label(format!("Name: {}", circuit.name));
+    ui.horizontal(|ui| {
+        ui.label("Subckt:");
+        ui.text_edit_singleline(&mut circuit.subckt_name);
+    });
+    ui.label(format!("Instances: {}", circuit.canvas_instances.len()));
+    ui.label(format!("Lab pins: {}", circuit.label_pins.len()));
+    ui.label(format!("Connections: {}", circuit.connections.len()));
+
+    ui.separator();
+    ui.horizontal(|ui| {
+        ui.heading("Ports");
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.button("+").clicked() {
+                let index = circuit.ports.len() + 1;
+                circuit.ports.push(GuiMacroPort {
+                    name: format!("PORT{index}"),
+                    role: GuiMacroPortRole::Inout,
+                });
+            }
+        });
+    });
+
+    let mut remove_port = None;
+    for (index, port) in circuit.ports.iter_mut().enumerate() {
+        ui.horizontal(|ui| {
+            ui.text_edit_singleline(&mut port.name);
+            egui::ComboBox::from_id_salt(format!("macro_port_role_{index}"))
+                .selected_text(port.role.label())
+                .show_ui(ui, |ui| {
+                    for role in GuiMacroPortRole::all() {
+                        ui.selectable_value(&mut port.role, role, role.label());
+                    }
+                });
+            if ui.button("Delete").clicked() {
+                remove_port = Some(index);
+            }
+        });
+    }
+
+    if let Some(index) = remove_port {
+        circuit.ports.remove(index);
+    }
+}
+
 fn show_instance_details(
     ui: &mut egui::Ui,
     instance: &mut CanvasInstance,
@@ -2641,6 +2901,17 @@ fn next_available_circuit_name(circuits: &[GuiCircuitDocument]) -> String {
         }
 
         index += 1;
+    }
+}
+
+fn macro_port_role(role: GuiMacroPortRole) -> MacroPortRole {
+    match role {
+        GuiMacroPortRole::Input => MacroPortRole::Input,
+        GuiMacroPortRole::Output => MacroPortRole::Output,
+        GuiMacroPortRole::Inout => MacroPortRole::Inout,
+        GuiMacroPortRole::Bias => MacroPortRole::Bias,
+        GuiMacroPortRole::Supply => MacroPortRole::Supply,
+        GuiMacroPortRole::Ground => MacroPortRole::Ground,
     }
 }
 
