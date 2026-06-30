@@ -2,13 +2,15 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use eframe::egui;
-use libsstadex::analysis::{CircuitMnaOutput, analyze_circuit_mna, analyze_macro_testbench_mna};
+use libsstadex::analysis::{
+    CircuitMnaOutput, analyze_circuit_mna, analyze_macro_testbench_mna_with_mode,
+};
 use libsstadex::catalog::{PrimitiveCatalog, load_primitive_catalog};
 use libsstadex::circuit::{Circuit, Connection, Instance, PinRef, save_circuit};
 use libsstadex::exploration::{TestbenchElement, TestbenchSpec, save_testbenches};
 use libsstadex::macro_model::{
-    MacroCatalog, MacroMetadata, MacroModel, MacroPort, MacroPortRole, MacroSymbol, MacroSymbolPin,
-    save_macro_model,
+    MacroCatalog, MacroMetadata, MacroModel, MacroPort, MacroPortRole, MacroSmallSignalMode,
+    MacroSymbol, MacroSymbolPin, save_macro_model,
 };
 use libsstadex::primitive::manifest::{PinRole, PrimitiveManifest, SymbolPinSide};
 use serde::{Deserialize, Serialize};
@@ -154,12 +156,19 @@ enum ActiveDocument {
 struct GuiTestbenchDocument {
     name: String,
     dut_macro: String,
+    small_signal_mode: GuiSmallSignalMode,
     elements: Vec<GuiTestbenchElement>,
     connections: Vec<GuiTestbenchConnection>,
     selected_endpoint: Option<TestbenchEndpoint>,
     pending_connection: Option<TestbenchEndpoint>,
     extra_body: String,
     next_element_id: usize,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GuiSmallSignalMode {
+    CompactWhenAvailable,
+    Expand,
 }
 
 #[derive(Clone)]
@@ -267,11 +276,21 @@ struct GuiProjectTestbench {
     name: String,
     #[serde(default)]
     dut_macro: String,
+    #[serde(default)]
+    small_signal_mode: GuiProjectSmallSignalMode,
     elements: Vec<GuiProjectTestbenchElement>,
     #[serde(default)]
     connections: Vec<GuiProjectTestbenchConnection>,
     extra_body: String,
     next_element_id: usize,
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+enum GuiProjectSmallSignalMode {
+    #[default]
+    CompactWhenAvailable,
+    Expand,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -522,6 +541,10 @@ impl eframe::App for SstadexApp {
                             ui.label(format!(
                                 "DUT macro: {}",
                                 display_optional_name(&testbench.dut_macro)
+                            ));
+                            ui.label(format!(
+                                "Small-signal mode: {}",
+                                testbench.small_signal_mode.label()
                             ));
                             ui.label(format!("Elements: {}", testbench.elements.len()));
                             ui.label(if testbench.extra_body.trim().is_empty() {
@@ -1191,6 +1214,7 @@ impl SstadexApp {
         self.testbenches.push(GuiTestbenchDocument {
             name: format!("tb_{index}"),
             dut_macro,
+            small_signal_mode: GuiSmallSignalMode::CompactWhenAvailable,
             elements: Vec::new(),
             connections: Vec::new(),
             selected_endpoint: None,
@@ -1431,6 +1455,10 @@ impl SstadexApp {
         let Some(testbench) = testbenches.get(selected_index) else {
             return "Cannot run testbench MNA: selected testbench no longer exists".to_string();
         };
+        let Some(gui_testbench) = self.testbenches.get(selected_index) else {
+            return "Cannot run testbench MNA: selected GUI testbench no longer exists".to_string();
+        };
+        let mode = macro_small_signal_mode(gui_testbench.small_signal_mode);
 
         for macro_model in &macro_models {
             let macro_path = macro_dir.join(&macro_model.name).join("macro.json");
@@ -1454,11 +1482,20 @@ impl SstadexApp {
             macro_catalog.register(macro_model);
         }
 
-        match analyze_macro_testbench_mna(testbench, catalog, &macro_catalog, &mna_dir, false) {
+        match analyze_macro_testbench_mna_with_mode(
+            testbench,
+            catalog,
+            &macro_catalog,
+            &mna_dir,
+            false,
+            mode,
+        ) {
             Ok(analysis) => format_testbench_mna_output(
                 &CircuitMnaOutput::from_analysis(&analysis),
+                &analysis.small_signal_netlist,
                 &macro_dir,
                 &testbench_path,
+                gui_testbench.small_signal_mode,
             ),
             Err(error) => format!(
                 "Testbench MNA failed for '{}'\n\nMacro dir: {}\nTestbenches: {}\n\n{error:?}",
@@ -1819,6 +1856,10 @@ impl SstadexApp {
             "DUT macro: {}",
             display_optional_name(&testbench.dut_macro)
         ));
+        ui.label(format!(
+            "Small-signal mode: {}",
+            testbench.small_signal_mode.label()
+        ));
         ui.label(format!("Elements: {}", testbench.elements.len()));
         ui.label("Edit the selected testbench in the central panel.");
     }
@@ -1929,6 +1970,19 @@ impl GuiMacroPortRole {
             Self::Bias => "bias",
             Self::Supply => "supply",
             Self::Ground => "ground",
+        }
+    }
+}
+
+impl GuiSmallSignalMode {
+    fn all() -> [Self; 2] {
+        [Self::CompactWhenAvailable, Self::Expand]
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::CompactWhenAvailable => "compact when available",
+            Self::Expand => "expand",
         }
     }
 }
@@ -2256,6 +2310,9 @@ impl GuiProjectTestbench {
         Self {
             name: testbench.name.clone(),
             dut_macro: testbench.dut_macro.clone(),
+            small_signal_mode: GuiProjectSmallSignalMode::from_gui_mode(
+                testbench.small_signal_mode,
+            ),
             elements: testbench
                 .elements
                 .iter()
@@ -2290,12 +2347,29 @@ impl GuiProjectTestbench {
         GuiTestbenchDocument {
             name: self.name,
             dut_macro: self.dut_macro,
+            small_signal_mode: self.small_signal_mode.into_gui_mode(),
             elements,
             connections,
             selected_endpoint: None,
             pending_connection: None,
             extra_body: self.extra_body,
             next_element_id: self.next_element_id,
+        }
+    }
+}
+
+impl GuiProjectSmallSignalMode {
+    fn from_gui_mode(mode: GuiSmallSignalMode) -> Self {
+        match mode {
+            GuiSmallSignalMode::CompactWhenAvailable => Self::CompactWhenAvailable,
+            GuiSmallSignalMode::Expand => Self::Expand,
+        }
+    }
+
+    fn into_gui_mode(self) -> GuiSmallSignalMode {
+        match self {
+            Self::CompactWhenAvailable => GuiSmallSignalMode::CompactWhenAvailable,
+            Self::Expand => GuiSmallSignalMode::Expand,
         }
     }
 }
@@ -3347,6 +3421,17 @@ fn show_testbench_dut_selector(
     if macro_names.is_empty() {
         ui.label("Create a macro before using this testbench.");
     }
+
+    ui.horizontal(|ui| {
+        ui.label("Small-signal mode:");
+        egui::ComboBox::from_id_salt("testbench_small_signal_mode")
+            .selected_text(testbench.small_signal_mode.label())
+            .show_ui(ui, |ui| {
+                for mode in GuiSmallSignalMode::all() {
+                    ui.selectable_value(&mut testbench.small_signal_mode, mode, mode.label());
+                }
+            });
+    });
 }
 
 fn show_instance_details(
@@ -3647,6 +3732,13 @@ fn macro_port_role(role: GuiMacroPortRole) -> MacroPortRole {
     }
 }
 
+fn macro_small_signal_mode(mode: GuiSmallSignalMode) -> MacroSmallSignalMode {
+    match mode {
+        GuiSmallSignalMode::CompactWhenAvailable => MacroSmallSignalMode::CompactWhenAvailable,
+        GuiSmallSignalMode::Expand => MacroSmallSignalMode::Expand,
+    }
+}
+
 fn document_macro_ports(document: &GuiCircuitDocument) -> Vec<GuiMacroPortView<'_>> {
     if document.macro_ports.is_empty() {
         document
@@ -3913,16 +4005,22 @@ fn format_mna_output(output: &CircuitMnaOutput, circuit_path: &std::path::Path) 
 
 fn format_testbench_mna_output(
     output: &CircuitMnaOutput,
+    small_signal_netlist: &str,
     macro_dir: &std::path::Path,
     testbench_path: &std::path::Path,
+    mode: GuiSmallSignalMode,
 ) -> String {
     let mut lines = Vec::new();
 
     lines.push("Testbench MNA completed".to_string());
+    lines.push(format!("Small-signal mode: {}", mode.label()));
     lines.push(format!("Macro dir: {}", macro_dir.display()));
     lines.push(format!("Testbenches JSON: {}", testbench_path.display()));
     lines.push(format!("SPICE: {}", output.spice_path));
     lines.push(format!("CIR: {}", output.cir_path));
+    lines.push(String::new());
+    lines.push("Generated SPICE netlist:".to_string());
+    lines.push(small_signal_netlist.trim_end().to_string());
     lines.push(String::new());
     lines.push("Variables:".to_string());
 
