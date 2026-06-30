@@ -2,12 +2,12 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use eframe::egui;
-use libsstadex::analysis::{CircuitMnaOutput, analyze_circuit_mna};
+use libsstadex::analysis::{CircuitMnaOutput, analyze_circuit_mna, analyze_macro_testbench_mna};
 use libsstadex::catalog::{PrimitiveCatalog, load_primitive_catalog};
 use libsstadex::circuit::{Circuit, Connection, Instance, PinRef, save_circuit};
 use libsstadex::exploration::{TestbenchElement, TestbenchSpec, save_testbenches};
 use libsstadex::macro_model::{
-    MacroMetadata, MacroModel, MacroPort, MacroPortRole, MacroSymbol, MacroSymbolPin,
+    MacroCatalog, MacroMetadata, MacroModel, MacroPort, MacroPortRole, MacroSymbol, MacroSymbolPin,
     save_macro_model,
 };
 use libsstadex::primitive::manifest::{PinRole, PrimitiveManifest, SymbolPinSide};
@@ -458,6 +458,16 @@ impl eframe::App for SstadexApp {
                 }
                 if ui.button("Save flow inputs").clicked() {
                     self.output_log = self.save_flow_inputs();
+                    self.bottom_view = BottomView::Logs;
+                }
+                if ui
+                    .add_enabled(
+                        self.selected_testbench.is_some(),
+                        egui::Button::new("Run testbench MNA"),
+                    )
+                    .clicked()
+                {
+                    self.output_log = self.run_selected_testbench_mna();
                     self.bottom_view = BottomView::Logs;
                 }
                 if ui
@@ -1386,6 +1396,77 @@ impl SstadexApp {
             macro_dir.display(),
             testbench_path.display()
         )
+    }
+
+    fn run_selected_testbench_mna(&mut self) -> String {
+        self.save_active_circuit_document();
+
+        let Some(selected_index) = self.selected_testbench else {
+            return "Cannot run testbench MNA: no testbench selected".to_string();
+        };
+        let Some(catalog) = &self.catalog else {
+            return "Cannot run testbench MNA: primitive catalog is not loaded".to_string();
+        };
+
+        let output_dir = std::env::temp_dir().join("sstadex-gui-mna");
+        let macro_dir = output_dir.join("gui_macros");
+        let testbench_path = output_dir.join("gui_testbenches.json");
+        let mna_dir = output_dir.join("testbench_mna");
+
+        if let Err(error) = std::fs::create_dir_all(&output_dir) {
+            return format!(
+                "Cannot run testbench MNA: failed to create output directory '{}'\n\n{error}",
+                output_dir.display()
+            );
+        }
+
+        let macro_models = match self.build_macro_models() {
+            Ok(macro_models) => macro_models,
+            Err(error) => return format!("Cannot run testbench MNA: {error}"),
+        };
+        let testbenches = match gui_testbenches_to_specs(&self.testbenches, &self.circuits) {
+            Ok(testbenches) => testbenches,
+            Err(error) => return format!("Cannot run testbench MNA: {error}"),
+        };
+        let Some(testbench) = testbenches.get(selected_index) else {
+            return "Cannot run testbench MNA: selected testbench no longer exists".to_string();
+        };
+
+        for macro_model in &macro_models {
+            let macro_path = macro_dir.join(&macro_model.name).join("macro.json");
+            if let Err(error) = save_macro_model(&macro_path, macro_model) {
+                return format!(
+                    "Cannot run testbench MNA: failed to write macro JSON '{}'\n\n{error:?}",
+                    macro_path.display()
+                );
+            }
+        }
+
+        if let Err(error) = save_testbenches(&testbench_path, &testbenches) {
+            return format!(
+                "Cannot run testbench MNA: failed to write testbench JSON '{}'\n\n{error:?}",
+                testbench_path.display()
+            );
+        }
+
+        let mut macro_catalog = MacroCatalog::new();
+        for macro_model in macro_models {
+            macro_catalog.register(macro_model);
+        }
+
+        match analyze_macro_testbench_mna(testbench, catalog, &macro_catalog, &mna_dir, false) {
+            Ok(analysis) => format_testbench_mna_output(
+                &CircuitMnaOutput::from_analysis(&analysis),
+                &macro_dir,
+                &testbench_path,
+            ),
+            Err(error) => format!(
+                "Testbench MNA failed for '{}'\n\nMacro dir: {}\nTestbenches: {}\n\n{error:?}",
+                testbench.name,
+                macro_dir.display(),
+                testbench_path.display()
+            ),
+        }
     }
 
     fn choose_open_project_path(&mut self) {
@@ -3808,6 +3889,38 @@ fn format_mna_output(output: &CircuitMnaOutput, circuit_path: &std::path::Path) 
         "Generated circuit JSON: {}",
         circuit_path.display()
     ));
+    lines.push(format!("SPICE: {}", output.spice_path));
+    lines.push(format!("CIR: {}", output.cir_path));
+    lines.push(String::new());
+    lines.push("Variables:".to_string());
+
+    for variable in &output.variables {
+        lines.push(format!(
+            "  {} -> {} ({})",
+            variable.variable, variable.node_name, variable.node_number
+        ));
+    }
+
+    lines.push(String::new());
+    lines.push("Equations:".to_string());
+
+    for equation in &output.equations {
+        lines.push(format!("  {}", equation.text));
+    }
+
+    lines.join("\n")
+}
+
+fn format_testbench_mna_output(
+    output: &CircuitMnaOutput,
+    macro_dir: &std::path::Path,
+    testbench_path: &std::path::Path,
+) -> String {
+    let mut lines = Vec::new();
+
+    lines.push("Testbench MNA completed".to_string());
+    lines.push(format!("Macro dir: {}", macro_dir.display()));
+    lines.push(format!("Testbenches JSON: {}", testbench_path.display()));
     lines.push(format!("SPICE: {}", output.spice_path));
     lines.push(format!("CIR: {}", output.cir_path));
     lines.push(String::new());
