@@ -58,6 +58,7 @@ struct CanvasInstance {
     instance_name: String,
     primitive_name: String,
     position: egui::Pos2,
+    orientation: GuiOrientation,
 }
 
 #[derive(Clone, Hash, PartialEq, Eq)]
@@ -203,6 +204,15 @@ struct GuiTestbenchElement {
     nminus: String,
     value: String,
     position: egui::Pos2,
+    orientation: GuiOrientation,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GuiOrientation {
+    R0,
+    R90,
+    R180,
+    R270,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -327,6 +337,18 @@ struct GuiProjectTestbenchElement {
     nminus: String,
     value: String,
     position: GuiProjectPosition,
+    #[serde(default)]
+    orientation: GuiProjectOrientation,
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+enum GuiProjectOrientation {
+    #[default]
+    R0,
+    R90,
+    R180,
+    R270,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -344,6 +366,8 @@ struct GuiProjectInstance {
     name: String,
     primitive: String,
     position: GuiProjectPosition,
+    #[serde(default)]
+    orientation: GuiProjectOrientation,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -426,6 +450,9 @@ impl eframe::App for SstadexApp {
             && ctx.input(|input| input.key_pressed(egui::Key::Delete))
         {
             self.delete_selected_canvas_item();
+        }
+        if ctx.input(|input| input.key_pressed(egui::Key::R)) {
+            self.rotate_selected_canvas_item();
         }
 
         egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
@@ -635,7 +662,7 @@ impl SstadexApp {
                 .and_then(|catalog| catalog.get(&instance.primitive_name));
 
             if let Some(primitive) = primitive {
-                for pin_view in pin_views(rect, primitive) {
+                for pin_view in pin_views(rect, primitive, instance.orientation) {
                     let hit_rect =
                         egui::Rect::from_center_size(pin_view.position, egui::vec2(14.0, 14.0));
                     let response = ui.allocate_rect(hit_rect, egui::Sense::click());
@@ -1163,6 +1190,7 @@ impl SstadexApp {
             instance_name,
             primitive_name: primitive_name.to_string(),
             position: egui::pos2(40.0 + offset, 40.0 + offset),
+            orientation: GuiOrientation::R0,
         });
 
         self.selected_instance_id = Some(id);
@@ -1300,6 +1328,37 @@ impl SstadexApp {
 
         self.selected_endpoint = None;
         true
+    }
+
+    fn rotate_selected_canvas_item(&mut self) {
+        match self.active_document {
+            ActiveDocument::Circuit => {
+                if let Some(instance) = self.selected_instance_mut() {
+                    instance.orientation = instance.orientation.rotated_clockwise();
+                }
+            }
+            ActiveDocument::Testbench => {
+                let Some(selected_index) = self.selected_testbench else {
+                    return;
+                };
+                let Some(testbench) = self.testbenches.get_mut(selected_index) else {
+                    return;
+                };
+                let Some(TestbenchEndpoint::ElementPin { element_id, .. }) =
+                    testbench.selected_endpoint.as_ref()
+                else {
+                    return;
+                };
+                let element_id = *element_id;
+                if let Some(element) = testbench
+                    .elements
+                    .iter_mut()
+                    .find(|element| element.id == element_id)
+                {
+                    element.orientation = element.orientation.rotated_clockwise();
+                }
+            }
+        }
     }
 
     fn run_mna_from_canvas(&self) -> String {
@@ -1987,6 +2046,26 @@ impl GuiSmallSignalMode {
     }
 }
 
+impl GuiOrientation {
+    fn rotated_clockwise(self) -> Self {
+        match self {
+            Self::R0 => Self::R90,
+            Self::R90 => Self::R180,
+            Self::R180 => Self::R270,
+            Self::R270 => Self::R0,
+        }
+    }
+
+    fn degrees(self) -> u16 {
+        match self {
+            Self::R0 => 0,
+            Self::R90 => 90,
+            Self::R180 => 180,
+            Self::R270 => 270,
+        }
+    }
+}
+
 impl GuiDutMacroView {
     fn from_circuit_document(circuit: &GuiCircuitDocument) -> Self {
         Self {
@@ -2083,6 +2162,7 @@ impl GuiTestbenchElement {
             nminus: "0".to_string(),
             value: String::new(),
             position: egui::pos2(48.0 + offset, 48.0 + offset),
+            orientation: GuiOrientation::R0,
         }
     }
 }
@@ -2097,6 +2177,26 @@ impl GuiProjectPosition {
 
     fn to_pos(&self) -> egui::Pos2 {
         egui::pos2(self.x, self.y)
+    }
+}
+
+impl GuiProjectOrientation {
+    fn from_gui_orientation(orientation: GuiOrientation) -> Self {
+        match orientation {
+            GuiOrientation::R0 => Self::R0,
+            GuiOrientation::R90 => Self::R90,
+            GuiOrientation::R180 => Self::R180,
+            GuiOrientation::R270 => Self::R270,
+        }
+    }
+
+    fn into_gui_orientation(self) -> GuiOrientation {
+        match self {
+            Self::R0 => GuiOrientation::R0,
+            Self::R90 => GuiOrientation::R90,
+            Self::R180 => GuiOrientation::R180,
+            Self::R270 => GuiOrientation::R270,
+        }
     }
 }
 
@@ -2118,6 +2218,7 @@ impl GuiProjectCircuit {
                     name: exported_instance_name(instance),
                     primitive: instance.primitive_name.clone(),
                     position: GuiProjectPosition::from_pos(instance.position),
+                    orientation: GuiProjectOrientation::from_gui_orientation(instance.orientation),
                 })
                 .collect(),
             label_pins: circuit
@@ -2159,6 +2260,7 @@ impl GuiProjectCircuit {
                 instance_name: instance.name,
                 primitive_name: instance.primitive,
                 position: instance.position.to_pos(),
+                orientation: instance.orientation.into_gui_orientation(),
             })
             .collect::<Vec<_>>();
         let label_pins = self
@@ -2440,6 +2542,7 @@ impl GuiProjectTestbenchElement {
             nminus: element.nminus.clone(),
             value: element.value.clone(),
             position: GuiProjectPosition::from_pos(element.position),
+            orientation: GuiProjectOrientation::from_gui_orientation(element.orientation),
         }
     }
 
@@ -2452,6 +2555,7 @@ impl GuiProjectTestbenchElement {
             nminus: self.nminus,
             value: self.value,
             position: self.position.to_pos(),
+            orientation: self.orientation.into_gui_orientation(),
         }
     }
 }
@@ -2580,6 +2684,7 @@ fn show_testbench_editor(
             ui.horizontal(|ui| {
                 ui.label("Name:");
                 ui.text_edit_singleline(&mut element.name);
+                ui.label(format!("Rot: {} deg", element.orientation.degrees()));
                 ui.label(node_a_label(element.kind));
                 ui.text_edit_singleline(&mut element.nplus);
                 ui.label(node_b_label(element.kind));
@@ -2972,7 +3077,14 @@ fn draw_primitive_preview(ui: &mut egui::Ui, primitive: &PrimitiveManifest) {
         egui::Color32::WHITE,
     );
 
-    draw_instance_pins(&painter, symbol_rect, 0, primitive, None);
+    draw_instance_pins(
+        &painter,
+        symbol_rect,
+        0,
+        primitive,
+        GuiOrientation::R0,
+        None,
+    );
 }
 
 fn draw_testbench_canvas(
@@ -3049,7 +3161,7 @@ fn draw_testbench_canvas(
                 element_id: element.id,
                 pin,
             };
-            let pin_position = testbench_pin_position(rect, pin);
+            let pin_position = testbench_pin_position(rect, element.orientation, pin);
             let pin_rect = egui::Rect::from_center_size(pin_position, egui::vec2(14.0, 14.0));
             let pin_response = ui.allocate_rect(pin_rect, egui::Sense::click());
 
@@ -3191,22 +3303,12 @@ fn draw_testbench_element_symbol(
             pin: TestbenchPin::B,
         });
 
-    painter.line_segment(
-        [
-            egui::pos2(rect.left(), rect.center().y),
-            egui::pos2(rect.left() + 18.0, rect.center().y),
-        ],
-        stroke,
-    );
-    painter.line_segment(
-        [
-            egui::pos2(rect.right() - 18.0, rect.center().y),
-            egui::pos2(rect.right(), rect.center().y),
-        ],
-        stroke,
-    );
+    let pin_a_position = testbench_pin_position(rect, element.orientation, TestbenchPin::A);
+    let pin_b_position = testbench_pin_position(rect, element.orientation, TestbenchPin::B);
+    painter.line_segment([pin_a_position, rect.center()], stroke);
+    painter.line_segment([rect.center(), pin_b_position], stroke);
     painter.circle_filled(
-        testbench_pin_position(rect, TestbenchPin::A),
+        pin_a_position,
         4.0,
         if pin_a_selected {
             selected_pin_color
@@ -3215,7 +3317,7 @@ fn draw_testbench_element_symbol(
         },
     );
     painter.circle_filled(
-        testbench_pin_position(rect, TestbenchPin::B),
+        pin_b_position,
         4.0,
         if pin_b_selected {
             selected_pin_color
@@ -3323,7 +3425,7 @@ fn testbench_endpoint_position(
             let center = canvas_rect.min + element.position.to_vec2();
             let rect = egui::Rect::from_center_size(center, egui::vec2(88.0, 54.0));
 
-            Some(testbench_pin_position(rect, *pin))
+            Some(testbench_pin_position(rect, element.orientation, *pin))
         }
         TestbenchEndpoint::DutPort { port_name } => {
             let dut_macro = dut_macro?;
@@ -3342,11 +3444,17 @@ fn testbench_endpoint_position(
     }
 }
 
-fn testbench_pin_position(rect: egui::Rect, pin: TestbenchPin) -> egui::Pos2 {
-    match pin {
+fn testbench_pin_position(
+    rect: egui::Rect,
+    orientation: GuiOrientation,
+    pin: TestbenchPin,
+) -> egui::Pos2 {
+    let position = match pin {
         TestbenchPin::A => egui::pos2(rect.left(), rect.center().y),
         TestbenchPin::B => egui::pos2(rect.right(), rect.center().y),
-    }
+    };
+
+    rotate_point_in_rect(position, rect, orientation)
 }
 
 fn draw_testbench_manhattan_connection(
@@ -3449,6 +3557,10 @@ fn show_instance_details(
     ui.label(format!(
         "Position: {:.0}, {:.0}",
         instance.position.x, instance.position.y
+    ));
+    ui.label(format!(
+        "Orientation: {} deg",
+        instance.orientation.degrees()
     ));
 
     if let Some(CanvasEndpoint::PrimitivePin {
@@ -3625,7 +3737,7 @@ fn endpoint_view(
             let primitive = catalog.get(&instance.primitive_name)?;
             let rect = canvas.instance_rect(instance);
 
-            pin_views(rect, primitive)
+            pin_views(rect, primitive, instance.orientation)
                 .into_iter()
                 .find(|pin| pin.name == *pin_name)
                 .map(EndpointView::from_pin_view)
@@ -4105,7 +4217,14 @@ fn draw_canvas_instance(
     );
 
     if let Some(primitive) = primitive {
-        draw_instance_pins(painter, rect, instance.id, primitive, selected_endpoint);
+        draw_instance_pins(
+            painter,
+            rect,
+            instance.id,
+            primitive,
+            instance.orientation,
+            selected_endpoint,
+        );
     }
 }
 
@@ -4166,9 +4285,10 @@ fn draw_instance_pins(
     rect: egui::Rect,
     instance_id: usize,
     primitive: &PrimitiveManifest,
+    orientation: GuiOrientation,
     selected_endpoint: Option<&CanvasEndpoint>,
 ) {
-    for pin_view in pin_views(rect, primitive) {
+    for pin_view in pin_views(rect, primitive, orientation) {
         let selected = selected_endpoint.is_some_and(|endpoint| {
             *endpoint
                 == CanvasEndpoint::PrimitivePin {
@@ -4222,7 +4342,11 @@ struct PinView {
     align: egui::Align2,
 }
 
-fn pin_views(rect: egui::Rect, primitive: &PrimitiveManifest) -> Vec<PinView> {
+fn pin_views(
+    rect: egui::Rect,
+    primitive: &PrimitiveManifest,
+    orientation: GuiOrientation,
+) -> Vec<PinView> {
     if let Some(symbol) = &primitive.ui.symbol {
         let mut views = Vec::new();
 
@@ -4241,12 +4365,16 @@ fn pin_views(rect: egui::Rect, primitive: &PrimitiveManifest) -> Vec<PinView> {
                 SymbolPinSide::Bottom => PinSide::Bottom,
             };
 
-            views.push(pin_view_at(
+            views.push(rotate_pin_view(
+                pin_view_at(
+                    rect,
+                    side,
+                    symbol_pin.offset.clamp(0.0, 1.0),
+                    &pin.name,
+                    &pin.role,
+                ),
                 rect,
-                side,
-                symbol_pin.offset.clamp(0.0, 1.0),
-                &pin.name,
-                &pin.role,
+                orientation,
             ));
         }
 
@@ -4273,6 +4401,9 @@ fn pin_views(rect: egui::Rect, primitive: &PrimitiveManifest) -> Vec<PinView> {
     append_pin_group(&mut views, rect, PinSide::Top, &supplies);
     append_pin_group(&mut views, rect, PinSide::Bottom, &bottom_pins);
     views
+        .into_iter()
+        .map(|view| rotate_pin_view(view, rect, orientation))
+        .collect()
 }
 
 #[derive(Clone, Copy)]
@@ -4348,6 +4479,78 @@ fn pin_view_at(
         position,
         label_position,
         align,
+    }
+}
+
+fn rotate_pin_view(view: PinView, rect: egui::Rect, orientation: GuiOrientation) -> PinView {
+    if orientation == GuiOrientation::R0 {
+        return view;
+    }
+
+    let side = rotate_pin_side(view.side, orientation);
+    let position = rotate_point_in_rect(view.position, rect, orientation);
+
+    PinView {
+        position,
+        label_position: pin_label_position(position, side),
+        align: pin_label_align(side),
+        side,
+        ..view
+    }
+}
+
+fn rotate_pin_side(side: PinSide, orientation: GuiOrientation) -> PinSide {
+    let mut side = side;
+    let turns = match orientation {
+        GuiOrientation::R0 => 0,
+        GuiOrientation::R90 => 1,
+        GuiOrientation::R180 => 2,
+        GuiOrientation::R270 => 3,
+    };
+
+    for _ in 0..turns {
+        side = match side {
+            PinSide::Left => PinSide::Top,
+            PinSide::Top => PinSide::Right,
+            PinSide::Right => PinSide::Bottom,
+            PinSide::Bottom => PinSide::Left,
+        };
+    }
+
+    side
+}
+
+fn rotate_point_in_rect(
+    position: egui::Pos2,
+    rect: egui::Rect,
+    orientation: GuiOrientation,
+) -> egui::Pos2 {
+    let center = rect.center();
+    let delta = position - center;
+
+    match orientation {
+        GuiOrientation::R0 => position,
+        GuiOrientation::R90 => center + egui::vec2(-delta.y, delta.x),
+        GuiOrientation::R180 => center + egui::vec2(-delta.x, -delta.y),
+        GuiOrientation::R270 => center + egui::vec2(delta.y, -delta.x),
+    }
+}
+
+fn pin_label_position(position: egui::Pos2, side: PinSide) -> egui::Pos2 {
+    match side {
+        PinSide::Left => position + egui::vec2(8.0, 0.0),
+        PinSide::Right => position - egui::vec2(8.0, 0.0),
+        PinSide::Top => position + egui::vec2(0.0, 8.0),
+        PinSide::Bottom => position - egui::vec2(0.0, 8.0),
+    }
+}
+
+fn pin_label_align(side: PinSide) -> egui::Align2 {
+    match side {
+        PinSide::Left => egui::Align2::LEFT_CENTER,
+        PinSide::Right => egui::Align2::RIGHT_CENTER,
+        PinSide::Top => egui::Align2::CENTER_TOP,
+        PinSide::Bottom => egui::Align2::CENTER_BOTTOM,
     }
 }
 
