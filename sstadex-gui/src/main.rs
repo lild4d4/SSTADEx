@@ -3346,6 +3346,8 @@ fn draw_testbench_element_symbol(
         GuiTestbenchElementKind::VoltageSource | GuiTestbenchElementKind::CurrentSource => {
             painter.circle_filled(rect.center(), 20.0, body_color);
             painter.circle_stroke(rect.center(), 20.0, stroke);
+            draw_testbench_pin_polarity(painter, rect, element.orientation, TestbenchPin::A, "+");
+            draw_testbench_pin_polarity(painter, rect, element.orientation, TestbenchPin::B, "-");
             painter.text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
@@ -3384,6 +3386,34 @@ fn draw_testbench_element_symbol(
         egui::FontId::proportional(11.0),
         egui::Color32::from_gray(220),
     );
+}
+
+fn draw_testbench_pin_polarity(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    orientation: GuiOrientation,
+    pin: TestbenchPin,
+    label: &str,
+) {
+    let pin_position = testbench_pin_position(rect, orientation, pin);
+    let direction = normalized_or_zero(pin_position - rect.center());
+    let text_position = pin_position - direction * 14.0;
+
+    painter.text(
+        text_position,
+        egui::Align2::CENTER_CENTER,
+        label,
+        egui::FontId::proportional(14.0),
+        egui::Color32::from_gray(235),
+    );
+}
+
+fn normalized_or_zero(vector: egui::Vec2) -> egui::Vec2 {
+    if vector.length_sq() <= f32::EPSILON {
+        egui::Vec2::ZERO
+    } else {
+        vector.normalized()
+    }
 }
 
 fn update_pending_testbench_connection(
