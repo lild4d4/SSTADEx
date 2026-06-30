@@ -813,7 +813,14 @@ impl SstadexApp {
         });
         ui.separator();
 
-        draw_testbench_canvas(ui, testbench, dut_macro_view.as_ref());
+        let canvas_max_height = (ui.available_height() * 0.55).clamp(220.0, 420.0);
+        egui::ScrollArea::both()
+            .id_salt("testbench_canvas_scroll")
+            .max_height(canvas_max_height)
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                draw_testbench_canvas(ui, testbench, dut_macro_view.as_ref());
+            });
 
         ui.separator();
         egui::ScrollArea::vertical()
@@ -3101,7 +3108,7 @@ fn draw_testbench_canvas(
     testbench: &mut GuiTestbenchDocument,
     dut_macro: Option<&GuiDutMacroView>,
 ) {
-    let canvas_size = egui::vec2(ui.available_width(), 180.0);
+    let canvas_size = testbench_canvas_size(ui.available_width(), testbench);
     let (canvas_rect, _) = ui.allocate_exact_size(canvas_size, egui::Sense::hover());
     let painter = ui.painter_at(canvas_rect);
 
@@ -3262,6 +3269,22 @@ fn draw_dut_macro_symbol(
 fn dut_macro_rect(canvas_rect: egui::Rect, dut_position: egui::Pos2) -> egui::Rect {
     let size = egui::vec2(150.0, 106.0);
     egui::Rect::from_min_size(canvas_rect.min + dut_position.to_vec2(), size)
+}
+
+fn testbench_canvas_size(available_width: f32, testbench: &GuiTestbenchDocument) -> egui::Vec2 {
+    let mut max_x = available_width.max(640.0);
+    let mut max_y: f32 = 260.0;
+
+    let dut_size = egui::vec2(150.0, 106.0);
+    max_x = max_x.max(testbench.dut_position.x + dut_size.x + 96.0);
+    max_y = max_y.max(testbench.dut_position.y + dut_size.y + 96.0);
+
+    for element in &testbench.elements {
+        max_x = max_x.max(element.position.x + 120.0);
+        max_y = max_y.max(element.position.y + 96.0);
+    }
+
+    egui::vec2(max_x, max_y)
 }
 
 fn dut_port_position(rect: egui::Rect, side: SymbolPinSide, offset: f32) -> egui::Pos2 {
