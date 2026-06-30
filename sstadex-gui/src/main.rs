@@ -3152,6 +3152,13 @@ fn draw_testbench_canvas(
         let rect = egui::Rect::from_center_size(center, egui::vec2(88.0, 54.0));
         let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
 
+        if response.clicked() || response.dragged() {
+            testbench.selected_endpoint = Some(TestbenchEndpoint::ElementPin {
+                element_id: element.id,
+                pin: TestbenchPin::A,
+            });
+        }
+
         if response.dragged() {
             element.position += response.drag_delta();
         }
@@ -3292,6 +3299,15 @@ fn draw_testbench_element_symbol(
     let body_color = egui::Color32::from_rgb(45, 49, 56);
     let pin_color = egui::Color32::from_rgb(120, 210, 150);
     let selected_pin_color = egui::Color32::from_rgb(245, 200, 80);
+    let element_selected = selected_endpoint.is_some_and(|endpoint| match endpoint {
+        TestbenchEndpoint::ElementPin { element_id, .. } => *element_id == element.id,
+        TestbenchEndpoint::DutPort { .. } => false,
+    });
+    let stroke = if element_selected {
+        egui::Stroke::new(2.0, egui::Color32::from_rgb(220, 180, 80))
+    } else {
+        stroke
+    };
     let pin_a_selected = selected_endpoint
         == Some(&TestbenchEndpoint::ElementPin {
             element_id: element.id,
