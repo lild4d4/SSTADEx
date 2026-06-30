@@ -157,6 +157,7 @@ enum ActiveDocument {
 struct GuiTestbenchDocument {
     name: String,
     dut_macro: String,
+    dut_position: egui::Pos2,
     small_signal_mode: GuiSmallSignalMode,
     elements: Vec<GuiTestbenchElement>,
     connections: Vec<GuiTestbenchConnection>,
@@ -288,6 +289,8 @@ struct GuiProjectTestbench {
     dut_macro: String,
     #[serde(default)]
     small_signal_mode: GuiProjectSmallSignalMode,
+    #[serde(default)]
+    dut_position: Option<GuiProjectPosition>,
     elements: Vec<GuiProjectTestbenchElement>,
     #[serde(default)]
     connections: Vec<GuiProjectTestbenchConnection>,
@@ -1242,6 +1245,7 @@ impl SstadexApp {
         self.testbenches.push(GuiTestbenchDocument {
             name: format!("tb_{index}"),
             dut_macro,
+            dut_position: default_dut_position(),
             small_signal_mode: GuiSmallSignalMode::CompactWhenAvailable,
             elements: Vec::new(),
             connections: Vec::new(),
@@ -2415,6 +2419,7 @@ impl GuiProjectTestbench {
             small_signal_mode: GuiProjectSmallSignalMode::from_gui_mode(
                 testbench.small_signal_mode,
             ),
+            dut_position: Some(GuiProjectPosition::from_pos(testbench.dut_position)),
             elements: testbench
                 .elements
                 .iter()
@@ -2449,6 +2454,10 @@ impl GuiProjectTestbench {
         GuiTestbenchDocument {
             name: self.name,
             dut_macro: self.dut_macro,
+            dut_position: self
+                .dut_position
+                .map(|position| position.to_pos())
+                .unwrap_or_else(default_dut_position),
             small_signal_mode: self.small_signal_mode.into_gui_mode(),
             elements,
             connections,
@@ -3097,16 +3106,20 @@ fn draw_testbench_canvas(
     let painter = ui.painter_at(canvas_rect);
 
     painter.rect_filled(canvas_rect, 0.0, egui::Color32::from_gray(24));
+    let dut_rect = dut_macro_rect(canvas_rect, testbench.dut_position);
     draw_dut_macro_symbol(
         &painter,
-        canvas_rect,
+        dut_rect,
         dut_macro,
         testbench.selected_endpoint.as_ref(),
     );
 
     let mut clicked_endpoint = None;
     if let Some(dut_macro) = dut_macro {
-        let dut_rect = dut_macro_rect(canvas_rect);
+        let dut_response = ui.allocate_rect(dut_rect, egui::Sense::click_and_drag());
+        if dut_response.dragged() {
+            testbench.dut_position += dut_response.drag_delta();
+        }
         for port in &dut_macro.ports {
             let position = dut_port_position(dut_rect, port.symbol_side, port.symbol_offset);
             let hit_rect = egui::Rect::from_center_size(position, egui::vec2(14.0, 14.0));
@@ -3144,6 +3157,7 @@ fn draw_testbench_canvas(
         canvas_rect,
         &testbench.elements,
         dut_macro,
+        testbench.dut_position,
         &testbench.connections,
     );
 
@@ -3197,7 +3211,7 @@ fn draw_testbench_canvas(
 
 fn draw_dut_macro_symbol(
     painter: &egui::Painter,
-    canvas_rect: egui::Rect,
+    rect: egui::Rect,
     dut_macro: Option<&GuiDutMacroView>,
     selected_endpoint: Option<&TestbenchEndpoint>,
 ) {
@@ -3205,7 +3219,6 @@ fn draw_dut_macro_symbol(
         return;
     };
 
-    let rect = dut_macro_rect(canvas_rect);
     let stroke = egui::Stroke::new(1.5, egui::Color32::from_rgb(205, 175, 90));
     let fill = egui::Color32::from_rgb(54, 50, 38);
     let port_color = egui::Color32::from_rgb(235, 195, 105);
@@ -3246,18 +3259,9 @@ fn draw_dut_macro_symbol(
     }
 }
 
-fn dut_macro_rect(canvas_rect: egui::Rect) -> egui::Rect {
+fn dut_macro_rect(canvas_rect: egui::Rect, dut_position: egui::Pos2) -> egui::Rect {
     let size = egui::vec2(150.0, 106.0);
-    let left_margin = 24.0;
-    let right_margin = 32.0;
-    let min_x = if canvas_rect.width() >= size.x + left_margin + right_margin {
-        canvas_rect.right() - size.x - right_margin
-    } else {
-        canvas_rect.center().x - size.x * 0.5
-    };
-    let min_y = canvas_rect.center().y - size.y * 0.5;
-
-    egui::Rect::from_min_size(egui::pos2(min_x, min_y), size)
+    egui::Rect::from_min_size(canvas_rect.min + dut_position.to_vec2(), size)
 }
 
 fn dut_port_position(rect: egui::Rect, side: SymbolPinSide, offset: f32) -> egui::Pos2 {
@@ -3439,19 +3443,28 @@ fn draw_testbench_connections(
     canvas_rect: egui::Rect,
     elements: &[GuiTestbenchElement],
     dut_macro: Option<&GuiDutMacroView>,
+    dut_position: egui::Pos2,
     connections: &[GuiTestbenchConnection],
 ) {
     let stroke = egui::Stroke::new(1.5, egui::Color32::from_rgb(105, 190, 230));
 
     for connection in connections {
-        let Some(from) =
-            testbench_endpoint_position(canvas_rect, elements, dut_macro, &connection.from)
-        else {
+        let Some(from) = testbench_endpoint_position(
+            canvas_rect,
+            elements,
+            dut_macro,
+            dut_position,
+            &connection.from,
+        ) else {
             continue;
         };
-        let Some(to) =
-            testbench_endpoint_position(canvas_rect, elements, dut_macro, &connection.to)
-        else {
+        let Some(to) = testbench_endpoint_position(
+            canvas_rect,
+            elements,
+            dut_macro,
+            dut_position,
+            &connection.to,
+        ) else {
             continue;
         };
 
@@ -3463,6 +3476,7 @@ fn testbench_endpoint_position(
     canvas_rect: egui::Rect,
     elements: &[GuiTestbenchElement],
     dut_macro: Option<&GuiDutMacroView>,
+    dut_position: egui::Pos2,
     endpoint: &TestbenchEndpoint,
 ) -> Option<egui::Pos2> {
     match endpoint {
@@ -3479,7 +3493,7 @@ fn testbench_endpoint_position(
                 .ports
                 .iter()
                 .find(|port| port.name == *port_name)?;
-            let rect = dut_macro_rect(canvas_rect);
+            let rect = dut_macro_rect(canvas_rect, dut_position);
 
             Some(dut_port_position(
                 rect,
@@ -3862,6 +3876,10 @@ fn default_project_dir() -> PathBuf {
 
 fn default_project_path() -> PathBuf {
     default_project_dir().join("gui_project.json")
+}
+
+fn default_dut_position() -> egui::Pos2 {
+    egui::pos2(360.0, 36.0)
 }
 
 fn next_available_circuit_name(circuits: &[GuiCircuitDocument]) -> String {
