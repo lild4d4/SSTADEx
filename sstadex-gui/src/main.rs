@@ -45,6 +45,9 @@ struct SstadexApp {
     testbenches: Vec<GuiTestbenchDocument>,
     selected_testbench: Option<usize>,
     renaming_testbench: Option<usize>,
+    specs: Vec<GuiSpecDocument>,
+    selected_spec: Option<usize>,
+    renaming_spec: Option<usize>,
     project_path: String,
     output_log: String,
     output_netlist: String,
@@ -157,6 +160,7 @@ enum BottomView {
 enum ActiveDocument {
     Circuit,
     Testbench,
+    Spec,
 }
 
 #[derive(Clone)]
@@ -183,6 +187,23 @@ enum GuiSmallSignalMode {
 struct GuiTestbenchConnection {
     from: TestbenchEndpoint,
     to: TestbenchEndpoint,
+}
+
+#[derive(Clone)]
+struct GuiSpecDocument {
+    name: String,
+    testbench: String,
+    input: String,
+    output: String,
+    min: String,
+    max: String,
+    parameter_map: Vec<GuiSpecParameter>,
+}
+
+#[derive(Clone)]
+struct GuiSpecParameter {
+    name: String,
+    value: String,
 }
 
 #[derive(Clone, Hash, PartialEq, Eq)]
@@ -237,6 +258,27 @@ struct GuiProject {
     circuits: Vec<GuiProjectCircuit>,
     selected_testbench: Option<usize>,
     testbenches: Vec<GuiProjectTestbench>,
+    #[serde(default)]
+    selected_spec: Option<usize>,
+    #[serde(default)]
+    specs: Vec<GuiProjectSpec>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct GuiProjectSpec {
+    name: String,
+    testbench: String,
+    input: String,
+    output: String,
+    min: String,
+    max: String,
+    parameter_map: Vec<GuiProjectSpecParameter>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct GuiProjectSpecParameter {
+    name: String,
+    value: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -444,6 +486,9 @@ impl Default for SstadexApp {
             testbenches: Vec::new(),
             selected_testbench: None,
             renaming_testbench: None,
+            specs: Vec::new(),
+            selected_spec: None,
+            renaming_spec: None,
             project_path: default_project_path().display().to_string(),
             output_log: "Logs, netlists, and MNA results will appear here".to_string(),
             output_netlist: "Generated SPICE netlist will appear here".to_string(),
@@ -462,6 +507,11 @@ impl eframe::App for SstadexApp {
             && ctx.input(|input| input.key_pressed(egui::Key::Delete))
         {
             self.delete_selected_canvas_item();
+        }
+        if self.active_document == ActiveDocument::Testbench
+            && ctx.input(|input| input.key_pressed(egui::Key::Delete))
+        {
+            self.delete_selected_testbench_element();
         }
         if ctx.input(|input| input.key_pressed(egui::Key::R)) {
             self.rotate_selected_canvas_item();
@@ -605,6 +655,20 @@ impl eframe::App for SstadexApp {
                             ui.label("No testbench selected");
                         }
                     }
+                    ActiveDocument::Spec => {
+                        if let Some(spec) = self.selected_spec_document() {
+                            ui.heading(&spec.name);
+                            ui.label(format!(
+                                "Testbench: {}",
+                                display_optional_name(&spec.testbench)
+                            ));
+                            ui.label(format!("Input: {}", display_optional_name(&spec.input)));
+                            ui.label(format!("Output: {}", display_optional_name(&spec.output)));
+                            ui.label(format!("Parameters: {}", spec.parameter_map.len()));
+                        } else {
+                            ui.label("No spec selected");
+                        }
+                    }
                 }
             });
 
@@ -637,6 +701,7 @@ impl eframe::App for SstadexApp {
         egui::CentralPanel::default().show(ctx, |ui| match self.active_document {
             ActiveDocument::Circuit => self.show_circuit_document_ui(ui),
             ActiveDocument::Testbench => self.show_testbench_document_ui(ui),
+            ActiveDocument::Spec => self.show_spec_document_ui(ui),
         });
     }
 }
@@ -863,6 +928,86 @@ impl SstadexApp {
             });
     }
 
+    fn show_spec_document_ui(&mut self, ui: &mut egui::Ui) {
+        let Some(selected_index) = self.selected_spec else {
+            ui.heading("Spec");
+            ui.separator();
+            ui.label("Select a spec from the project browser");
+            return;
+        };
+
+        let testbench_names = self
+            .testbenches
+            .iter()
+            .map(|testbench| testbench.name.clone())
+            .collect::<Vec<_>>();
+        let Some(spec) = self.specs.get_mut(selected_index) else {
+            self.selected_spec = None;
+            ui.label("Selected spec no longer exists");
+            return;
+        };
+
+        ui.heading(format!("Spec - {}", spec.name));
+        ui.separator();
+
+        ui.horizontal(|ui| {
+            ui.label("Name:");
+            ui.text_edit_singleline(&mut spec.name);
+        });
+        ui.horizontal(|ui| {
+            ui.label("Testbench:");
+            egui::ComboBox::from_id_salt("spec_testbench")
+                .selected_text(display_optional_name(&spec.testbench))
+                .show_ui(ui, |ui| {
+                    for testbench_name in &testbench_names {
+                        ui.selectable_value(
+                            &mut spec.testbench,
+                            testbench_name.clone(),
+                            testbench_name,
+                        );
+                    }
+                });
+        });
+        ui.horizontal(|ui| {
+            ui.label("Input:");
+            ui.text_edit_singleline(&mut spec.input);
+            ui.label("Output:");
+            ui.text_edit_singleline(&mut spec.output);
+        });
+        ui.horizontal(|ui| {
+            ui.label("Min:");
+            ui.text_edit_singleline(&mut spec.min);
+            ui.label("Max:");
+            ui.text_edit_singleline(&mut spec.max);
+        });
+
+        ui.separator();
+        ui.horizontal(|ui| {
+            ui.heading("Parameter map");
+            if ui.button("+").clicked() {
+                spec.parameter_map.push(GuiSpecParameter {
+                    name: String::new(),
+                    value: String::new(),
+                });
+            }
+        });
+
+        let mut remove_parameter = None;
+        for (index, parameter) in spec.parameter_map.iter_mut().enumerate() {
+            ui.horizontal(|ui| {
+                ui.text_edit_singleline(&mut parameter.name);
+                ui.label("=");
+                ui.text_edit_singleline(&mut parameter.value);
+                if ui.button("Delete").clicked() {
+                    remove_parameter = Some(index);
+                }
+            });
+        }
+        if let Some(index) = remove_parameter {
+            spec.parameter_map.remove(index);
+        }
+    }
+
     fn show_project_browser_ui(&mut self, ui: &mut egui::Ui) {
         ui.heading("Project");
         ui.separator();
@@ -892,6 +1037,20 @@ impl SstadexApp {
 
         for index in 0..self.testbenches.len() {
             self.show_testbench_browser_item(ui, index);
+        }
+
+        ui.separator();
+        ui.horizontal(|ui| {
+            ui.label("Specs");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("+").clicked() {
+                    self.add_spec();
+                }
+            });
+        });
+
+        for index in 0..self.specs.len() {
+            self.show_spec_browser_item(ui, index);
         }
     }
 
@@ -984,6 +1143,43 @@ impl SstadexApp {
         });
     }
 
+    fn show_spec_browser_item(&mut self, ui: &mut egui::Ui, index: usize) {
+        if self.renaming_spec == Some(index) {
+            let response = ui.text_edit_singleline(&mut self.specs[index].name);
+            if response.lost_focus()
+                || ui.input(|input| {
+                    input.key_pressed(egui::Key::Enter) || input.key_pressed(egui::Key::Escape)
+                })
+            {
+                self.renaming_spec = None;
+            }
+            return;
+        }
+
+        let label = if self.specs[index].name.trim().is_empty() {
+            "(unnamed)"
+        } else {
+            self.specs[index].name.as_str()
+        };
+        let response = ui.selectable_label(self.selected_spec == Some(index), label);
+
+        if response.clicked() {
+            self.selected_spec = Some(index);
+            self.active_document = ActiveDocument::Spec;
+        }
+
+        response.context_menu(|ui| {
+            if ui.button("Rename").clicked() {
+                self.renaming_spec = Some(index);
+                ui.close();
+            }
+            if ui.button("Delete").clicked() {
+                self.delete_spec(index);
+                ui.close();
+            }
+        });
+    }
+
     fn add_circuit_document(&mut self) {
         self.save_active_circuit_document();
 
@@ -1054,6 +1250,30 @@ impl SstadexApp {
         }
     }
 
+    fn delete_spec(&mut self, index: usize) {
+        if index >= self.specs.len() {
+            return;
+        }
+
+        self.specs.remove(index);
+
+        if self.selected_spec == Some(index) {
+            self.selected_spec = None;
+        } else if let Some(selected_index) = self.selected_spec {
+            if selected_index > index {
+                self.selected_spec = Some(selected_index - 1);
+            }
+        }
+
+        if self.renaming_spec == Some(index) {
+            self.renaming_spec = None;
+        } else if let Some(renaming_index) = self.renaming_spec {
+            if renaming_index > index {
+                self.renaming_spec = Some(renaming_index - 1);
+            }
+        }
+    }
+
     fn save_active_circuit_document(&mut self) {
         let Some(circuit) = self.circuits.get_mut(self.active_circuit) else {
             return;
@@ -1097,6 +1317,12 @@ impl SstadexApp {
         let index = self.selected_testbench?;
 
         self.testbenches.get(index)
+    }
+
+    fn selected_spec_document(&self) -> Option<&GuiSpecDocument> {
+        let index = self.selected_spec?;
+
+        self.specs.get(index)
     }
 
     fn show_insert_primitive_window(&mut self, ctx: &egui::Context) {
@@ -1299,6 +1525,28 @@ impl SstadexApp {
         self.bottom_view = BottomView::Testbenches;
     }
 
+    fn add_spec(&mut self) {
+        let index = self.specs.len() + 1;
+        let testbench = self
+            .selected_testbench
+            .and_then(|index| self.testbenches.get(index))
+            .or_else(|| self.testbenches.first())
+            .map(|testbench| testbench.name.clone())
+            .unwrap_or_default();
+
+        self.specs.push(GuiSpecDocument {
+            name: format!("spec_{index}"),
+            testbench,
+            input: String::new(),
+            output: String::new(),
+            min: String::new(),
+            max: String::new(),
+            parameter_map: Vec::new(),
+        });
+        self.selected_spec = Some(self.specs.len() - 1);
+        self.active_document = ActiveDocument::Spec;
+    }
+
     fn default_dut_macro_name(&self) -> String {
         self.circuits
             .get(self.active_circuit)
@@ -1402,7 +1650,32 @@ impl SstadexApp {
                     element.orientation = element.orientation.rotated_clockwise();
                 }
             }
+            ActiveDocument::Spec => {}
         }
+    }
+
+    fn delete_selected_testbench_element(&mut self) {
+        let Some(selected_index) = self.selected_testbench else {
+            return;
+        };
+        let Some(testbench) = self.testbenches.get_mut(selected_index) else {
+            return;
+        };
+        let Some(TestbenchEndpoint::ElementPin { element_id, .. }) =
+            testbench.selected_endpoint.as_ref()
+        else {
+            return;
+        };
+        let element_id = *element_id;
+        let Some(element_index) = testbench
+            .elements
+            .iter()
+            .position(|element| element.id == element_id)
+        else {
+            return;
+        };
+
+        testbench.remove_element(element_index);
     }
 
     fn run_mna_from_canvas(&self) -> String {
@@ -1717,7 +1990,7 @@ impl SstadexApp {
             }
         };
 
-        if !(4..=5).contains(&project.version) {
+        if !(4..=6).contains(&project.version) {
             return format!(
                 "Cannot open project: unsupported GUI project version {}",
                 project.version
@@ -1737,7 +2010,7 @@ impl SstadexApp {
 
     fn gui_project(&self) -> GuiProject {
         GuiProject {
-            version: 5,
+            version: 6,
             active_circuit: self.active_circuit,
             circuits: self
                 .circuits
@@ -1749,6 +2022,12 @@ impl SstadexApp {
                 .testbenches
                 .iter()
                 .map(GuiProjectTestbench::from_testbench_document)
+                .collect(),
+            selected_spec: self.selected_spec,
+            specs: self
+                .specs
+                .iter()
+                .map(GuiProjectSpec::from_spec_document)
                 .collect(),
         }
     }
@@ -1774,6 +2053,14 @@ impl SstadexApp {
         self.selected_testbench = project
             .selected_testbench
             .filter(|index| *index < self.testbenches.len());
+        self.specs = project
+            .specs
+            .into_iter()
+            .map(GuiProjectSpec::into_spec_document)
+            .collect();
+        self.selected_spec = project
+            .selected_spec
+            .filter(|index| *index < self.specs.len());
         self.ensure_testbench_dut_macros();
         self.load_active_circuit_document();
 
@@ -2526,6 +2813,56 @@ impl GuiProjectTestbench {
             pending_connection: None,
             extra_body: self.extra_body,
             next_element_id: self.next_element_id,
+        }
+    }
+}
+
+impl GuiProjectSpec {
+    fn from_spec_document(spec: &GuiSpecDocument) -> Self {
+        Self {
+            name: spec.name.clone(),
+            testbench: spec.testbench.clone(),
+            input: spec.input.clone(),
+            output: spec.output.clone(),
+            min: spec.min.clone(),
+            max: spec.max.clone(),
+            parameter_map: spec
+                .parameter_map
+                .iter()
+                .map(GuiProjectSpecParameter::from_spec_parameter)
+                .collect(),
+        }
+    }
+
+    fn into_spec_document(self) -> GuiSpecDocument {
+        GuiSpecDocument {
+            name: self.name,
+            testbench: self.testbench,
+            input: self.input,
+            output: self.output,
+            min: self.min,
+            max: self.max,
+            parameter_map: self
+                .parameter_map
+                .into_iter()
+                .map(GuiProjectSpecParameter::into_spec_parameter)
+                .collect(),
+        }
+    }
+}
+
+impl GuiProjectSpecParameter {
+    fn from_spec_parameter(parameter: &GuiSpecParameter) -> Self {
+        Self {
+            name: parameter.name.clone(),
+            value: parameter.value.clone(),
+        }
+    }
+
+    fn into_spec_parameter(self) -> GuiSpecParameter {
+        GuiSpecParameter {
+            name: self.name,
+            value: self.value,
         }
     }
 }
