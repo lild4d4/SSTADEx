@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::path::PathBuf;
 
 use eframe::egui;
@@ -7,7 +8,11 @@ use libsstadex::analysis::{
 };
 use libsstadex::catalog::{PrimitiveCatalog, load_primitive_catalog};
 use libsstadex::circuit::{Circuit, Connection, Instance, PinRef, save_circuit};
-use libsstadex::exploration::{TestbenchElement, TestbenchSpec, save_testbenches};
+use libsstadex::exploration::{
+    ExplorationSpec, PreparedSpec, PreparedSpecSource, RangeCondition, SpecOutput, SpecParameter,
+    SpecSource, TestbenchElement, TestbenchSpec, prepare_macro_testbench_specs_with_mode,
+    save_exploration_specs, save_testbenches,
+};
 use libsstadex::macro_model::{
     MacroCatalog, MacroMetadata, MacroModel, MacroPort, MacroPortRole, MacroSmallSignalMode,
     MacroSymbol, MacroSymbolPin, save_macro_model,
@@ -53,6 +58,7 @@ struct SstadexApp {
     output_netlist: String,
     output_equations: String,
     output_artifacts: String,
+    output_prepared_specs: String,
     next_instance_id: usize,
     next_label_pin_id: usize,
     next_macro_port_id: usize,
@@ -153,6 +159,7 @@ enum BottomView {
     Netlist,
     Equations,
     Artifacts,
+    Prepared,
     Testbenches,
 }
 
@@ -494,6 +501,7 @@ impl Default for SstadexApp {
             output_netlist: "Generated SPICE netlist will appear here".to_string(),
             output_equations: "MNA equations will appear here".to_string(),
             output_artifacts: "Generated artifact paths will appear here".to_string(),
+            output_prepared_specs: "Prepared exploration specs will appear here".to_string(),
             next_instance_id: 1,
             next_label_pin_id: 1,
             next_macro_port_id: 1,
@@ -567,6 +575,14 @@ impl eframe::App for SstadexApp {
                 if ui.button("Save flow inputs").clicked() {
                     self.output_log = self.save_flow_inputs();
                     self.bottom_view = BottomView::Logs;
+                }
+                if ui.button("Save specs").clicked() {
+                    self.output_log = self.save_gui_specs();
+                    self.bottom_view = BottomView::Logs;
+                }
+                if ui.button("Prepare specs").clicked() {
+                    self.output_log = self.prepare_gui_specs();
+                    self.bottom_view = BottomView::Prepared;
                 }
                 if ui
                     .add_enabled(
@@ -681,6 +697,7 @@ impl eframe::App for SstadexApp {
                     ui.selectable_value(&mut self.bottom_view, BottomView::Netlist, "Netlist");
                     ui.selectable_value(&mut self.bottom_view, BottomView::Equations, "Equations");
                     ui.selectable_value(&mut self.bottom_view, BottomView::Artifacts, "Artifacts");
+                    ui.selectable_value(&mut self.bottom_view, BottomView::Prepared, "Prepared");
                     ui.selectable_value(
                         &mut self.bottom_view,
                         BottomView::Testbenches,
@@ -694,6 +711,7 @@ impl eframe::App for SstadexApp {
                     BottomView::Netlist => show_text_output(ui, &self.output_netlist),
                     BottomView::Equations => show_text_output(ui, &self.output_equations),
                     BottomView::Artifacts => show_text_output(ui, &self.output_artifacts),
+                    BottomView::Prepared => show_text_output(ui, &self.output_prepared_specs),
                     BottomView::Testbenches => self.show_testbenches_ui(ui),
                 }
             });
@@ -1755,6 +1773,7 @@ impl SstadexApp {
         let output_dir = std::env::temp_dir().join("sstadex-gui-mna");
         let macro_dir = output_dir.join("gui_macros");
         let testbench_path = output_dir.join("gui_testbenches.json");
+        let specs_path = output_dir.join("gui_specs.json");
 
         if let Err(error) = std::fs::create_dir_all(&output_dir) {
             return format!(
@@ -1769,6 +1788,10 @@ impl SstadexApp {
         };
         let testbenches = match gui_testbenches_to_specs(&self.testbenches, &self.circuits) {
             Ok(testbenches) => testbenches,
+            Err(error) => return format!("Cannot save flow inputs: {error}"),
+        };
+        let specs = match gui_specs_to_exploration_specs(&self.specs, &testbenches) {
+            Ok(specs) => specs,
             Err(error) => return format!("Cannot save flow inputs: {error}"),
         };
 
@@ -1789,12 +1812,21 @@ impl SstadexApp {
             );
         }
 
+        if let Err(error) = save_exploration_specs(&specs_path, &specs) {
+            return format!(
+                "Cannot save flow inputs: failed to write specs JSON '{}'\n\n{error:?}",
+                specs_path.display()
+            );
+        }
+
         format!(
-            "Saved flow inputs\n\nMacros: {}\nTestbenches: {}\nMacro dir: {}\nTestbenches: {}",
+            "Saved flow inputs\n\nMacros: {}\nTestbenches: {}\nSpecs: {}\nMacro dir: {}\nTestbenches: {}\nSpecs: {}",
             macro_models.len(),
             testbenches.len(),
+            specs.len(),
             macro_dir.display(),
-            testbench_path.display()
+            testbench_path.display(),
+            specs_path.display()
         )
     }
 
@@ -2288,6 +2320,145 @@ impl SstadexApp {
             Err(error) => format!(
                 "Cannot save testbenches: failed to write '{}'\n\n{error:?}",
                 output_path.display()
+            ),
+        }
+    }
+
+    fn save_gui_specs(&self) -> String {
+        let output_dir = std::env::temp_dir().join("sstadex-gui-mna");
+        let output_path = output_dir.join("gui_specs.json");
+
+        if let Err(error) = std::fs::create_dir_all(&output_dir) {
+            return format!(
+                "Cannot save specs: failed to create output directory '{}'\n\n{error}",
+                output_dir.display()
+            );
+        }
+
+        let testbenches = match gui_testbenches_to_specs(&self.testbenches, &self.circuits) {
+            Ok(testbenches) => testbenches,
+            Err(error) => return format!("Cannot save specs: {error}"),
+        };
+        let specs = match gui_specs_to_exploration_specs(&self.specs, &testbenches) {
+            Ok(specs) => specs,
+            Err(error) => return format!("Cannot save specs: {error}"),
+        };
+
+        match save_exploration_specs(&output_path, &specs) {
+            Ok(()) => format!(
+                "Saved {} exploration spec(s)\n\nPath: {}",
+                specs.len(),
+                output_path.display()
+            ),
+            Err(error) => format!(
+                "Cannot save specs: failed to write '{}'\n\n{error:?}",
+                output_path.display()
+            ),
+        }
+    }
+
+    fn prepare_gui_specs(&mut self) -> String {
+        self.save_active_circuit_document();
+
+        let Some(catalog) = &self.catalog else {
+            return "Cannot prepare specs: primitive catalog is not loaded".to_string();
+        };
+
+        let output_dir = std::env::temp_dir().join("sstadex-gui-mna");
+        let macro_dir = output_dir.join("gui_macros");
+        let testbench_path = output_dir.join("gui_testbenches.json");
+        let specs_path = output_dir.join("gui_specs.json");
+        let prepared_dir = output_dir.join("prepared_specs");
+
+        if let Err(error) = std::fs::create_dir_all(&prepared_dir) {
+            return format!(
+                "Cannot prepare specs: failed to create output directory '{}'\n\n{error}",
+                prepared_dir.display()
+            );
+        }
+
+        let macro_models = match self.build_macro_models() {
+            Ok(macro_models) => macro_models,
+            Err(error) => return format!("Cannot prepare specs: {error}"),
+        };
+        let testbenches = match gui_testbenches_to_specs(&self.testbenches, &self.circuits) {
+            Ok(testbenches) => testbenches,
+            Err(error) => return format!("Cannot prepare specs: {error}"),
+        };
+        let specs = match gui_specs_to_exploration_specs(&self.specs, &testbenches) {
+            Ok(specs) => specs,
+            Err(error) => return format!("Cannot prepare specs: {error}"),
+        };
+        let gui_mode = match gui_specs_small_signal_mode(&self.specs, &self.testbenches) {
+            Ok(mode) => mode,
+            Err(error) => return format!("Cannot prepare specs: {error}"),
+        };
+        let mode = macro_small_signal_mode(gui_mode);
+
+        for macro_model in &macro_models {
+            let macro_path = macro_dir.join(&macro_model.name).join("macro.json");
+            if let Err(error) = save_macro_model(&macro_path, macro_model) {
+                return format!(
+                    "Cannot prepare specs: failed to write macro JSON '{}'\n\n{error:?}",
+                    macro_path.display()
+                );
+            }
+        }
+
+        if let Err(error) = save_testbenches(&testbench_path, &testbenches) {
+            return format!(
+                "Cannot prepare specs: failed to write testbench JSON '{}'\n\n{error:?}",
+                testbench_path.display()
+            );
+        }
+
+        if let Err(error) = save_exploration_specs(&specs_path, &specs) {
+            return format!(
+                "Cannot prepare specs: failed to write specs JSON '{}'\n\n{error:?}",
+                specs_path.display()
+            );
+        }
+
+        let macro_count = macro_models.len();
+        let spec_count = specs.len();
+        let mut macro_catalog = MacroCatalog::new();
+        for macro_model in macro_models {
+            macro_catalog.register(macro_model);
+        }
+
+        match prepare_macro_testbench_specs_with_mode(
+            &specs,
+            catalog,
+            &macro_catalog,
+            &prepared_dir,
+            mode,
+        ) {
+            Ok(prepared_specs) => {
+                self.output_prepared_specs = format_prepared_specs_output(&prepared_specs);
+                self.output_artifacts = format!(
+                    "Macro dir: {}\nTestbenches: {}\nSpecs: {}\nPrepared specs dir: {}\nSmall-signal mode: {}",
+                    macro_dir.display(),
+                    testbench_path.display(),
+                    specs_path.display(),
+                    prepared_dir.display(),
+                    gui_mode.label()
+                );
+
+                format!(
+                    "Prepared {} exploration spec(s)\n\nMacros: {}\nSpecs: {}\nSmall-signal mode: {}\nPrepared dir: {}",
+                    prepared_specs.len(),
+                    macro_count,
+                    spec_count,
+                    gui_mode.label(),
+                    prepared_dir.display()
+                )
+            }
+            Err(error) => format!(
+                "Prepare specs failed\n\nMacro dir: {}\nTestbenches: {}\nSpecs: {}\nPrepared dir: {}\n\n{error:?}",
+                macro_dir.display(),
+                testbench_path.display(),
+                specs_path.display(),
+                prepared_dir.display()
             ),
         }
     }
@@ -3216,6 +3387,95 @@ fn gui_testbenches_to_specs(
     Ok(specs)
 }
 
+fn gui_specs_to_exploration_specs(
+    specs: &[GuiSpecDocument],
+    testbenches: &[TestbenchSpec],
+) -> Result<Vec<ExplorationSpec>, String> {
+    specs
+        .iter()
+        .enumerate()
+        .map(|(index, spec)| gui_spec_to_exploration_spec(spec, testbenches, index + 1))
+        .collect()
+}
+
+fn gui_specs_small_signal_mode(
+    specs: &[GuiSpecDocument],
+    testbenches: &[GuiTestbenchDocument],
+) -> Result<GuiSmallSignalMode, String> {
+    let mut selected_mode: Option<GuiSmallSignalMode> = None;
+
+    for (index, spec) in specs.iter().enumerate() {
+        let testbench_name =
+            required_text(&spec.testbench, &format!("spec {}", index + 1), "testbench")?;
+        let testbench = testbenches
+            .iter()
+            .find(|testbench| testbench.name == testbench_name)
+            .ok_or_else(|| {
+                format!(
+                    "spec {} references unknown testbench '{testbench_name}'",
+                    index + 1
+                )
+            })?;
+
+        match selected_mode {
+            Some(mode) if mode != testbench.small_signal_mode => {
+                return Err(format!(
+                    "specs reference testbenches with mixed small-signal modes ('{}' and '{}'); prepare specs currently expects one mode per run",
+                    mode.label(),
+                    testbench.small_signal_mode.label()
+                ));
+            }
+            Some(_) => {}
+            None => selected_mode = Some(testbench.small_signal_mode),
+        }
+    }
+
+    Ok(selected_mode.unwrap_or(GuiSmallSignalMode::CompactWhenAvailable))
+}
+
+fn gui_spec_to_exploration_spec(
+    spec: &GuiSpecDocument,
+    testbenches: &[TestbenchSpec],
+    spec_index: usize,
+) -> Result<ExplorationSpec, String> {
+    let context = format!("spec {spec_index}");
+    let name = required_text(&spec.name, &context, "name")?;
+    let testbench_name = required_text(&spec.testbench, &context, "testbench")?;
+    let input = required_text(&spec.input, &context, "input")?;
+    let output = required_text(&spec.output, &context, "output")?;
+    let testbench = testbenches
+        .iter()
+        .find(|testbench| testbench.name == testbench_name)
+        .cloned()
+        .ok_or_else(|| {
+            format!("spec {spec_index} references unknown testbench '{testbench_name}'")
+        })?;
+    let mut exploration_spec = ExplorationSpec::new(
+        name,
+        RangeCondition::new(
+            optional_f64(&spec.min, &context, "min")?,
+            optional_f64(&spec.max, &context, "max")?,
+        ),
+        SpecSource::TransferFunction {
+            testbench,
+            input,
+            output,
+        },
+        SpecOutput::Eval,
+    );
+
+    for (parameter_index, parameter) in spec.parameter_map.iter().enumerate() {
+        let parameter_context = format!("{context}, parameter {}", parameter_index + 1);
+        let name = required_text(&parameter.name, &parameter_context, "name")?;
+        let value = required_text(&parameter.value, &parameter_context, "value")?;
+        exploration_spec
+            .parameter_map
+            .push(SpecParameter::new(name, value));
+    }
+
+    Ok(exploration_spec)
+}
+
 fn gui_testbench_element_to_spec(
     element: &GuiTestbenchElement,
     resolved_nodes: &HashMap<TestbenchEndpoint, String>,
@@ -3447,6 +3707,19 @@ fn required_text(value: &str, owner: &str, field: &str) -> Result<String, String
     }
 
     Ok(value.to_string())
+}
+
+fn optional_f64(value: &str, owner: &str, field: &str) -> Result<Option<f64>, String> {
+    let value = value.trim();
+
+    if value.is_empty() {
+        return Ok(None);
+    }
+
+    value
+        .parse::<f64>()
+        .map(Some)
+        .map_err(|error| format!("{owner} has invalid {field} '{value}': {error}"))
 }
 
 fn show_primitive_details(ui: &mut egui::Ui, primitive: &PrimitiveManifest) {
@@ -4831,6 +5104,65 @@ fn format_artifacts_output(
         format!("CIR: {}", output.cir_path),
     ]
     .join("\n")
+}
+
+fn format_prepared_specs_output(prepared_specs: &[PreparedSpec]) -> String {
+    if prepared_specs.is_empty() {
+        return "No prepared specs".to_string();
+    }
+
+    let mut output = String::new();
+
+    for (index, spec) in prepared_specs.iter().enumerate() {
+        if index > 0 {
+            output.push('\n');
+        }
+
+        let _ = writeln!(output, "Spec {}", index + 1);
+        let _ = writeln!(output, "name: {}", spec.name);
+        let _ = writeln!(
+            output,
+            "condition: {}",
+            format_range_condition(spec.condition)
+        );
+        let _ = writeln!(output, "output: {:?}", spec.output);
+
+        if spec.parameter_map.is_empty() {
+            let _ = writeln!(output, "parameters: none");
+        } else {
+            let _ = writeln!(output, "parameters:");
+            for parameter in &spec.parameter_map {
+                let _ = writeln!(output, "  {} = {}", parameter.name, parameter.value);
+            }
+        }
+
+        match &spec.source {
+            PreparedSpecSource::CandidateExpression { expression } => {
+                let _ = writeln!(output, "source: candidate expression");
+                let _ = writeln!(output, "expression:");
+                let _ = writeln!(output, "{expression}");
+            }
+            PreparedSpecSource::TransferFunction { expression } => {
+                let _ = writeln!(output, "source: transfer function");
+                let _ = writeln!(output, "expression:");
+                let _ = writeln!(output, "{expression}");
+            }
+            PreparedSpecSource::Composed => {
+                let _ = writeln!(output, "source: composed");
+            }
+        }
+    }
+
+    output
+}
+
+fn format_range_condition(condition: RangeCondition) -> String {
+    match (condition.min, condition.max) {
+        (Some(min), Some(max)) => format!("{min} < abs(value) < {max}"),
+        (Some(min), None) => format!("abs(value) > {min}"),
+        (None, Some(max)) => format!("abs(value) < {max}"),
+        (None, None) => "unbounded".to_string(),
+    }
 }
 
 fn format_circuit_summary(circuit: &Circuit) -> String {
