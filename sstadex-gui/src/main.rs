@@ -47,6 +47,9 @@ struct SstadexApp {
     renaming_testbench: Option<usize>,
     project_path: String,
     output_log: String,
+    output_netlist: String,
+    output_equations: String,
+    output_artifacts: String,
     next_instance_id: usize,
     next_label_pin_id: usize,
     next_macro_port_id: usize,
@@ -144,6 +147,9 @@ enum GuiMacroPortRole {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum BottomView {
     Logs,
+    Netlist,
+    Equations,
+    Artifacts,
     Testbenches,
 }
 
@@ -440,6 +446,9 @@ impl Default for SstadexApp {
             renaming_testbench: None,
             project_path: default_project_path().display().to_string(),
             output_log: "Logs, netlists, and MNA results will appear here".to_string(),
+            output_netlist: "Generated SPICE netlist will appear here".to_string(),
+            output_equations: "MNA equations will appear here".to_string(),
+            output_artifacts: "Generated artifact paths will appear here".to_string(),
             next_instance_id: 1,
             next_label_pin_id: 1,
             next_macro_port_id: 1,
@@ -548,6 +557,7 @@ impl eframe::App for SstadexApp {
                     ActiveDocument::Circuit => {
                         if let Some(circuit) = self.circuits.get_mut(self.active_circuit) {
                             show_macro_document_details(ui, circuit);
+                            show_validation_messages(ui, &validate_macro_document(circuit));
                             ui.separator();
                         }
 
@@ -566,6 +576,7 @@ impl eframe::App for SstadexApp {
                         }
                     }
                     ActiveDocument::Testbench => {
+                        let macro_names = self.macro_names();
                         if let Some(testbench) = self.selected_testbench_document() {
                             ui.heading(&testbench.name);
                             ui.label(format!(
@@ -577,6 +588,14 @@ impl eframe::App for SstadexApp {
                                 testbench.small_signal_mode.label()
                             ));
                             ui.label(format!("Elements: {}", testbench.elements.len()));
+                            show_validation_messages(
+                                ui,
+                                &validate_testbench_document(
+                                    testbench,
+                                    &macro_names,
+                                    self.selected_testbench.unwrap_or(0) + 1,
+                                ),
+                            );
                             ui.label(if testbench.extra_body.trim().is_empty() {
                                 "Extra body: empty"
                             } else {
@@ -595,6 +614,9 @@ impl eframe::App for SstadexApp {
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.selectable_value(&mut self.bottom_view, BottomView::Logs, "Logs");
+                    ui.selectable_value(&mut self.bottom_view, BottomView::Netlist, "Netlist");
+                    ui.selectable_value(&mut self.bottom_view, BottomView::Equations, "Equations");
+                    ui.selectable_value(&mut self.bottom_view, BottomView::Artifacts, "Artifacts");
                     ui.selectable_value(
                         &mut self.bottom_view,
                         BottomView::Testbenches,
@@ -605,6 +627,9 @@ impl eframe::App for SstadexApp {
 
                 match self.bottom_view {
                     BottomView::Logs => self.show_logs_ui(ui),
+                    BottomView::Netlist => show_text_output(ui, &self.output_netlist),
+                    BottomView::Equations => show_text_output(ui, &self.output_equations),
+                    BottomView::Artifacts => show_text_output(ui, &self.output_artifacts),
                     BottomView::Testbenches => self.show_testbenches_ui(ui),
                 }
             });
@@ -731,6 +756,8 @@ impl SstadexApp {
             draw_label_pin(&painter, position, label_pin, selected);
         }
 
+        let macro_port_issue_ids =
+            macro_port_canvas_issue_ids(&self.macro_ports, &self.connections);
         for macro_port in &mut self.macro_ports {
             let position = canvas.to_screen(macro_port.position);
             let hit_rect = egui::Rect::from_center_size(position, egui::vec2(18.0, 18.0));
@@ -762,7 +789,13 @@ impl SstadexApp {
                 == Some(&CanvasEndpoint::MacroPort {
                     port_id: macro_port.id,
                 });
-            draw_macro_port_pin(&painter, position, macro_port, selected);
+            draw_macro_port_pin(
+                &painter,
+                position,
+                macro_port,
+                selected,
+                macro_port_issue_ids.contains(&macro_port.id),
+            );
         }
     }
 
@@ -1528,7 +1561,8 @@ impl SstadexApp {
         let Some(gui_testbench) = self.testbenches.get(selected_index) else {
             return "Cannot run testbench MNA: selected GUI testbench no longer exists".to_string();
         };
-        let mode = macro_small_signal_mode(gui_testbench.small_signal_mode);
+        let gui_mode = gui_testbench.small_signal_mode;
+        let mode = macro_small_signal_mode(gui_mode);
 
         for macro_model in &macro_models {
             let macro_path = macro_dir.join(&macro_model.name).join("macro.json");
@@ -1560,13 +1594,21 @@ impl SstadexApp {
             false,
             mode,
         ) {
-            Ok(analysis) => format_testbench_mna_output(
-                &CircuitMnaOutput::from_analysis(&analysis),
-                &analysis.small_signal_netlist,
-                &macro_dir,
-                &testbench_path,
-                gui_testbench.small_signal_mode,
-            ),
+            Ok(analysis) => {
+                let output = CircuitMnaOutput::from_analysis(&analysis);
+                self.output_netlist = analysis.small_signal_netlist.clone();
+                self.output_equations = format_equations_output(&output);
+                self.output_artifacts =
+                    format_artifacts_output(&output, &macro_dir, &testbench_path, gui_mode);
+
+                format_testbench_mna_output(
+                    &output,
+                    &analysis.small_signal_netlist,
+                    &macro_dir,
+                    &testbench_path,
+                    gui_mode,
+                )
+            }
             Err(error) => format!(
                 "Testbench MNA failed for '{}'\n\nMacro dir: {}\nTestbenches: {}\n\n{error:?}",
                 testbench.name,
@@ -1962,6 +2004,18 @@ impl SstadexApp {
             ),
         }
     }
+}
+
+fn show_text_output(ui: &mut egui::Ui, text: &str) {
+    egui::ScrollArea::both().show(ui, |ui| {
+        let mut display = text.to_string();
+        ui.add(
+            egui::TextEdit::multiline(&mut display)
+                .desired_width(f32::INFINITY)
+                .code_editor()
+                .interactive(false),
+        );
+    });
 }
 
 impl CanvasView {
@@ -2753,6 +2807,13 @@ fn node_b_label(kind: GuiTestbenchElementKind) -> &'static str {
     }
 }
 
+fn node_label_without_colon(kind: GuiTestbenchElementKind, pin: TestbenchPin) -> &'static str {
+    match pin {
+        TestbenchPin::A => node_a_label(kind).trim_end_matches(':'),
+        TestbenchPin::B => node_b_label(kind).trim_end_matches(':'),
+    }
+}
+
 fn display_testbench_node(
     element: &GuiTestbenchElement,
     pin: TestbenchPin,
@@ -3168,6 +3229,7 @@ fn draw_testbench_canvas(
         &testbench.connections,
     );
 
+    let resolved_nodes = resolve_testbench_nodes(testbench, 0).ok();
     for element in &mut testbench.elements {
         let center = canvas_rect.min + element.position.to_vec2();
         let rect = egui::Rect::from_center_size(center, egui::vec2(88.0, 54.0));
@@ -3203,6 +3265,7 @@ fn draw_testbench_canvas(
             rect,
             element,
             testbench.selected_endpoint.as_ref(),
+            testbench_element_has_canvas_issue(element, resolved_nodes.as_ref()),
         );
     }
 
@@ -3321,6 +3384,7 @@ fn draw_testbench_element_symbol(
     rect: egui::Rect,
     element: &GuiTestbenchElement,
     selected_endpoint: Option<&TestbenchEndpoint>,
+    has_issue: bool,
 ) {
     let stroke = egui::Stroke::new(1.5, egui::Color32::from_rgb(130, 150, 170));
     let body_color = egui::Color32::from_rgb(45, 49, 56);
@@ -3330,7 +3394,9 @@ fn draw_testbench_element_symbol(
         TestbenchEndpoint::ElementPin { element_id, .. } => *element_id == element.id,
         TestbenchEndpoint::DutPort { .. } => false,
     });
-    let stroke = if element_selected {
+    let stroke = if has_issue {
+        egui::Stroke::new(2.0, egui::Color32::from_rgb(220, 85, 75))
+    } else if element_selected {
         egui::Stroke::new(2.0, egui::Color32::from_rgb(220, 180, 80))
     } else {
         stroke
@@ -3591,6 +3657,160 @@ fn show_macro_document_details(ui: &mut egui::Ui, circuit: &mut GuiCircuitDocume
             ));
         }
     }
+}
+
+fn show_validation_messages(ui: &mut egui::Ui, messages: &[String]) {
+    if messages.is_empty() {
+        return;
+    }
+
+    ui.separator();
+    ui.heading("Validation");
+    for message in messages {
+        ui.colored_label(egui::Color32::from_rgb(230, 120, 90), message);
+    }
+}
+
+fn validate_macro_document(circuit: &GuiCircuitDocument) -> Vec<String> {
+    let mut messages = Vec::new();
+
+    if circuit.name.trim().is_empty() {
+        messages.push("Macro name is empty.".to_string());
+    }
+    if circuit.subckt_name.trim().is_empty() {
+        messages.push("Macro subckt name is empty.".to_string());
+    }
+    if circuit.macro_ports.is_empty() {
+        messages.push("Macro has no ports.".to_string());
+    }
+
+    let mut seen_ports = HashMap::new();
+    for port in &circuit.macro_ports {
+        let name = port.name.trim();
+        if name.is_empty() {
+            messages.push(format!("Macro port {} has an empty name.", port.id));
+            continue;
+        }
+
+        if seen_ports.insert(name.to_string(), port.id).is_some() {
+            messages.push(format!("Macro port name '{name}' is duplicated."));
+        }
+
+        let endpoint = CanvasEndpoint::MacroPort { port_id: port.id };
+        let connected = circuit
+            .connections
+            .iter()
+            .any(|connection| connection.from == endpoint || connection.to == endpoint);
+        if !connected {
+            messages.push(format!(
+                "Macro port '{}' is not connected to the internal circuit.",
+                name
+            ));
+        }
+    }
+
+    messages
+}
+
+fn macro_port_canvas_issue_ids(
+    macro_ports: &[CanvasMacroPort],
+    connections: &[CanvasConnection],
+) -> Vec<usize> {
+    let mut name_counts = HashMap::new();
+    for port in macro_ports {
+        let name = port.name.trim();
+        if !name.is_empty() {
+            *name_counts.entry(name.to_string()).or_insert(0usize) += 1;
+        }
+    }
+
+    macro_ports
+        .iter()
+        .filter(|port| {
+            let name = port.name.trim();
+            let endpoint = CanvasEndpoint::MacroPort { port_id: port.id };
+            let connected = connections
+                .iter()
+                .any(|connection| connection.from == endpoint || connection.to == endpoint);
+
+            name.is_empty() || name_counts.get(name).copied().unwrap_or_default() > 1 || !connected
+        })
+        .map(|port| port.id)
+        .collect()
+}
+
+fn validate_testbench_document(
+    testbench: &GuiTestbenchDocument,
+    macro_names: &[String],
+    testbench_index: usize,
+) -> Vec<String> {
+    let mut messages = Vec::new();
+
+    if testbench.name.trim().is_empty() {
+        messages.push("Testbench name is empty.".to_string());
+    }
+    if testbench.dut_macro.trim().is_empty() {
+        messages.push("Testbench has no DUT macro selected.".to_string());
+    } else if !macro_names.iter().any(|name| name == &testbench.dut_macro) {
+        messages.push(format!(
+            "Testbench references unknown DUT macro '{}'.",
+            testbench.dut_macro
+        ));
+    }
+
+    match resolve_testbench_nodes(testbench, testbench_index) {
+        Ok(resolved_nodes) => {
+            for (element_index, element) in testbench.elements.iter().enumerate() {
+                let context = format!("element {} '{}'", element_index + 1, element.name);
+                if element.name.trim().is_empty() {
+                    messages.push(format!("{context} has an empty name."));
+                }
+                if element.value.trim().is_empty() {
+                    messages.push(format!("{context} has an empty value."));
+                }
+
+                for pin in [TestbenchPin::A, TestbenchPin::B] {
+                    let endpoint = TestbenchEndpoint::ElementPin {
+                        element_id: element.id,
+                        pin,
+                    };
+                    let manual_node = testbench_element_pin_text(element, pin).trim();
+                    if manual_node.is_empty() && !resolved_nodes.contains_key(&endpoint) {
+                        messages.push(format!(
+                            "{} has unresolved {}.",
+                            context,
+                            node_label_without_colon(element.kind, pin)
+                        ));
+                    }
+                }
+            }
+        }
+        Err(error) => messages.push(error),
+    }
+
+    messages
+}
+
+fn testbench_element_has_canvas_issue(
+    element: &GuiTestbenchElement,
+    resolved_nodes: Option<&HashMap<TestbenchEndpoint, String>>,
+) -> bool {
+    if element.name.trim().is_empty() || element.value.trim().is_empty() {
+        return true;
+    }
+
+    let Some(resolved_nodes) = resolved_nodes else {
+        return true;
+    };
+
+    [TestbenchPin::A, TestbenchPin::B].into_iter().any(|pin| {
+        let endpoint = TestbenchEndpoint::ElementPin {
+            element_id: element.id,
+            pin,
+        };
+        testbench_element_pin_text(element, pin).trim().is_empty()
+            && !resolved_nodes.contains_key(&endpoint)
+    })
 }
 
 fn show_testbench_dut_selector(
@@ -4240,6 +4460,42 @@ fn format_testbench_mna_output(
     lines.join("\n")
 }
 
+fn format_equations_output(output: &CircuitMnaOutput) -> String {
+    let mut lines = Vec::new();
+
+    lines.push("Variables:".to_string());
+    for variable in &output.variables {
+        lines.push(format!(
+            "  {} -> {} ({})",
+            variable.variable, variable.node_name, variable.node_number
+        ));
+    }
+
+    lines.push(String::new());
+    lines.push("Equations:".to_string());
+    for equation in &output.equations {
+        lines.push(format!("  {}", equation.text));
+    }
+
+    lines.join("\n")
+}
+
+fn format_artifacts_output(
+    output: &CircuitMnaOutput,
+    macro_dir: &std::path::Path,
+    testbench_path: &std::path::Path,
+    mode: GuiSmallSignalMode,
+) -> String {
+    [
+        format!("Small-signal mode: {}", mode.label()),
+        format!("Macro dir: {}", macro_dir.display()),
+        format!("Testbenches JSON: {}", testbench_path.display()),
+        format!("SPICE: {}", output.spice_path),
+        format!("CIR: {}", output.cir_path),
+    ]
+    .join("\n")
+}
+
 fn format_circuit_summary(circuit: &Circuit) -> String {
     let mut lines = Vec::new();
 
@@ -4342,6 +4598,7 @@ fn draw_macro_port_pin(
     position: egui::Pos2,
     macro_port: &CanvasMacroPort,
     selected: bool,
+    has_issue: bool,
 ) {
     let color = if selected {
         egui::Color32::from_rgb(240, 210, 90)
@@ -4351,6 +4608,14 @@ fn draw_macro_port_pin(
     let rect = egui::Rect::from_center_size(position, egui::vec2(10.0, 10.0));
 
     painter.rect_filled(rect, 2.0, color);
+    if has_issue {
+        painter.rect_stroke(
+            rect.expand(3.0),
+            2.0,
+            egui::Stroke::new(1.5, egui::Color32::from_rgb(220, 85, 75)),
+            egui::StrokeKind::Inside,
+        );
+    }
     painter.text(
         position + egui::vec2(9.0, -6.0),
         egui::Align2::LEFT_CENTER,
