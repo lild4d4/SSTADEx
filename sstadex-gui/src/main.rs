@@ -9,9 +9,10 @@ use libsstadex::analysis::{
 use libsstadex::catalog::{PrimitiveCatalog, load_primitive_catalog};
 use libsstadex::circuit::{Circuit, Connection, Instance, PinRef, save_circuit};
 use libsstadex::exploration::{
-    ExplorationSpec, PreparedSpec, PreparedSpecSource, RangeCondition, SpecOutput, SpecParameter,
-    SpecSource, TestbenchElement, TestbenchSpec, prepare_macro_testbench_specs_with_mode,
-    save_exploration_specs, save_testbenches,
+    CandidateAxis, CandidatePoint, ExplorationCandidateInput, ExplorationSpec, PreparedSpec,
+    PreparedSpecSource, RangeCondition, SpecOutput, SpecParameter, SpecSource, TestbenchElement,
+    TestbenchSpec, build_filtered_candidates, prepare_macro_testbench_specs_with_mode,
+    save_exploration_candidates, save_exploration_specs, save_testbenches,
 };
 use libsstadex::macro_model::{
     MacroCatalog, MacroMetadata, MacroModel, MacroPort, MacroPortRole, MacroSmallSignalMode,
@@ -53,12 +54,14 @@ struct SstadexApp {
     specs: Vec<GuiSpecDocument>,
     selected_spec: Option<usize>,
     renaming_spec: Option<usize>,
+    candidates: GuiCandidateDocument,
     project_path: String,
     output_log: String,
     output_netlist: String,
     output_equations: String,
     output_artifacts: String,
     output_prepared_specs: String,
+    output_candidates: String,
     next_instance_id: usize,
     next_label_pin_id: usize,
     next_macro_port_id: usize,
@@ -160,6 +163,7 @@ enum BottomView {
     Equations,
     Artifacts,
     Prepared,
+    Candidates,
     Testbenches,
 }
 
@@ -168,6 +172,7 @@ enum ActiveDocument {
     Circuit,
     Testbench,
     Spec,
+    Candidates,
 }
 
 #[derive(Clone)]
@@ -211,6 +216,17 @@ struct GuiSpecDocument {
 struct GuiSpecParameter {
     name: String,
     value: String,
+}
+
+#[derive(Clone)]
+struct GuiCandidateDocument {
+    axes: Vec<GuiCandidateAxis>,
+}
+
+#[derive(Clone)]
+struct GuiCandidateAxis {
+    name: String,
+    values: String,
 }
 
 #[derive(Clone, Hash, PartialEq, Eq)]
@@ -269,6 +285,8 @@ struct GuiProject {
     selected_spec: Option<usize>,
     #[serde(default)]
     specs: Vec<GuiProjectSpec>,
+    #[serde(default)]
+    candidates: GuiProjectCandidateDocument,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -286,6 +304,18 @@ struct GuiProjectSpec {
 struct GuiProjectSpecParameter {
     name: String,
     value: String,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct GuiProjectCandidateDocument {
+    #[serde(default)]
+    axes: Vec<GuiProjectCandidateAxis>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct GuiProjectCandidateAxis {
+    name: String,
+    values: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -496,15 +526,28 @@ impl Default for SstadexApp {
             specs: Vec::new(),
             selected_spec: None,
             renaming_spec: None,
+            candidates: GuiCandidateDocument::default(),
             project_path: default_project_path().display().to_string(),
             output_log: "Logs, netlists, and MNA results will appear here".to_string(),
             output_netlist: "Generated SPICE netlist will appear here".to_string(),
             output_equations: "MNA equations will appear here".to_string(),
             output_artifacts: "Generated artifact paths will appear here".to_string(),
             output_prepared_specs: "Prepared exploration specs will appear here".to_string(),
+            output_candidates: "Generated candidates will appear here".to_string(),
             next_instance_id: 1,
             next_label_pin_id: 1,
             next_macro_port_id: 1,
+        }
+    }
+}
+
+impl Default for GuiCandidateDocument {
+    fn default() -> Self {
+        Self {
+            axes: vec![GuiCandidateAxis {
+                name: "xdp.gm".to_string(),
+                values: "1e-3, 2e-3, 5e-3".to_string(),
+            }],
         }
     }
 }
@@ -583,6 +626,16 @@ impl eframe::App for SstadexApp {
                 if ui.button("Prepare specs").clicked() {
                     self.output_log = self.prepare_gui_specs();
                     self.bottom_view = BottomView::Prepared;
+                }
+                if ui
+                    .add_enabled(
+                        self.active_document == ActiveDocument::Candidates,
+                        egui::Button::new("Generate candidates"),
+                    )
+                    .clicked()
+                {
+                    self.output_log = self.generate_gui_candidates();
+                    self.bottom_view = BottomView::Candidates;
                 }
                 if ui
                     .add_enabled(
@@ -685,6 +738,11 @@ impl eframe::App for SstadexApp {
                             ui.label("No spec selected");
                         }
                     }
+                    ActiveDocument::Candidates => {
+                        ui.heading("Candidates");
+                        ui.label(format!("Axes: {}", self.candidates.axes.len()));
+                        ui.label("Use Generate candidates to build the current candidate grid.");
+                    }
                 }
             });
 
@@ -700,6 +758,11 @@ impl eframe::App for SstadexApp {
                     ui.selectable_value(&mut self.bottom_view, BottomView::Prepared, "Prepared");
                     ui.selectable_value(
                         &mut self.bottom_view,
+                        BottomView::Candidates,
+                        "Candidates",
+                    );
+                    ui.selectable_value(
+                        &mut self.bottom_view,
                         BottomView::Testbenches,
                         "Testbenches",
                     );
@@ -712,6 +775,7 @@ impl eframe::App for SstadexApp {
                     BottomView::Equations => show_text_output(ui, &self.output_equations),
                     BottomView::Artifacts => show_text_output(ui, &self.output_artifacts),
                     BottomView::Prepared => show_text_output(ui, &self.output_prepared_specs),
+                    BottomView::Candidates => show_text_output(ui, &self.output_candidates),
                     BottomView::Testbenches => self.show_testbenches_ui(ui),
                 }
             });
@@ -720,6 +784,7 @@ impl eframe::App for SstadexApp {
             ActiveDocument::Circuit => self.show_circuit_document_ui(ui),
             ActiveDocument::Testbench => self.show_testbench_document_ui(ui),
             ActiveDocument::Spec => self.show_spec_document_ui(ui),
+            ActiveDocument::Candidates => self.show_candidate_document_ui(ui),
         });
     }
 }
@@ -1026,6 +1091,49 @@ impl SstadexApp {
         }
     }
 
+    fn show_candidate_document_ui(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Candidates");
+        ui.separator();
+
+        ui.horizontal(|ui| {
+            if ui.button("+ axis").clicked() {
+                self.candidates.axes.push(GuiCandidateAxis {
+                    name: String::new(),
+                    values: String::new(),
+                });
+            }
+            if ui.button("Generate candidates").clicked() {
+                self.output_log = self.generate_gui_candidates();
+                self.bottom_view = BottomView::Candidates;
+            }
+        });
+
+        ui.separator();
+
+        let mut remove_axis = None;
+        for (index, axis) in self.candidates.axes.iter_mut().enumerate() {
+            ui.horizontal(|ui| {
+                ui.label(format!("Axis {}", index + 1));
+                ui.add_sized(
+                    egui::vec2(140.0, 20.0),
+                    egui::TextEdit::singleline(&mut axis.name).hint_text("name"),
+                );
+                ui.add_sized(
+                    egui::vec2(320.0, 20.0),
+                    egui::TextEdit::singleline(&mut axis.values)
+                        .hint_text("1e-3, 2e-3, 5e-3 or linspace(1e-3, 5e-3, 9)"),
+                );
+                if ui.button("Delete").clicked() {
+                    remove_axis = Some(index);
+                }
+            });
+        }
+
+        if let Some(index) = remove_axis {
+            self.candidates.axes.remove(index);
+        }
+    }
+
     fn show_project_browser_ui(&mut self, ui: &mut egui::Ui) {
         ui.heading("Project");
         ui.separator();
@@ -1069,6 +1177,19 @@ impl SstadexApp {
 
         for index in 0..self.specs.len() {
             self.show_spec_browser_item(ui, index);
+        }
+
+        ui.separator();
+        ui.label("Exploration");
+        if ui
+            .selectable_label(
+                self.active_document == ActiveDocument::Candidates,
+                "Candidates",
+            )
+            .clicked()
+        {
+            self.active_document = ActiveDocument::Candidates;
+            self.bottom_view = BottomView::Candidates;
         }
     }
 
@@ -1668,7 +1789,7 @@ impl SstadexApp {
                     element.orientation = element.orientation.rotated_clockwise();
                 }
             }
-            ActiveDocument::Spec => {}
+            ActiveDocument::Spec | ActiveDocument::Candidates => {}
         }
     }
 
@@ -1774,6 +1895,7 @@ impl SstadexApp {
         let macro_dir = output_dir.join("gui_macros");
         let testbench_path = output_dir.join("gui_testbenches.json");
         let specs_path = output_dir.join("gui_specs.json");
+        let candidates_path = output_dir.join("gui_candidates.json");
 
         if let Err(error) = std::fs::create_dir_all(&output_dir) {
             return format!(
@@ -1792,6 +1914,10 @@ impl SstadexApp {
         };
         let specs = match gui_specs_to_exploration_specs(&self.specs, &testbenches) {
             Ok(specs) => specs,
+            Err(error) => return format!("Cannot save flow inputs: {error}"),
+        };
+        let candidates = match gui_candidate_input(&self.candidates) {
+            Ok(candidates) => candidates,
             Err(error) => return format!("Cannot save flow inputs: {error}"),
         };
 
@@ -1819,14 +1945,23 @@ impl SstadexApp {
             );
         }
 
+        if let Err(error) = save_exploration_candidates(&candidates_path, &candidates) {
+            return format!(
+                "Cannot save flow inputs: failed to write candidates JSON '{}'\n\n{error:?}",
+                candidates_path.display()
+            );
+        }
+
         format!(
-            "Saved flow inputs\n\nMacros: {}\nTestbenches: {}\nSpecs: {}\nMacro dir: {}\nTestbenches: {}\nSpecs: {}",
+            "Saved flow inputs\n\nMacros: {}\nTestbenches: {}\nSpecs: {}\nCandidate axes: {}\nMacro dir: {}\nTestbenches: {}\nSpecs: {}\nCandidates: {}",
             macro_models.len(),
             testbenches.len(),
             specs.len(),
+            candidates.axes.len(),
             macro_dir.display(),
             testbench_path.display(),
-            specs_path.display()
+            specs_path.display(),
+            candidates_path.display()
         )
     }
 
@@ -2022,7 +2157,7 @@ impl SstadexApp {
             }
         };
 
-        if !(4..=6).contains(&project.version) {
+        if !(4..=7).contains(&project.version) {
             return format!(
                 "Cannot open project: unsupported GUI project version {}",
                 project.version
@@ -2042,7 +2177,7 @@ impl SstadexApp {
 
     fn gui_project(&self) -> GuiProject {
         GuiProject {
-            version: 6,
+            version: 7,
             active_circuit: self.active_circuit,
             circuits: self
                 .circuits
@@ -2061,6 +2196,7 @@ impl SstadexApp {
                 .iter()
                 .map(GuiProjectSpec::from_spec_document)
                 .collect(),
+            candidates: GuiProjectCandidateDocument::from_candidate_document(&self.candidates),
         }
     }
 
@@ -2093,6 +2229,7 @@ impl SstadexApp {
         self.selected_spec = project
             .selected_spec
             .filter(|index| *index < self.specs.len());
+        self.candidates = project.candidates.into_candidate_document();
         self.ensure_testbench_dut_macros();
         self.load_active_circuit_document();
 
@@ -2353,6 +2490,50 @@ impl SstadexApp {
             Err(error) => format!(
                 "Cannot save specs: failed to write '{}'\n\n{error:?}",
                 output_path.display()
+            ),
+        }
+    }
+
+    fn generate_gui_candidates(&mut self) -> String {
+        let output_dir = std::env::temp_dir().join("sstadex-gui-mna");
+        let candidates_path = output_dir.join("gui_candidates.json");
+
+        let candidate_input = match gui_candidate_input(&self.candidates) {
+            Ok(candidate_input) => candidate_input,
+            Err(error) => return format!("Cannot generate candidates: {error}"),
+        };
+
+        if let Err(error) = save_exploration_candidates(&candidates_path, &candidate_input) {
+            return format!(
+                "Cannot generate candidates: failed to write candidates JSON '{}'\n\n{error:?}",
+                candidates_path.display()
+            );
+        }
+
+        match build_filtered_candidates(
+            &candidate_input.axes,
+            &candidate_input.sets,
+            &candidate_input.filters,
+        ) {
+            Ok(candidates) => {
+                self.output_candidates = format_candidates_output(&candidates);
+                self.output_artifacts = format!(
+                    "Candidates: {}\nCandidate axes: {}\nGenerated candidate points: {}",
+                    candidates_path.display(),
+                    candidate_input.axes.len(),
+                    candidates.len()
+                );
+
+                format!(
+                    "Generated {} candidate point(s)\n\nAxes: {}\nCandidates JSON: {}",
+                    candidates.len(),
+                    candidate_input.axes.len(),
+                    candidates_path.display()
+                )
+            }
+            Err(error) => format!(
+                "Generate candidates failed\n\nCandidates JSON: {}\n\n{error:?}",
+                candidates_path.display()
             ),
         }
     }
@@ -3038,6 +3219,44 @@ impl GuiProjectSpecParameter {
     }
 }
 
+impl GuiProjectCandidateDocument {
+    fn from_candidate_document(candidates: &GuiCandidateDocument) -> Self {
+        Self {
+            axes: candidates
+                .axes
+                .iter()
+                .map(GuiProjectCandidateAxis::from_candidate_axis)
+                .collect(),
+        }
+    }
+
+    fn into_candidate_document(self) -> GuiCandidateDocument {
+        GuiCandidateDocument {
+            axes: self
+                .axes
+                .into_iter()
+                .map(GuiProjectCandidateAxis::into_candidate_axis)
+                .collect(),
+        }
+    }
+}
+
+impl GuiProjectCandidateAxis {
+    fn from_candidate_axis(axis: &GuiCandidateAxis) -> Self {
+        Self {
+            name: axis.name.clone(),
+            values: axis.values.clone(),
+        }
+    }
+
+    fn into_candidate_axis(self) -> GuiCandidateAxis {
+        GuiCandidateAxis {
+            name: self.name,
+            values: self.values,
+        }
+    }
+}
+
 impl GuiProjectSmallSignalMode {
     fn from_gui_mode(mode: GuiSmallSignalMode) -> Self {
         match mode {
@@ -3396,6 +3615,112 @@ fn gui_specs_to_exploration_specs(
         .enumerate()
         .map(|(index, spec)| gui_spec_to_exploration_spec(spec, testbenches, index + 1))
         .collect()
+}
+
+fn gui_candidate_input(
+    candidates: &GuiCandidateDocument,
+) -> Result<ExplorationCandidateInput, String> {
+    let axes = candidates
+        .axes
+        .iter()
+        .enumerate()
+        .map(|(index, axis)| gui_candidate_axis(axis, index + 1))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(ExplorationCandidateInput {
+        axes,
+        sets: Vec::new(),
+        filters: Vec::new(),
+    })
+}
+
+fn gui_candidate_axis(axis: &GuiCandidateAxis, axis_index: usize) -> Result<CandidateAxis, String> {
+    let context = format!("candidate axis {axis_index}");
+    let name = required_text(&axis.name, &context, "name")?;
+    let values = parse_candidate_values(&axis.values, &context)?;
+
+    Ok(CandidateAxis::new(name, values))
+}
+
+fn parse_candidate_values(input: &str, context: &str) -> Result<Vec<f64>, String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err(format!("{context} has no values"));
+    }
+
+    if let Some(values) = parse_linspace_values(trimmed, context)? {
+        return Ok(values);
+    }
+
+    trimmed
+        .split(|character: char| character == ',' || character.is_whitespace())
+        .filter(|token| !token.trim().is_empty())
+        .map(|token| {
+            token.trim().parse::<f64>().map_err(|error| {
+                format!(
+                    "{context} has invalid numeric value '{}': {error}",
+                    token.trim()
+                )
+            })
+        })
+        .collect()
+}
+
+fn parse_linspace_values(input: &str, context: &str) -> Result<Option<Vec<f64>>, String> {
+    let Some(arguments) = input
+        .strip_prefix("linspace(")
+        .and_then(|value| value.strip_suffix(')'))
+    else {
+        return Ok(None);
+    };
+
+    let parts = arguments
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+
+    if parts.len() != 3 {
+        return Err(format!(
+            "{context} linspace expects exactly 3 arguments: linspace(start, stop, count)"
+        ));
+    }
+
+    let start = parts[0].parse::<f64>().map_err(|error| {
+        format!(
+            "{context} has invalid linspace start '{}': {error}",
+            parts[0]
+        )
+    })?;
+    let stop = parts[1].parse::<f64>().map_err(|error| {
+        format!(
+            "{context} has invalid linspace stop '{}': {error}",
+            parts[1]
+        )
+    })?;
+    let count = parts[2].parse::<usize>().map_err(|error| {
+        format!(
+            "{context} has invalid linspace count '{}': {error}",
+            parts[2]
+        )
+    })?;
+
+    if count == 0 {
+        return Err(format!(
+            "{context} linspace count must be greater than zero"
+        ));
+    }
+
+    if count == 1 {
+        return Ok(Some(vec![start]));
+    }
+
+    let step = (stop - start) / (count - 1) as f64;
+    Ok(Some(
+        (0..count)
+            .map(|index| start + step * index as f64)
+            .collect(),
+    ))
 }
 
 fn gui_specs_small_signal_mode(
@@ -5151,6 +5476,50 @@ fn format_prepared_specs_output(prepared_specs: &[PreparedSpec]) -> String {
                 let _ = writeln!(output, "source: composed");
             }
         }
+    }
+
+    output
+}
+
+fn format_candidates_output(candidates: &[CandidatePoint]) -> String {
+    if candidates.is_empty() {
+        return "No candidates".to_string();
+    }
+
+    let columns = CandidatePoint::to_columns(candidates);
+    if columns.is_empty() {
+        return format!(
+            "Generated {} candidate point(s) with no columns",
+            candidates.len()
+        );
+    }
+
+    let max_rows = 200;
+    let shown_rows = candidates.len().min(max_rows);
+    let mut output = String::new();
+
+    let _ = writeln!(output, "candidate points: {}", candidates.len());
+    if candidates.len() > shown_rows {
+        let _ = writeln!(output, "showing first {shown_rows} rows");
+    }
+    output.push('\n');
+
+    let _ = write!(output, "index");
+    for column in &columns {
+        let _ = write!(output, "\t{}", column.name);
+    }
+    output.push('\n');
+
+    for row in 0..shown_rows {
+        let _ = write!(output, "{row}");
+        for column in &columns {
+            if let Some(value) = column.values.get(row) {
+                let _ = write!(output, "\t{value:.6e}");
+            } else {
+                output.push('\t');
+            }
+        }
+        output.push('\n');
     }
 
     output
