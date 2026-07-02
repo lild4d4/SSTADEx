@@ -9,9 +9,10 @@ use libsstadex::analysis::{
 use libsstadex::catalog::{PrimitiveCatalog, load_primitive_catalog};
 use libsstadex::circuit::{Circuit, Connection, Instance, PinRef, save_circuit};
 use libsstadex::exploration::{
-    CandidateAxis, CandidatePoint, ExplorationCandidateInput, ExplorationSpec, PreparedSpec,
-    PreparedSpecSource, RangeCondition, SpecOutput, SpecParameter, SpecSource, TestbenchElement,
-    TestbenchSpec, build_filtered_candidates, prepare_macro_testbench_specs_with_mode,
+    CandidateAxis, CandidatePoint, ExplorationCandidateInput, ExplorationSpec, ExplorationTable,
+    PreparedSpec, PreparedSpecSource, RangeCondition, SpecOutput, SpecParameter, SpecSource,
+    TestbenchElement, TestbenchSpec, build_filtered_candidates,
+    prepare_macro_testbench_specs_with_mode, run_prepared_expression_flow,
     save_exploration_candidates, save_exploration_specs, save_testbenches,
 };
 use libsstadex::macro_model::{
@@ -62,6 +63,7 @@ struct SstadexApp {
     output_artifacts: String,
     output_prepared_specs: String,
     output_candidates: String,
+    output_results: String,
     next_instance_id: usize,
     next_label_pin_id: usize,
     next_macro_port_id: usize,
@@ -164,6 +166,7 @@ enum BottomView {
     Artifacts,
     Prepared,
     Candidates,
+    Results,
     Testbenches,
 }
 
@@ -534,6 +537,7 @@ impl Default for SstadexApp {
             output_artifacts: "Generated artifact paths will appear here".to_string(),
             output_prepared_specs: "Prepared exploration specs will appear here".to_string(),
             output_candidates: "Generated candidates will appear here".to_string(),
+            output_results: "Exploration results will appear here".to_string(),
             next_instance_id: 1,
             next_label_pin_id: 1,
             next_macro_port_id: 1,
@@ -636,6 +640,10 @@ impl eframe::App for SstadexApp {
                 {
                     self.output_log = self.generate_gui_candidates();
                     self.bottom_view = BottomView::Candidates;
+                }
+                if ui.button("Evaluate specs").clicked() {
+                    self.output_log = self.evaluate_gui_specs();
+                    self.bottom_view = BottomView::Results;
                 }
                 if ui
                     .add_enabled(
@@ -761,6 +769,7 @@ impl eframe::App for SstadexApp {
                         BottomView::Candidates,
                         "Candidates",
                     );
+                    ui.selectable_value(&mut self.bottom_view, BottomView::Results, "Results");
                     ui.selectable_value(
                         &mut self.bottom_view,
                         BottomView::Testbenches,
@@ -776,6 +785,7 @@ impl eframe::App for SstadexApp {
                     BottomView::Artifacts => show_text_output(ui, &self.output_artifacts),
                     BottomView::Prepared => show_text_output(ui, &self.output_prepared_specs),
                     BottomView::Candidates => show_text_output(ui, &self.output_candidates),
+                    BottomView::Results => show_text_output(ui, &self.output_results),
                     BottomView::Testbenches => self.show_testbenches_ui(ui),
                 }
             });
@@ -2534,6 +2544,144 @@ impl SstadexApp {
             Err(error) => format!(
                 "Generate candidates failed\n\nCandidates JSON: {}\n\n{error:?}",
                 candidates_path.display()
+            ),
+        }
+    }
+
+    fn evaluate_gui_specs(&mut self) -> String {
+        self.save_active_circuit_document();
+
+        let Some(catalog) = &self.catalog else {
+            return "Cannot evaluate specs: primitive catalog is not loaded".to_string();
+        };
+
+        let output_dir = std::env::temp_dir().join("sstadex-gui-mna");
+        let macro_dir = output_dir.join("gui_macros");
+        let testbench_path = output_dir.join("gui_testbenches.json");
+        let specs_path = output_dir.join("gui_specs.json");
+        let candidates_path = output_dir.join("gui_candidates.json");
+        let prepared_dir = output_dir.join("prepared_specs");
+
+        if let Err(error) = std::fs::create_dir_all(&prepared_dir) {
+            return format!(
+                "Cannot evaluate specs: failed to create output directory '{}'\n\n{error}",
+                prepared_dir.display()
+            );
+        }
+
+        let macro_models = match self.build_macro_models() {
+            Ok(macro_models) => macro_models,
+            Err(error) => return format!("Cannot evaluate specs: {error}"),
+        };
+        let testbenches = match gui_testbenches_to_specs(&self.testbenches, &self.circuits) {
+            Ok(testbenches) => testbenches,
+            Err(error) => return format!("Cannot evaluate specs: {error}"),
+        };
+        let specs = match gui_specs_to_exploration_specs(&self.specs, &testbenches) {
+            Ok(specs) => specs,
+            Err(error) => return format!("Cannot evaluate specs: {error}"),
+        };
+        let candidate_input = match gui_candidate_input(&self.candidates) {
+            Ok(candidate_input) => candidate_input,
+            Err(error) => return format!("Cannot evaluate specs: {error}"),
+        };
+        let gui_mode = match gui_specs_small_signal_mode(&self.specs, &self.testbenches) {
+            Ok(mode) => mode,
+            Err(error) => return format!("Cannot evaluate specs: {error}"),
+        };
+        let mode = macro_small_signal_mode(gui_mode);
+
+        for macro_model in &macro_models {
+            let macro_path = macro_dir.join(&macro_model.name).join("macro.json");
+            if let Err(error) = save_macro_model(&macro_path, macro_model) {
+                return format!(
+                    "Cannot evaluate specs: failed to write macro JSON '{}'\n\n{error:?}",
+                    macro_path.display()
+                );
+            }
+        }
+
+        if let Err(error) = save_testbenches(&testbench_path, &testbenches) {
+            return format!(
+                "Cannot evaluate specs: failed to write testbench JSON '{}'\n\n{error:?}",
+                testbench_path.display()
+            );
+        }
+
+        if let Err(error) = save_exploration_specs(&specs_path, &specs) {
+            return format!(
+                "Cannot evaluate specs: failed to write specs JSON '{}'\n\n{error:?}",
+                specs_path.display()
+            );
+        }
+
+        if let Err(error) = save_exploration_candidates(&candidates_path, &candidate_input) {
+            return format!(
+                "Cannot evaluate specs: failed to write candidates JSON '{}'\n\n{error:?}",
+                candidates_path.display()
+            );
+        }
+
+        let mut macro_catalog = MacroCatalog::new();
+        for macro_model in macro_models {
+            macro_catalog.register(macro_model);
+        }
+
+        let prepared_specs = match prepare_macro_testbench_specs_with_mode(
+            &specs,
+            catalog,
+            &macro_catalog,
+            &prepared_dir,
+            mode,
+        ) {
+            Ok(prepared_specs) => prepared_specs,
+            Err(error) => {
+                return format!(
+                    "Evaluate specs failed while preparing specs\n\nMacro dir: {}\nTestbenches: {}\nSpecs: {}\nCandidates: {}\nPrepared dir: {}\n\n{error:?}",
+                    macro_dir.display(),
+                    testbench_path.display(),
+                    specs_path.display(),
+                    candidates_path.display(),
+                    prepared_dir.display()
+                );
+            }
+        };
+
+        self.output_prepared_specs = format_prepared_specs_output(&prepared_specs);
+
+        match run_prepared_expression_flow(
+            &candidate_input.axes,
+            &candidate_input.sets,
+            &candidate_input.filters,
+            &prepared_specs,
+        ) {
+            Ok(table) => {
+                self.output_results = format_exploration_table_output(&table);
+                self.output_artifacts = format!(
+                    "Macro dir: {}\nTestbenches: {}\nSpecs: {}\nCandidates: {}\nPrepared specs dir: {}\nSmall-signal mode: {}",
+                    macro_dir.display(),
+                    testbench_path.display(),
+                    specs_path.display(),
+                    candidates_path.display(),
+                    prepared_dir.display(),
+                    gui_mode.label()
+                );
+
+                format!(
+                    "Evaluated exploration specs\n\nRows kept: {}\nColumns: {}\nSpecs: {}\nSmall-signal mode: {}",
+                    table.row_count,
+                    table.columns.len(),
+                    prepared_specs.len(),
+                    gui_mode.label()
+                )
+            }
+            Err(error) => format!(
+                "Evaluate specs failed\n\nMacro dir: {}\nTestbenches: {}\nSpecs: {}\nCandidates: {}\nPrepared dir: {}\n\n{error:?}",
+                macro_dir.display(),
+                testbench_path.display(),
+                specs_path.display(),
+                candidates_path.display(),
+                prepared_dir.display()
             ),
         }
     }
@@ -5513,6 +5661,43 @@ fn format_candidates_output(candidates: &[CandidatePoint]) -> String {
     for row in 0..shown_rows {
         let _ = write!(output, "{row}");
         for column in &columns {
+            if let Some(value) = column.values.get(row) {
+                let _ = write!(output, "\t{value:.6e}");
+            } else {
+                output.push('\t');
+            }
+        }
+        output.push('\n');
+    }
+
+    output
+}
+
+fn format_exploration_table_output(table: &ExplorationTable) -> String {
+    if table.columns.is_empty() {
+        return format!("rows: {}\ncolumns: 0", table.row_count);
+    }
+
+    let max_rows = 200;
+    let shown_rows = table.row_count.min(max_rows);
+    let mut output = String::new();
+
+    let _ = writeln!(output, "rows: {}", table.row_count);
+    let _ = writeln!(output, "columns: {}", table.columns.len());
+    if table.row_count > shown_rows {
+        let _ = writeln!(output, "showing first {shown_rows} rows");
+    }
+    output.push('\n');
+
+    let _ = write!(output, "index");
+    for column in &table.columns {
+        let _ = write!(output, "\t{}", column.name);
+    }
+    output.push('\n');
+
+    for row in 0..shown_rows {
+        let _ = write!(output, "{row}");
+        for column in &table.columns {
             if let Some(value) = column.values.get(row) {
                 let _ = write!(output, "\t{value:.6e}");
             } else {
