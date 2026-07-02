@@ -6,6 +6,7 @@ use crate::exploration::candidate::{
     CandidateSet, CandidateSetBuildError, candidate_set_from_prefixed_columns,
 };
 use crate::exploration::table::ExplorationColumn;
+use crate::primitive::manifest::PrimitiveManifest;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PrimitiveBuildSpec {
@@ -119,6 +120,9 @@ impl PrimitiveBuildOutput {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PrimitiveBuildError {
+    MissingBuildSpec {
+        primitive: String,
+    },
     MissingRequiredInput {
         input: String,
     },
@@ -152,6 +156,7 @@ pub enum PrimitiveBuildError {
         lut: String,
         reason: String,
     },
+    CandidateSet(CandidateSetBuildError),
 }
 
 pub trait LutBackend {
@@ -239,6 +244,30 @@ impl<B: LutBackend> PrimitiveBuildEngine<B> {
             row_count: rows.len(),
             columns,
         })
+    }
+
+    pub fn build_candidate_set_for_primitive(
+        &self,
+        primitive: &PrimitiveManifest,
+        instance_name: &str,
+        input: &PrimitiveBuildInput,
+    ) -> Result<CandidateSet, PrimitiveBuildError> {
+        let build_spec =
+            primitive
+                .build
+                .as_ref()
+                .ok_or_else(|| PrimitiveBuildError::MissingBuildSpec {
+                    primitive: primitive.name.clone(),
+                })?;
+        let mut input = input.clone();
+
+        if input.lut_config.is_none() {
+            input.lut_config = primitive.lut_config.clone();
+        }
+
+        self.build(build_spec, &input)?
+            .to_candidate_set(instance_name)
+            .map_err(PrimitiveBuildError::CandidateSet)
     }
 }
 
@@ -694,6 +723,7 @@ fn is_identifier_body(byte: u8) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::primitive::manifest::{Pin, PinRole, PrimitiveFiles, PrimitiveShape, PrimitiveUi};
 
     #[test]
     fn aligned_sweep_keeps_rows_together() {
@@ -872,6 +902,51 @@ mod tests {
         assert_eq!(candidates.points[1].get("xdp.gm__m1"), Some(2.0));
     }
 
+    #[test]
+    fn engine_builds_candidate_set_from_primitive_manifest() {
+        let primitive = primitive_with_build(PrimitiveBuildSpec {
+            inputs: vec![input("current", PrimitiveBuildInputKind::Scalar)],
+            sweep_mode: SweepMode::Aligned,
+            derived: Vec::new(),
+            lut: Vec::new(),
+            columns: vec![expr("gm", "current * 10")],
+        });
+        let input = PrimitiveBuildInput::new(HashMap::from([(
+            "current".to_string(),
+            PrimitiveBuildValue::Scalar(2.0),
+        )]));
+
+        let candidates = PrimitiveBuildEngine::new(DeterministicLutBackend)
+            .build_candidate_set_for_primitive(&primitive, "x1", &input)
+            .unwrap();
+
+        assert_eq!(candidates.name, "x1");
+        assert_eq!(candidates.points[0].get("x1.gm"), Some(20.0));
+    }
+
+    #[test]
+    fn engine_reports_missing_manifest_build_spec() {
+        let mut primitive = primitive_with_build(PrimitiveBuildSpec {
+            inputs: Vec::new(),
+            sweep_mode: SweepMode::Aligned,
+            derived: Vec::new(),
+            lut: Vec::new(),
+            columns: Vec::new(),
+        });
+        primitive.build = None;
+
+        let error = PrimitiveBuildEngine::new(DeterministicLutBackend)
+            .build_candidate_set_for_primitive(&primitive, "x1", &PrimitiveBuildInput::default())
+            .unwrap_err();
+
+        assert_eq!(
+            error,
+            PrimitiveBuildError::MissingBuildSpec {
+                primitive: "primitive".to_string()
+            }
+        );
+    }
+
     fn input(name: &str, kind: PrimitiveBuildInputKind) -> PrimitiveBuildInputSpec {
         PrimitiveBuildInputSpec {
             name: name.to_string(),
@@ -885,6 +960,33 @@ mod tests {
         BuildExpression {
             name: name.to_string(),
             expr: expression.to_string(),
+        }
+    }
+
+    fn primitive_with_build(build: PrimitiveBuildSpec) -> PrimitiveManifest {
+        PrimitiveManifest {
+            name: "primitive".to_string(),
+            version: "1.0".to_string(),
+            description: None,
+            subckt_name: "primitive".to_string(),
+            pins: vec![Pin {
+                name: "IN".to_string(),
+                role: PinRole::Input,
+            }],
+            files: PrimitiveFiles {
+                netlist: "netlist/netlist.spice".to_string(),
+                build: None,
+                symbol: None,
+            },
+            ui: PrimitiveUi {
+                shape: PrimitiveShape::Box,
+                symbol: None,
+            },
+            small_signal: None,
+            transistor_type: None,
+            layout_params: None,
+            lut_config: None,
+            build: Some(build),
         }
     }
 }
