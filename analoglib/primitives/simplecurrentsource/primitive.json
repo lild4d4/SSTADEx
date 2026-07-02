@@ -59,7 +59,7 @@
   },
 
   "files": {
-    "build":   "build.py",
+    "build":   "build.json",
     "netlist": "netlist/netlist.spice",
     "symbol":  "symbol/symbol.sym"
   }

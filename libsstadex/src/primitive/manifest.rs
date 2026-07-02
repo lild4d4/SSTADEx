@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use super::build::PrimitiveBuildSpec;
 use super::small_signal::SmallSignalModel;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -12,6 +13,10 @@ pub struct PrimitiveManifest {
     pub files: PrimitiveFiles,
     pub ui: PrimitiveUi,
     pub small_signal: Option<SmallSignalModel>,
+    pub transistor_type: Option<String>,
+    pub layout_params: Option<serde_json::Value>,
+    pub lut_config: Option<serde_json::Value>,
+    pub build: Option<PrimitiveBuildSpec>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -33,6 +38,8 @@ pub enum PinRole {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PrimitiveFiles {
     pub netlist: String,
+    pub build: Option<String>,
+    pub symbol: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -103,6 +110,8 @@ mod tests {
             ],
             files: PrimitiveFiles {
                 netlist: "netlist/netlist.spice".to_string(),
+                build: None,
+                symbol: None,
             },
             ui: PrimitiveUi {
                 shape: PrimitiveShape::Box,
@@ -111,6 +120,10 @@ mod tests {
             small_signal: Some(SmallSignalModel {
                 branches: Vec::new(),
             }),
+            transistor_type: Some("nmos".to_string()),
+            layout_params: None,
+            lut_config: None,
+            build: None,
         };
 
         assert_eq!(manifest.name, "simplediffpair");

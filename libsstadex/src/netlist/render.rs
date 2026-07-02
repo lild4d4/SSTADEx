@@ -155,12 +155,18 @@ mod tests {
             ],
             files: PrimitiveFiles {
                 netlist: "netlist/netlist.spice".to_string(),
+                build: None,
+                symbol: None,
             },
             ui: PrimitiveUi {
                 shape: PrimitiveShape::Box,
                 symbol: None,
             },
             small_signal: None,
+            transistor_type: None,
+            layout_params: None,
+            lut_config: None,
+            build: None,
         });
 
         catalog

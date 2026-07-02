@@ -1,0 +1,37 @@
+{
+  "inputs": [
+    { "name": "current", "kind": "scalar", "required": true },
+    { "name": "VIN", "kind": "vector", "required": true, "source": "port_voltage" },
+    { "name": "VOUT", "kind": "vector", "required": true, "source": "port_voltage" },
+    { "name": "VDD", "kind": "vector", "required": true, "source": "port_voltage" }
+  ],
+  "sweep_mode": "cartesian",
+  "derived": [
+    { "name": "id_m1", "expr": "current" },
+    { "name": "vds_m1", "expr": "VOUT - VDD" },
+    { "name": "vgs_m1", "expr": "VIN - VDD" }
+  ],
+  "lut": [
+    {
+      "name": "m1",
+      "device": "pmos",
+      "dof": {
+        "vds": "vds_m1",
+        "vgs": "vgs_m1"
+      },
+      "lengths": "$lut_config.lengths"
+    }
+  ],
+  "columns": [
+    { "name": "length", "expr": "lut.m1.length" },
+    { "name": "width", "expr": "id_m1 / lut.m1.jd" },
+    { "name": "gm", "expr": "lut.m1.gmid * id_m1" },
+    { "name": "gdsid", "expr": "lut.m1.gds / lut.m1.id" },
+    { "name": "gds", "expr": "gdsid * id_m1" },
+    { "name": "Ro", "expr": "1 / gds" },
+    { "name": "cgg", "expr": "width * lut.m1.cgg" },
+    { "name": "cgs", "expr": "width * lut.m1.cgs" },
+    { "name": "cgd", "expr": "width * lut.m1.cgd" },
+    { "name": "vdsat", "expr": "lut.m1.vdsat" }
+  ]
+}

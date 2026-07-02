@@ -1363,6 +1363,12 @@ fn format_primitive_load_error(error: PrimitiveLoadError) -> String {
     match error {
         PrimitiveLoadError::Io(error) => format!("I/O failure while loading catalog: {error}"),
         PrimitiveLoadError::Json(error) => format!("invalid primitive JSON: {error}"),
+        PrimitiveLoadError::ExternalBuildJson { path, source } => {
+            format!(
+                "invalid primitive build JSON at '{}': {source}",
+                path.display()
+            )
+        }
         PrimitiveLoadError::MissingPort { primitive, pin } => {
             format!("primitive '{primitive}' pin_order references missing port '{pin}'")
         }
