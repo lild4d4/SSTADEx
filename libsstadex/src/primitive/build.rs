@@ -1,4 +1,8 @@
 use std::collections::{HashMap, HashSet};
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
@@ -161,6 +165,10 @@ pub enum PrimitiveBuildError {
 
 pub trait LutBackend {
     fn query(&self, request: &LutQuery) -> Result<HashMap<String, f64>, String>;
+
+    fn query_many(&self, requests: &[LutQuery]) -> Result<Vec<HashMap<String, f64>>, String> {
+        requests.iter().map(|request| self.query(request)).collect()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -193,6 +201,206 @@ impl LutBackend for DeterministicLutBackend {
         values.insert("vdsat".to_string(), 0.1 + 0.01 * magnitude);
         Ok(values)
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PythonGmidLutBackend {
+    python: PathBuf,
+    helper_script: PathBuf,
+    lut_files: HashMap<String, PathBuf>,
+    timing_output: bool,
+}
+
+impl PythonGmidLutBackend {
+    pub fn new(
+        python: impl Into<PathBuf>,
+        helper_script: impl Into<PathBuf>,
+        lut_files: HashMap<String, PathBuf>,
+    ) -> Self {
+        Self {
+            python: python.into(),
+            helper_script: helper_script.into(),
+            lut_files,
+            timing_output: false,
+        }
+    }
+
+    pub fn with_default_helper(
+        python: impl Into<PathBuf>,
+        lut_files: HashMap<String, PathBuf>,
+    ) -> Self {
+        Self::new(python, default_python_gmid_helper(), lut_files)
+    }
+
+    pub fn python(&self) -> &Path {
+        &self.python
+    }
+
+    pub fn helper_script(&self) -> &Path {
+        &self.helper_script
+    }
+
+    pub fn lut_files(&self) -> &HashMap<String, PathBuf> {
+        &self.lut_files
+    }
+
+    pub fn with_timing_output(mut self, enabled: bool) -> Self {
+        self.timing_output = enabled;
+        self
+    }
+
+    pub fn timing_output(&self) -> bool {
+        self.timing_output
+    }
+}
+
+impl LutBackend for PythonGmidLutBackend {
+    fn query(&self, request: &LutQuery) -> Result<HashMap<String, f64>, String> {
+        self.query_many(std::slice::from_ref(request))?
+            .into_iter()
+            .next()
+            .ok_or_else(|| "python gmid backend returned no rows".to_string())
+    }
+
+    fn query_many(&self, requests: &[LutQuery]) -> Result<Vec<HashMap<String, f64>>, String> {
+        if requests.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        validate_python_gmid_backend_paths(self)?;
+        let started_at = Instant::now();
+        let request = PythonGmidRequest::from_backend(self, requests);
+        let request_json = serde_json::to_vec(&request)
+            .map_err(|error| format!("failed to serialize gmid request: {error}"))?;
+        let mut child = Command::new(&self.python)
+            .arg(&self.helper_script)
+            .env("MPLCONFIGDIR", std::env::temp_dir())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|error| {
+                format!(
+                    "failed to spawn python gmid backend '{}': {error}",
+                    self.python.display()
+                )
+            })?;
+
+        child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| "failed to open python gmid backend stdin".to_string())?
+            .write_all(&request_json)
+            .map_err(|error| format!("failed to write gmid request: {error}"))?;
+
+        let output = child
+            .wait_with_output()
+            .map_err(|error| format!("failed to wait for python gmid backend: {error}"))?;
+
+        if !output.status.success() {
+            return Err(format!(
+                "python gmid backend failed with status {}: {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+
+        let response: PythonGmidResponse = serde_json::from_slice(&output.stdout)
+            .map_err(|error| format!("failed to parse gmid response JSON: {error}"))?;
+
+        if response.results.len() != requests.len() {
+            return Err(format!(
+                "python gmid backend returned {} rows for {} requests",
+                response.results.len(),
+                requests.len()
+            ));
+        }
+
+        if self.timing_output {
+            eprintln!(
+                "PythonGmidLutBackend resolved {} LUT queries in {:.3} ms",
+                requests.len(),
+                started_at.elapsed().as_secs_f64() * 1000.0
+            );
+        }
+
+        Ok(response.results)
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct PythonGmidRequest {
+    lut_files: HashMap<String, String>,
+    queries: Vec<PythonGmidQuery>,
+}
+
+impl PythonGmidRequest {
+    fn from_backend(backend: &PythonGmidLutBackend, requests: &[LutQuery]) -> Self {
+        Self {
+            lut_files: backend
+                .lut_files
+                .iter()
+                .map(|(device, path)| (device.clone(), path.display().to_string()))
+                .collect(),
+            queries: requests
+                .iter()
+                .map(|request| PythonGmidQuery {
+                    lut_name: request.lut_name.clone(),
+                    device: request.device.clone(),
+                    dof: request.dof.clone(),
+                    length: request.length,
+                })
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct PythonGmidQuery {
+    lut_name: String,
+    device: String,
+    dof: HashMap<String, f64>,
+    length: f64,
+}
+
+#[derive(Debug, Deserialize)]
+struct PythonGmidResponse {
+    results: Vec<HashMap<String, f64>>,
+}
+
+fn default_python_gmid_helper() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("python/gmid_lut_backend.py")
+}
+
+fn validate_python_gmid_backend_paths(backend: &PythonGmidLutBackend) -> Result<(), String> {
+    if !backend.python.exists() {
+        return Err(format!(
+            "python executable does not exist: {}",
+            backend.python.display()
+        ));
+    }
+
+    if !backend.helper_script.exists() {
+        return Err(format!(
+            "python gmid helper does not exist: {}",
+            backend.helper_script.display()
+        ));
+    }
+
+    if backend.lut_files.is_empty() {
+        return Err("python gmid backend has no LUT files configured".to_string());
+    }
+
+    for (device, path) in &backend.lut_files {
+        if !path.exists() {
+            return Err(format!(
+                "LUT file for device '{device}' does not exist: {}",
+                path.display()
+            ));
+        }
+    }
+
+    Ok(())
 }
 
 pub struct PrimitiveBuildEngine<B> {
@@ -400,7 +608,8 @@ fn apply_luts<B: LutBackend>(
 ) -> Result<(), PrimitiveBuildError> {
     for lut in &spec.lut {
         let lengths = resolve_lut_lengths(lut, input)?;
-        let mut next_rows = Vec::with_capacity(rows.len() * lengths.len());
+        let mut query_rows = Vec::with_capacity(rows.len() * lengths.len());
+        let mut queries = Vec::with_capacity(rows.len() * lengths.len());
 
         for row in rows.iter() {
             for length in &lengths {
@@ -416,27 +625,42 @@ fn apply_luts<B: LutBackend>(
                     dof.insert(dof_name.clone(), value);
                 }
 
-                let query = LutQuery {
+                queries.push(LutQuery {
                     lut_name: lut.name.clone(),
                     device: lut.device.clone(),
                     dof,
                     length: *length,
-                };
-                let lut_values =
-                    backend
-                        .query(&query)
-                        .map_err(|reason| PrimitiveBuildError::Lut {
-                            lut: lut.name.clone(),
-                            reason,
-                        })?;
-
-                let mut next_row = row.clone();
-                next_row.insert(format!("lut.{}.length", lut.name), *length);
-                for (key, value) in lut_values {
-                    next_row.insert(format!("lut.{}.{}", lut.name, key), value);
-                }
-                next_rows.push(next_row);
+                });
+                query_rows.push((row.clone(), *length));
             }
+        }
+
+        let lut_results =
+            backend
+                .query_many(&queries)
+                .map_err(|reason| PrimitiveBuildError::Lut {
+                    lut: lut.name.clone(),
+                    reason,
+                })?;
+        if lut_results.len() != query_rows.len() {
+            return Err(PrimitiveBuildError::Lut {
+                lut: lut.name.clone(),
+                reason: format!(
+                    "backend returned {} rows for {} queries",
+                    lut_results.len(),
+                    query_rows.len()
+                ),
+            });
+        }
+
+        let mut next_rows = Vec::with_capacity(query_rows.len());
+        for ((row, length), lut_values) in query_rows.into_iter().zip(lut_results) {
+            let mut next_row = row;
+            next_row.insert(format!("lut.{}.length", lut.name), length);
+            for (key, value) in lut_values {
+                next_row.insert(format!("lut.{}.{}", lut.name, key), value);
+            }
+            next_rows.push(next_row);
         }
 
         *rows = next_rows;
@@ -889,6 +1113,99 @@ mod tests {
     }
 
     #[test]
+    fn engine_uses_batch_lut_backend() {
+        #[derive(Debug, Clone, Copy)]
+        struct BatchOnlyBackend;
+
+        impl LutBackend for BatchOnlyBackend {
+            fn query(&self, _request: &LutQuery) -> Result<HashMap<String, f64>, String> {
+                panic!("engine should call query_many for LUT batches");
+            }
+
+            fn query_many(
+                &self,
+                requests: &[LutQuery],
+            ) -> Result<Vec<HashMap<String, f64>>, String> {
+                Ok(requests
+                    .iter()
+                    .map(|request| {
+                        HashMap::from([
+                            ("length".to_string(), request.length),
+                            ("id".to_string(), 1.0),
+                            ("gmid".to_string(), 2.0 + request.length * 1.0e6),
+                        ])
+                    })
+                    .collect())
+            }
+        }
+
+        let spec = PrimitiveBuildSpec {
+            inputs: vec![input("id_m1", PrimitiveBuildInputKind::Scalar)],
+            sweep_mode: SweepMode::Aligned,
+            derived: Vec::new(),
+            lut: vec![LutBuildSpec {
+                name: "m1".to_string(),
+                device: "nmos".to_string(),
+                dof: HashMap::from([
+                    ("vds".to_string(), "0.8".to_string()),
+                    ("vgs".to_string(), "0.7".to_string()),
+                ]),
+                lengths: Some(LutLengths::Values(vec![1.0e-6, 2.0e-6])),
+            }],
+            columns: vec![expr("gm", "lut.m1.gmid * id_m1")],
+        };
+        let input = PrimitiveBuildInput::new(HashMap::from([(
+            "id_m1".to_string(),
+            PrimitiveBuildValue::Scalar(1.0e-6),
+        )]));
+
+        let output = PrimitiveBuildEngine::new(BatchOnlyBackend)
+            .build(&spec, &input)
+            .unwrap();
+
+        assert_eq!(output.columns[0].values, vec![3.0e-6, 4.0e-6]);
+    }
+
+    #[test]
+    fn python_gmid_backend_queries_real_npz_lut_when_available() {
+        let Some((python, lut_files)) = python_gmid_test_paths() else {
+            return;
+        };
+        let backend = PythonGmidLutBackend::with_default_helper(python, lut_files);
+        let queries = vec![
+            LutQuery {
+                lut_name: "m1".to_string(),
+                device: "nmos".to_string(),
+                dof: HashMap::from([("vds".to_string(), 0.75), ("vgs".to_string(), 0.65)]),
+                length: 4.0e-7,
+            },
+            LutQuery {
+                lut_name: "m1".to_string(),
+                device: "nmos".to_string(),
+                dof: HashMap::from([("vds".to_string(), 0.85), ("vgs".to_string(), 0.55)]),
+                length: 4.0e-7,
+            },
+        ];
+
+        let results = backend.query_many(&queries).unwrap();
+        assert_eq!(results.len(), 2);
+
+        for key in [
+            "length", "id", "jd", "gmid", "gds", "cgg", "cgs", "cgd", "vdsat",
+        ] {
+            for values in &results {
+                assert!(
+                    values.get(key).is_some_and(|value| value.is_finite()),
+                    "missing or non-finite {key}: {values:?}"
+                );
+            }
+        }
+        assert!(results[0]["jd"] > 0.0);
+        assert!(results[0]["gmid"] > 0.0);
+        assert_ne!(results[0]["gmid"], results[1]["gmid"]);
+    }
+
+    #[test]
     fn output_converts_to_prefixed_candidate_set() {
         let output = PrimitiveBuildOutput {
             row_count: 2,
@@ -988,5 +1305,24 @@ mod tests {
             lut_config: None,
             build: Some(build),
         }
+    }
+
+    fn python_gmid_test_paths() -> Option<(PathBuf, HashMap<String, PathBuf>)> {
+        let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR")).parent()?;
+        let python = workspace_root.join(".venv-sstadex/bin/python");
+        let nmos_lut = workspace_root.join("LUTs/ihp-sg13g2/lv_5w_nmos.npz");
+        let pmos_lut = workspace_root.join("LUTs/ihp-sg13g2/lv_5w_pmos.npz");
+
+        if !(python.exists() && nmos_lut.exists() && pmos_lut.exists()) {
+            return None;
+        }
+
+        Some((
+            python,
+            HashMap::from([
+                ("nmos".to_string(), nmos_lut),
+                ("pmos".to_string(), pmos_lut),
+            ]),
+        ))
     }
 }
