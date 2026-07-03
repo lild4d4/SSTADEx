@@ -2922,6 +2922,7 @@ impl SstadexApp {
         let testbench_path = output_dir.join("gui_testbenches.json");
         let specs_path = output_dir.join("gui_specs.json");
         let candidates_path = output_dir.join("gui_candidates.json");
+        let results_path = output_dir.join("gui_results.csv");
         let prepared_dir = output_dir.join("prepared_specs");
 
         if let Err(error) = std::fs::create_dir_all(&prepared_dir) {
@@ -3022,22 +3023,31 @@ impl SstadexApp {
         ) {
             Ok(table) => {
                 self.output_results = format_exploration_table_output(&table);
+                if let Err(error) = std::fs::write(&results_path, exploration_table_to_csv(&table))
+                {
+                    return format!(
+                        "Evaluate specs completed but failed to write results CSV '{}'\n\n{error}",
+                        results_path.display()
+                    );
+                }
                 self.output_artifacts = format!(
-                    "Macro dir: {}\nTestbenches: {}\nSpecs: {}\nCandidates: {}\nPrepared specs dir: {}\nSmall-signal mode: {}",
+                    "Macro dir: {}\nTestbenches: {}\nSpecs: {}\nCandidates: {}\nResults CSV: {}\nPrepared specs dir: {}\nSmall-signal mode: {}",
                     macro_dir.display(),
                     testbench_path.display(),
                     specs_path.display(),
                     candidates_path.display(),
+                    results_path.display(),
                     prepared_dir.display(),
                     gui_mode.label()
                 );
 
                 format!(
-                    "Evaluated exploration specs\n\nRows kept: {}\nColumns: {}\nSpecs: {}\nSmall-signal mode: {}",
+                    "Evaluated exploration specs\n\nRows kept: {}\nColumns: {}\nSpecs: {}\nSmall-signal mode: {}\nResults CSV: {}",
                     table.row_count,
                     table.columns.len(),
                     prepared_specs.len(),
-                    gui_mode.label()
+                    gui_mode.label(),
+                    results_path.display()
                 )
             }
             Err(error) => format!(
@@ -6190,6 +6200,7 @@ fn display_optional_name(name: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use libsstadex::exploration::ExplorationColumn;
     use libsstadex::primitive::build::{
         BuildExpression, PrimitiveBuildInputSpec, PrimitiveBuildSpec, SweepMode,
     };
@@ -6353,6 +6364,22 @@ mod tests {
         let resolved = resolve_workspace_relative_path("libsstadex/Cargo.toml");
 
         assert_eq!(resolved, workspace_root().join("libsstadex/Cargo.toml"));
+    }
+
+    #[test]
+    fn exploration_table_csv_includes_index_and_escapes_headers() {
+        let table = ExplorationTable {
+            row_count: 2,
+            columns: vec![
+                ExplorationColumn::new("gain", vec![1.0, 2.5]),
+                ExplorationColumn::new("weird,name", vec![3.0, 4.0]),
+            ],
+        };
+
+        assert_eq!(
+            exploration_table_to_csv(&table),
+            "index,gain,\"weird,name\"\n0,1.000000000000e0,3.000000000000e0\n1,2.500000000000e0,4.000000000000e0\n"
+        );
     }
 
     fn catalog_with_primitive(primitive: PrimitiveManifest) -> PrimitiveCatalog {
@@ -6781,6 +6808,38 @@ fn format_exploration_table_output(table: &ExplorationTable) -> String {
     }
 
     output
+}
+
+fn exploration_table_to_csv(table: &ExplorationTable) -> String {
+    let mut output = String::new();
+
+    output.push_str("index");
+    for column in &table.columns {
+        output.push(',');
+        output.push_str(&csv_escape(&column.name));
+    }
+    output.push('\n');
+
+    for row in 0..table.row_count {
+        let _ = write!(output, "{row}");
+        for column in &table.columns {
+            output.push(',');
+            if let Some(value) = column.values.get(row) {
+                let _ = write!(output, "{value:.12e}");
+            }
+        }
+        output.push('\n');
+    }
+
+    output
+}
+
+fn csv_escape(value: &str) -> String {
+    if value.contains(',') || value.contains('"') || value.contains('\n') || value.contains('\r') {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value.to_string()
+    }
 }
 
 fn format_range_condition(condition: RangeCondition) -> String {
