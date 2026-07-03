@@ -22,7 +22,7 @@ sstadex.egg-info/
 __pycache__/
 *.pyc
 *.pyo
-LUTs/
+#LUTs/
 test/**/outputs/*
 test/**/*.csv
 test/**/*.log
