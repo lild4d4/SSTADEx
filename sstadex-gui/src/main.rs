@@ -9,15 +9,19 @@ use libsstadex::analysis::{
 use libsstadex::catalog::{PrimitiveCatalog, load_primitive_catalog};
 use libsstadex::circuit::{Circuit, Connection, Instance, PinRef, save_circuit};
 use libsstadex::exploration::{
-    CandidateAxis, CandidatePoint, ExplorationCandidateInput, ExplorationSpec, ExplorationTable,
-    PreparedSpec, PreparedSpecSource, RangeCondition, SpecOutput, SpecParameter, SpecSource,
-    TestbenchElement, TestbenchSpec, build_filtered_candidates,
+    CandidateAxis, CandidatePoint, CandidateSet, ExplorationCandidateInput, ExplorationSpec,
+    ExplorationTable, PreparedSpec, PreparedSpecSource, RangeCondition, SpecOutput, SpecParameter,
+    SpecSource, TestbenchElement, TestbenchSpec, build_filtered_candidates,
     prepare_macro_testbench_specs_with_mode, run_prepared_expression_flow,
     save_exploration_candidates, save_exploration_specs, save_testbenches,
 };
 use libsstadex::macro_model::{
     MacroCatalog, MacroMetadata, MacroModel, MacroPort, MacroPortRole, MacroSmallSignalMode,
     MacroSymbol, MacroSymbolPin, save_macro_model,
+};
+use libsstadex::primitive::build::{
+    PrimitiveBuildEngine, PrimitiveBuildInput, PrimitiveBuildInputKind, PrimitiveBuildValue,
+    PythonGmidLutBackend,
 };
 use libsstadex::primitive::manifest::{PinRole, PrimitiveManifest, SymbolPinSide};
 use serde::{Deserialize, Serialize};
@@ -224,12 +228,44 @@ struct GuiSpecParameter {
 #[derive(Clone)]
 struct GuiCandidateDocument {
     axes: Vec<GuiCandidateAxis>,
+    net_voltage_constraints: Vec<GuiNetVoltageConstraint>,
+    global_build_parameters: Vec<GuiBuildParameter>,
+    primitive_build_overrides: Vec<GuiPrimitiveBuildOverride>,
+    python_path: String,
+    nmos_lut_path: String,
+    pmos_lut_path: String,
+    timing_output: bool,
 }
 
 #[derive(Clone)]
 struct GuiCandidateAxis {
     name: String,
     values: String,
+}
+
+#[derive(Clone)]
+struct GuiNetVoltageConstraint {
+    net: String,
+    values: String,
+}
+
+#[derive(Clone)]
+struct GuiBuildParameter {
+    name: String,
+    values: String,
+}
+
+#[derive(Clone)]
+struct GuiPrimitiveBuildOverride {
+    instance_id: usize,
+    parameters: Vec<GuiBuildParameter>,
+}
+
+struct GuiPrimitiveBuildInstanceSummary {
+    id: usize,
+    name: String,
+    primitive: String,
+    non_voltage_inputs: Vec<String>,
 }
 
 #[derive(Clone, Hash, PartialEq, Eq)]
@@ -313,12 +349,44 @@ struct GuiProjectSpecParameter {
 struct GuiProjectCandidateDocument {
     #[serde(default)]
     axes: Vec<GuiProjectCandidateAxis>,
+    #[serde(default)]
+    net_voltage_constraints: Vec<GuiProjectNetVoltageConstraint>,
+    #[serde(default)]
+    global_build_parameters: Vec<GuiProjectBuildParameter>,
+    #[serde(default)]
+    primitive_build_overrides: Vec<GuiProjectPrimitiveBuildOverride>,
+    #[serde(default)]
+    python_path: String,
+    #[serde(default)]
+    nmos_lut_path: String,
+    #[serde(default)]
+    pmos_lut_path: String,
+    #[serde(default)]
+    timing_output: bool,
 }
 
 #[derive(Serialize, Deserialize)]
 struct GuiProjectCandidateAxis {
     name: String,
     values: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct GuiProjectNetVoltageConstraint {
+    net: String,
+    values: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct GuiProjectBuildParameter {
+    name: String,
+    values: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct GuiProjectPrimitiveBuildOverride {
+    instance_id: usize,
+    parameters: Vec<GuiProjectBuildParameter>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -552,6 +620,16 @@ impl Default for GuiCandidateDocument {
                 name: "xdp.gm".to_string(),
                 values: "1e-3, 2e-3, 5e-3".to_string(),
             }],
+            net_voltage_constraints: Vec::new(),
+            global_build_parameters: vec![GuiBuildParameter {
+                name: "current".to_string(),
+                values: "100e-6".to_string(),
+            }],
+            primitive_build_overrides: Vec::new(),
+            python_path: default_python_gmid_path(),
+            nmos_lut_path: default_nmos_lut_path(),
+            pmos_lut_path: default_pmos_lut_path(),
+            timing_output: true,
         }
     }
 }
@@ -1105,12 +1183,55 @@ impl SstadexApp {
         ui.heading("Candidates");
         ui.separator();
 
+        let net_names = self
+            .catalog
+            .as_ref()
+            .and_then(|catalog| {
+                self.circuits.get(self.active_circuit).map(|document| {
+                    CanvasNetIndex::from_document(document, catalog)
+                        .nets()
+                        .iter()
+                        .map(|net| net.name.clone())
+                        .collect::<Vec<_>>()
+                })
+            })
+            .unwrap_or_default();
+        let build_instances = self.gui_primitive_build_instances();
+
         ui.horizontal(|ui| {
             if ui.button("+ axis").clicked() {
                 self.candidates.axes.push(GuiCandidateAxis {
                     name: String::new(),
                     values: String::new(),
                 });
+            }
+            if ui.button("+ net voltage").clicked() {
+                let net = net_names
+                    .iter()
+                    .find(|net| {
+                        !self
+                            .candidates
+                            .net_voltage_constraints
+                            .iter()
+                            .any(|constraint| constraint.net == **net)
+                    })
+                    .cloned()
+                    .or_else(|| net_names.first().cloned())
+                    .unwrap_or_default();
+                self.candidates
+                    .net_voltage_constraints
+                    .push(GuiNetVoltageConstraint {
+                        net,
+                        values: String::new(),
+                    });
+            }
+            if ui.button("+ parameter").clicked() {
+                self.candidates
+                    .global_build_parameters
+                    .push(GuiBuildParameter {
+                        name: String::new(),
+                        values: String::new(),
+                    });
             }
             if ui.button("Generate candidates").clicked() {
                 self.output_log = self.generate_gui_candidates();
@@ -1119,6 +1240,32 @@ impl SstadexApp {
         });
 
         ui.separator();
+        ui.label("Python GMID backend");
+        ui.horizontal(|ui| {
+            ui.label("Python");
+            ui.add_sized(
+                egui::vec2(260.0, 20.0),
+                egui::TextEdit::singleline(&mut self.candidates.python_path),
+            );
+            ui.checkbox(&mut self.candidates.timing_output, "Timing");
+        });
+        ui.horizontal(|ui| {
+            ui.label("NMOS LUT");
+            ui.add_sized(
+                egui::vec2(360.0, 20.0),
+                egui::TextEdit::singleline(&mut self.candidates.nmos_lut_path),
+            );
+        });
+        ui.horizontal(|ui| {
+            ui.label("PMOS LUT");
+            ui.add_sized(
+                egui::vec2(360.0, 20.0),
+                egui::TextEdit::singleline(&mut self.candidates.pmos_lut_path),
+            );
+        });
+
+        ui.separator();
+        ui.label("Manual axes");
 
         let mut remove_axis = None;
         for (index, axis) in self.candidates.axes.iter_mut().enumerate() {
@@ -1141,6 +1288,174 @@ impl SstadexApp {
 
         if let Some(index) = remove_axis {
             self.candidates.axes.remove(index);
+        }
+
+        ui.separator();
+        ui.label("Net voltage constraints");
+        if net_names.is_empty() {
+            ui.label("No canvas nets available in the active macro.");
+        }
+        let mut remove_constraint = None;
+        for (index, constraint) in self
+            .candidates
+            .net_voltage_constraints
+            .iter_mut()
+            .enumerate()
+        {
+            ui.horizontal(|ui| {
+                ui.label(format!("Net {}", index + 1));
+                egui::ComboBox::from_id_salt(format!("candidate_net_constraint_{index}"))
+                    .selected_text(display_optional_name(&constraint.net))
+                    .show_ui(ui, |ui| {
+                        for net in &net_names {
+                            ui.selectable_value(&mut constraint.net, net.clone(), net);
+                        }
+                    });
+                ui.add_sized(
+                    egui::vec2(320.0, 20.0),
+                    egui::TextEdit::singleline(&mut constraint.values)
+                        .hint_text("0.8 or linspace(0.5, 1.0, 6)"),
+                );
+                if ui.button("Delete").clicked() {
+                    remove_constraint = Some(index);
+                }
+            });
+        }
+        if let Some(index) = remove_constraint {
+            self.candidates.net_voltage_constraints.remove(index);
+        }
+
+        ui.separator();
+        ui.label("Global build parameters");
+        let mut remove_parameter = None;
+        for (index, parameter) in self
+            .candidates
+            .global_build_parameters
+            .iter_mut()
+            .enumerate()
+        {
+            ui.horizontal(|ui| {
+                ui.label(format!("Parameter {}", index + 1));
+                ui.add_sized(
+                    egui::vec2(140.0, 20.0),
+                    egui::TextEdit::singleline(&mut parameter.name).hint_text("current"),
+                );
+                ui.add_sized(
+                    egui::vec2(320.0, 20.0),
+                    egui::TextEdit::singleline(&mut parameter.values)
+                        .hint_text("100e-6 or linspace(50e-6, 200e-6, 4)"),
+                );
+                if ui.button("Delete").clicked() {
+                    remove_parameter = Some(index);
+                }
+            });
+        }
+        if let Some(index) = remove_parameter {
+            self.candidates.global_build_parameters.remove(index);
+        }
+
+        ui.separator();
+        ui.horizontal(|ui| {
+            ui.label(format!(
+                "Primitive builds from active canvas: {}",
+                build_instances.len()
+            ));
+            if ui.button("+ instance override").clicked() {
+                if let Some(instance) = build_instances.first() {
+                    self.candidates
+                        .primitive_build_overrides
+                        .push(GuiPrimitiveBuildOverride {
+                            instance_id: instance.id,
+                            parameters: instance
+                                .non_voltage_inputs
+                                .iter()
+                                .map(|name| GuiBuildParameter {
+                                    name: name.clone(),
+                                    values: String::new(),
+                                })
+                                .collect(),
+                        });
+                }
+            }
+        });
+        for instance in &build_instances {
+            ui.label(format!(
+                "{} ({}) inputs: {}",
+                instance.name,
+                instance.primitive,
+                instance
+                    .non_voltage_inputs
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+
+        let mut remove_override = None;
+        for (override_index, override_) in self
+            .candidates
+            .primitive_build_overrides
+            .iter_mut()
+            .enumerate()
+        {
+            ui.group(|ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Override");
+                    egui::ComboBox::from_id_salt(format!(
+                        "candidate_instance_override_{override_index}"
+                    ))
+                    .selected_text(
+                        build_instances
+                            .iter()
+                            .find(|instance| instance.id == override_.instance_id)
+                            .map(|instance| instance.name.as_str())
+                            .unwrap_or("missing instance"),
+                    )
+                    .show_ui(ui, |ui| {
+                        for instance in &build_instances {
+                            ui.selectable_value(
+                                &mut override_.instance_id,
+                                instance.id,
+                                &instance.name,
+                            );
+                        }
+                    });
+                    if ui.button("+ parameter").clicked() {
+                        override_.parameters.push(GuiBuildParameter {
+                            name: String::new(),
+                            values: String::new(),
+                        });
+                    }
+                    if ui.button("Delete").clicked() {
+                        remove_override = Some(override_index);
+                    }
+                });
+
+                let mut remove_override_parameter = None;
+                for (parameter_index, parameter) in override_.parameters.iter_mut().enumerate() {
+                    ui.horizontal(|ui| {
+                        ui.add_sized(
+                            egui::vec2(140.0, 20.0),
+                            egui::TextEdit::singleline(&mut parameter.name).hint_text("current"),
+                        );
+                        ui.add_sized(
+                            egui::vec2(320.0, 20.0),
+                            egui::TextEdit::singleline(&mut parameter.values)
+                                .hint_text("100e-6 or linspace(50e-6, 200e-6, 4)"),
+                        );
+                        if ui.button("Delete").clicked() {
+                            remove_override_parameter = Some(parameter_index);
+                        }
+                    });
+                }
+                if let Some(parameter_index) = remove_override_parameter {
+                    override_.parameters.remove(parameter_index);
+                }
+            });
+        }
+        if let Some(index) = remove_override {
+            self.candidates.primitive_build_overrides.remove(index);
         }
     }
 
@@ -1201,6 +1516,35 @@ impl SstadexApp {
             self.active_document = ActiveDocument::Candidates;
             self.bottom_view = BottomView::Candidates;
         }
+    }
+
+    fn gui_primitive_build_instances(&self) -> Vec<GuiPrimitiveBuildInstanceSummary> {
+        let Some(catalog) = &self.catalog else {
+            return Vec::new();
+        };
+        let Some(document) = self.circuits.get(self.active_circuit) else {
+            return Vec::new();
+        };
+
+        document
+            .canvas_instances
+            .iter()
+            .filter_map(|instance| {
+                let primitive = catalog.get(&instance.primitive_name)?;
+                let build = primitive.build.as_ref()?;
+                Some(GuiPrimitiveBuildInstanceSummary {
+                    id: instance.id,
+                    name: exported_instance_name(instance),
+                    primitive: primitive.name.clone(),
+                    non_voltage_inputs: build
+                        .inputs
+                        .iter()
+                        .filter(|input| input.source.as_deref() != Some("port_voltage"))
+                        .map(|input| input.name.clone())
+                        .collect(),
+                })
+            })
+            .collect()
     }
 
     fn show_circuit_browser_item(&mut self, ui: &mut egui::Ui, index: usize) {
@@ -1901,6 +2245,13 @@ impl SstadexApp {
     fn save_flow_inputs(&mut self) -> String {
         self.save_active_circuit_document();
 
+        let Some(catalog) = &self.catalog else {
+            return "Cannot save flow inputs: primitive catalog is not loaded".to_string();
+        };
+        let Some(document) = self.circuits.get(self.active_circuit) else {
+            return "Cannot save flow inputs: no active macro document".to_string();
+        };
+
         let output_dir = std::env::temp_dir().join("sstadex-gui-mna");
         let macro_dir = output_dir.join("gui_macros");
         let testbench_path = output_dir.join("gui_testbenches.json");
@@ -1926,7 +2277,7 @@ impl SstadexApp {
             Ok(specs) => specs,
             Err(error) => return format!("Cannot save flow inputs: {error}"),
         };
-        let candidates = match gui_candidate_input(&self.candidates) {
+        let candidates = match gui_candidate_input(&self.candidates, document, catalog) {
             Ok(candidates) => candidates,
             Err(error) => return format!("Cannot save flow inputs: {error}"),
         };
@@ -2167,7 +2518,7 @@ impl SstadexApp {
             }
         };
 
-        if !(4..=7).contains(&project.version) {
+        if !(4..=8).contains(&project.version) {
             return format!(
                 "Cannot open project: unsupported GUI project version {}",
                 project.version
@@ -2187,7 +2538,7 @@ impl SstadexApp {
 
     fn gui_project(&self) -> GuiProject {
         GuiProject {
-            version: 7,
+            version: 8,
             active_circuit: self.active_circuit,
             circuits: self
                 .circuits
@@ -2505,10 +2856,19 @@ impl SstadexApp {
     }
 
     fn generate_gui_candidates(&mut self) -> String {
+        self.save_active_circuit_document();
+
+        let Some(catalog) = &self.catalog else {
+            return "Cannot generate candidates: primitive catalog is not loaded".to_string();
+        };
+        let Some(document) = self.circuits.get(self.active_circuit) else {
+            return "Cannot generate candidates: no active macro document".to_string();
+        };
+
         let output_dir = std::env::temp_dir().join("sstadex-gui-mna");
         let candidates_path = output_dir.join("gui_candidates.json");
 
-        let candidate_input = match gui_candidate_input(&self.candidates) {
+        let candidate_input = match gui_candidate_input(&self.candidates, document, catalog) {
             Ok(candidate_input) => candidate_input,
             Err(error) => return format!("Cannot generate candidates: {error}"),
         };
@@ -2528,16 +2888,18 @@ impl SstadexApp {
             Ok(candidates) => {
                 self.output_candidates = format_candidates_output(&candidates);
                 self.output_artifacts = format!(
-                    "Candidates: {}\nCandidate axes: {}\nGenerated candidate points: {}",
+                    "Candidates: {}\nCandidate axes: {}\nPrimitive candidate sets: {}\nGenerated candidate points: {}",
                     candidates_path.display(),
                     candidate_input.axes.len(),
+                    candidate_input.sets.len(),
                     candidates.len()
                 );
 
                 format!(
-                    "Generated {} candidate point(s)\n\nAxes: {}\nCandidates JSON: {}",
+                    "Generated {} candidate point(s)\n\nAxes: {}\nPrimitive sets: {}\nCandidates JSON: {}",
                     candidates.len(),
                     candidate_input.axes.len(),
+                    candidate_input.sets.len(),
                     candidates_path.display()
                 )
             }
@@ -2581,7 +2943,10 @@ impl SstadexApp {
             Ok(specs) => specs,
             Err(error) => return format!("Cannot evaluate specs: {error}"),
         };
-        let candidate_input = match gui_candidate_input(&self.candidates) {
+        let Some(document) = self.circuits.get(self.active_circuit) else {
+            return "Cannot evaluate specs: no active macro document".to_string();
+        };
+        let candidate_input = match gui_candidate_input(&self.candidates, document, catalog) {
             Ok(candidate_input) => candidate_input,
             Err(error) => return format!("Cannot evaluate specs: {error}"),
         };
@@ -3375,6 +3740,25 @@ impl GuiProjectCandidateDocument {
                 .iter()
                 .map(GuiProjectCandidateAxis::from_candidate_axis)
                 .collect(),
+            net_voltage_constraints: candidates
+                .net_voltage_constraints
+                .iter()
+                .map(GuiProjectNetVoltageConstraint::from_net_voltage_constraint)
+                .collect(),
+            global_build_parameters: candidates
+                .global_build_parameters
+                .iter()
+                .map(GuiProjectBuildParameter::from_build_parameter)
+                .collect(),
+            primitive_build_overrides: candidates
+                .primitive_build_overrides
+                .iter()
+                .map(GuiProjectPrimitiveBuildOverride::from_primitive_build_override)
+                .collect(),
+            python_path: candidates.python_path.clone(),
+            nmos_lut_path: candidates.nmos_lut_path.clone(),
+            pmos_lut_path: candidates.pmos_lut_path.clone(),
+            timing_output: candidates.timing_output,
         }
     }
 
@@ -3385,6 +3769,25 @@ impl GuiProjectCandidateDocument {
                 .into_iter()
                 .map(GuiProjectCandidateAxis::into_candidate_axis)
                 .collect(),
+            net_voltage_constraints: self
+                .net_voltage_constraints
+                .into_iter()
+                .map(GuiProjectNetVoltageConstraint::into_net_voltage_constraint)
+                .collect(),
+            global_build_parameters: self
+                .global_build_parameters
+                .into_iter()
+                .map(GuiProjectBuildParameter::into_build_parameter)
+                .collect(),
+            primitive_build_overrides: self
+                .primitive_build_overrides
+                .into_iter()
+                .map(GuiProjectPrimitiveBuildOverride::into_primitive_build_override)
+                .collect(),
+            python_path: defaulted_project_text(self.python_path, default_python_gmid_path()),
+            nmos_lut_path: defaulted_project_text(self.nmos_lut_path, default_nmos_lut_path()),
+            pmos_lut_path: defaulted_project_text(self.pmos_lut_path, default_pmos_lut_path()),
+            timing_output: self.timing_output,
         }
     }
 }
@@ -3401,6 +3804,62 @@ impl GuiProjectCandidateAxis {
         GuiCandidateAxis {
             name: self.name,
             values: self.values,
+        }
+    }
+}
+
+impl GuiProjectNetVoltageConstraint {
+    fn from_net_voltage_constraint(constraint: &GuiNetVoltageConstraint) -> Self {
+        Self {
+            net: constraint.net.clone(),
+            values: constraint.values.clone(),
+        }
+    }
+
+    fn into_net_voltage_constraint(self) -> GuiNetVoltageConstraint {
+        GuiNetVoltageConstraint {
+            net: self.net,
+            values: self.values,
+        }
+    }
+}
+
+impl GuiProjectBuildParameter {
+    fn from_build_parameter(parameter: &GuiBuildParameter) -> Self {
+        Self {
+            name: parameter.name.clone(),
+            values: parameter.values.clone(),
+        }
+    }
+
+    fn into_build_parameter(self) -> GuiBuildParameter {
+        GuiBuildParameter {
+            name: self.name,
+            values: self.values,
+        }
+    }
+}
+
+impl GuiProjectPrimitiveBuildOverride {
+    fn from_primitive_build_override(override_: &GuiPrimitiveBuildOverride) -> Self {
+        Self {
+            instance_id: override_.instance_id,
+            parameters: override_
+                .parameters
+                .iter()
+                .map(GuiProjectBuildParameter::from_build_parameter)
+                .collect(),
+        }
+    }
+
+    fn into_primitive_build_override(self) -> GuiPrimitiveBuildOverride {
+        GuiPrimitiveBuildOverride {
+            instance_id: self.instance_id,
+            parameters: self
+                .parameters
+                .into_iter()
+                .map(GuiProjectBuildParameter::into_build_parameter)
+                .collect(),
         }
     }
 }
@@ -3767,6 +4226,8 @@ fn gui_specs_to_exploration_specs(
 
 fn gui_candidate_input(
     candidates: &GuiCandidateDocument,
+    document: &GuiCircuitDocument,
+    catalog: &PrimitiveCatalog,
 ) -> Result<ExplorationCandidateInput, String> {
     let axes = candidates
         .axes
@@ -3774,12 +4235,346 @@ fn gui_candidate_input(
         .enumerate()
         .map(|(index, axis)| gui_candidate_axis(axis, index + 1))
         .collect::<Result<Vec<_>, _>>()?;
+    let sets = gui_primitive_candidate_sets(candidates, document, catalog)?;
 
     Ok(ExplorationCandidateInput {
         axes,
-        sets: Vec::new(),
+        sets,
         filters: Vec::new(),
     })
+}
+
+fn gui_primitive_candidate_sets(
+    candidates: &GuiCandidateDocument,
+    document: &GuiCircuitDocument,
+    catalog: &PrimitiveCatalog,
+) -> Result<Vec<CandidateSet>, String> {
+    let build_instances = document
+        .canvas_instances
+        .iter()
+        .filter_map(|instance| {
+            let primitive = catalog.get(&instance.primitive_name)?;
+            primitive.build.as_ref()?;
+            Some((instance, primitive))
+        })
+        .collect::<Vec<_>>();
+
+    if build_instances.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let net_index = CanvasNetIndex::from_document(document, catalog);
+    let voltage_constraints = gui_net_voltage_constraint_map(candidates)?;
+    let global_parameters = gui_build_parameter_map(
+        &candidates.global_build_parameters,
+        "global build parameter",
+    )?;
+    let backend = gui_python_gmid_backend(candidates)?;
+    let engine = PrimitiveBuildEngine::new(backend);
+    let mut sets = Vec::with_capacity(build_instances.len());
+
+    for (instance, primitive) in build_instances {
+        let input = gui_primitive_build_input(
+            candidates,
+            instance,
+            primitive,
+            &net_index,
+            &voltage_constraints,
+            &global_parameters,
+        )?;
+        let instance_name = exported_instance_name(instance);
+        let set = engine
+            .build_candidate_set_for_primitive(primitive, &instance_name, &input)
+            .map_err(|error| {
+                format!(
+                    "failed to build candidates for instance '{}' ({})\n\n{error:?}",
+                    instance_name, primitive.name
+                )
+            })?;
+        sets.push(set);
+    }
+
+    Ok(sets)
+}
+
+fn gui_primitive_build_input(
+    candidates: &GuiCandidateDocument,
+    instance: &CanvasInstance,
+    primitive: &PrimitiveManifest,
+    net_index: &CanvasNetIndex,
+    voltage_constraints: &HashMap<String, PrimitiveBuildValue>,
+    global_parameters: &HashMap<String, PrimitiveBuildValue>,
+) -> Result<PrimitiveBuildInput, String> {
+    let Some(build) = &primitive.build else {
+        return Err(format!("primitive '{}' has no build spec", primitive.name));
+    };
+    let override_parameters = candidates
+        .primitive_build_overrides
+        .iter()
+        .find(|override_| override_.instance_id == instance.id)
+        .map(|override_| {
+            gui_build_parameter_map(
+                &override_.parameters,
+                &format!(
+                    "override for instance '{}'",
+                    exported_instance_name(instance)
+                ),
+            )
+        })
+        .transpose()?
+        .unwrap_or_default();
+
+    let mut values = HashMap::new();
+    for input in &build.inputs {
+        if input.source.as_deref() == Some("port_voltage") {
+            let endpoint = CanvasEndpoint::PrimitivePin {
+                instance_id: instance.id,
+                pin_name: input.name.clone(),
+            };
+            let net = net_index.net_for_endpoint(&endpoint).ok_or_else(|| {
+                format!(
+                    "instance '{}' input '{}' is a port_voltage but the pin is not known in the active canvas",
+                    exported_instance_name(instance),
+                    input.name
+                )
+            })?;
+            let value = voltage_constraints.get(net).ok_or_else(|| {
+                format!(
+                    "missing voltage constraint for net '{}' used by instance '{}' input '{}'",
+                    net,
+                    exported_instance_name(instance),
+                    input.name
+                )
+            })?;
+            values.insert(input.name.clone(), value.clone());
+            continue;
+        }
+
+        if let Some(value) = override_parameters.get(&input.name) {
+            values.insert(input.name.clone(), value.clone());
+        } else if let Some(value) = global_parameters.get(&input.name) {
+            values.insert(input.name.clone(), value.clone());
+        } else if input.required {
+            return Err(format!(
+                "missing build parameter '{}' for instance '{}'; define it globally or as an instance override",
+                input.name,
+                exported_instance_name(instance)
+            ));
+        }
+    }
+
+    let mut build_input = PrimitiveBuildInput::new(values);
+    if let Some(lut_config) = primitive.lut_config.clone() {
+        build_input = build_input.with_lut_config(lut_config);
+    }
+    Ok(build_input)
+}
+
+fn gui_python_gmid_backend(
+    candidates: &GuiCandidateDocument,
+) -> Result<PythonGmidLutBackend, String> {
+    let python = required_text(
+        &candidates.python_path,
+        "Python GMID backend",
+        "python path",
+    )?;
+    let nmos = required_text(
+        &candidates.nmos_lut_path,
+        "Python GMID backend",
+        "NMOS LUT path",
+    )?;
+    let pmos = required_text(
+        &candidates.pmos_lut_path,
+        "Python GMID backend",
+        "PMOS LUT path",
+    )?;
+    Ok(PythonGmidLutBackend::with_default_helper(
+        PathBuf::from(python),
+        HashMap::from([
+            ("nmos".to_string(), PathBuf::from(nmos)),
+            ("pmos".to_string(), PathBuf::from(pmos)),
+        ]),
+    )
+    .with_timing_output(candidates.timing_output))
+}
+
+fn gui_net_voltage_constraint_map(
+    candidates: &GuiCandidateDocument,
+) -> Result<HashMap<String, PrimitiveBuildValue>, String> {
+    let mut values = HashMap::new();
+    for (index, constraint) in candidates.net_voltage_constraints.iter().enumerate() {
+        let context = format!("net voltage constraint {}", index + 1);
+        let net = required_text(&constraint.net, &context, "net")?;
+        if values.contains_key(&net) {
+            return Err(format!("duplicate voltage constraint for net '{net}'"));
+        }
+        values.insert(
+            net,
+            primitive_build_value_from_text(
+                &constraint.values,
+                PrimitiveBuildInputKind::Vector,
+                &context,
+            )?,
+        );
+    }
+    Ok(values)
+}
+
+fn gui_build_parameter_map(
+    parameters: &[GuiBuildParameter],
+    owner: &str,
+) -> Result<HashMap<String, PrimitiveBuildValue>, String> {
+    let mut values = HashMap::new();
+    for (index, parameter) in parameters.iter().enumerate() {
+        let context = format!("{owner} {}", index + 1);
+        let name = required_text(&parameter.name, &context, "name")?;
+        if values.contains_key(&name) {
+            return Err(format!("duplicate build parameter '{name}' in {owner}"));
+        }
+        values.insert(
+            name,
+            primitive_build_value_from_text(
+                &parameter.values,
+                PrimitiveBuildInputKind::Scalar,
+                &context,
+            )?,
+        );
+    }
+    Ok(values)
+}
+
+fn primitive_build_value_from_text(
+    input: &str,
+    default_kind: PrimitiveBuildInputKind,
+    context: &str,
+) -> Result<PrimitiveBuildValue, String> {
+    let values = parse_candidate_values(input, context)?;
+    if default_kind == PrimitiveBuildInputKind::Scalar && values.len() == 1 {
+        Ok(PrimitiveBuildValue::Scalar(values[0]))
+    } else {
+        Ok(PrimitiveBuildValue::Vector(values))
+    }
+}
+
+#[derive(Clone)]
+struct CanvasNetIndex {
+    nets: Vec<CanvasNet>,
+    endpoint_to_net: HashMap<CanvasEndpoint, String>,
+}
+
+#[derive(Clone)]
+struct CanvasNet {
+    name: String,
+}
+
+impl CanvasNetIndex {
+    fn from_document(document: &GuiCircuitDocument, catalog: &PrimitiveCatalog) -> Self {
+        let mut nets = Vec::new();
+        let mut endpoint_to_net = HashMap::new();
+        let mut seen_endpoints = HashMap::new();
+
+        for (net_index, endpoints) in connected_endpoint_groups(&document.connections)
+            .into_iter()
+            .enumerate()
+        {
+            let name = canvas_net_name(&endpoints, &document.label_pins, &document.macro_ports)
+                .unwrap_or_else(|| format!("N{}", net_index + 1));
+            for endpoint in &endpoints {
+                endpoint_to_net.insert(endpoint.clone(), name.clone());
+                seen_endpoints.insert(endpoint.clone(), true);
+            }
+            nets.push(CanvasNet { name });
+        }
+
+        for endpoint in document_canvas_endpoints(document, catalog) {
+            if seen_endpoints.contains_key(&endpoint) {
+                continue;
+            }
+            let name = isolated_endpoint_net_name(&endpoint, document);
+            endpoint_to_net.insert(endpoint.clone(), name.clone());
+            seen_endpoints.insert(endpoint.clone(), true);
+            nets.push(CanvasNet { name });
+        }
+
+        nets.sort_by(|left, right| left.name.cmp(&right.name));
+        Self {
+            nets,
+            endpoint_to_net,
+        }
+    }
+
+    fn net_for_endpoint(&self, endpoint: &CanvasEndpoint) -> Option<&str> {
+        self.endpoint_to_net.get(endpoint).map(String::as_str)
+    }
+
+    fn nets(&self) -> &[CanvasNet] {
+        &self.nets
+    }
+}
+
+fn document_canvas_endpoints(
+    document: &GuiCircuitDocument,
+    catalog: &PrimitiveCatalog,
+) -> Vec<CanvasEndpoint> {
+    let mut endpoints = Vec::new();
+    for instance in &document.canvas_instances {
+        if let Some(primitive) = catalog.get(&instance.primitive_name) {
+            for pin in &primitive.pins {
+                endpoints.push(CanvasEndpoint::PrimitivePin {
+                    instance_id: instance.id,
+                    pin_name: pin.name.clone(),
+                });
+            }
+        }
+    }
+    endpoints.extend(
+        document
+            .label_pins
+            .iter()
+            .map(|label_pin| CanvasEndpoint::LabelPin {
+                label_id: label_pin.id,
+            }),
+    );
+    endpoints.extend(
+        document
+            .macro_ports
+            .iter()
+            .map(|macro_port| CanvasEndpoint::MacroPort {
+                port_id: macro_port.id,
+            }),
+    );
+    endpoints
+}
+
+fn isolated_endpoint_net_name(endpoint: &CanvasEndpoint, document: &GuiCircuitDocument) -> String {
+    match endpoint {
+        CanvasEndpoint::PrimitivePin {
+            instance_id,
+            pin_name,
+        } => {
+            let instance_name = document
+                .canvas_instances
+                .iter()
+                .find(|instance| instance.id == *instance_id)
+                .map(exported_instance_name)
+                .unwrap_or_else(|| circuit_instance_id(*instance_id));
+            format!("{instance_name}.{pin_name}")
+        }
+        CanvasEndpoint::LabelPin { label_id } => document
+            .label_pins
+            .iter()
+            .find(|label_pin| label_pin.id == *label_id)
+            .map(|label_pin| label_pin.name.trim().to_string())
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| format!("label_{label_id}")),
+        CanvasEndpoint::MacroPort { port_id } => document
+            .macro_ports
+            .iter()
+            .find(|macro_port| macro_port.id == *port_id)
+            .map(|macro_port| macro_port.name.trim().to_string())
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| format!("port_{port_id}")),
+    }
 }
 
 fn gui_candidate_axis(axis: &GuiCandidateAxis, axis_index: usize) -> Result<CandidateAxis, String> {
@@ -5204,6 +5999,26 @@ fn default_project_path() -> PathBuf {
     default_project_dir().join("gui_project.json")
 }
 
+fn default_python_gmid_path() -> String {
+    ".venv-sstadex/bin/python".to_string()
+}
+
+fn default_nmos_lut_path() -> String {
+    "LUTs/ihp-sg13g2/lv_5w_nmos.npz".to_string()
+}
+
+fn default_pmos_lut_path() -> String {
+    "LUTs/ihp-sg13g2/lv_5w_pmos.npz".to_string()
+}
+
+fn defaulted_project_text(value: String, default_value: String) -> String {
+    if value.trim().is_empty() {
+        default_value
+    } else {
+        value
+    }
+}
+
 fn default_dut_position() -> egui::Pos2 {
     egui::pos2(360.0, 36.0)
 }
@@ -5335,6 +6150,223 @@ fn display_optional_name(name: &str) -> &str {
         "(none)"
     } else {
         name
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use libsstadex::primitive::build::{
+        BuildExpression, PrimitiveBuildInputSpec, PrimitiveBuildSpec, SweepMode,
+    };
+    use libsstadex::primitive::manifest::{Pin, PrimitiveFiles, PrimitiveShape, PrimitiveUi};
+
+    #[test]
+    fn primitive_build_input_uses_shared_net_voltage_constraint() {
+        let primitive = primitive_manifest_with_build();
+        let instance = CanvasInstance {
+            id: 1,
+            instance_name: "xcs".to_string(),
+            primitive_name: primitive.name.clone(),
+            position: egui::pos2(0.0, 0.0),
+            orientation: GuiOrientation::R0,
+        };
+        let document = GuiCircuitDocument {
+            name: "macro".to_string(),
+            subckt_name: "macro".to_string(),
+            ports: Vec::new(),
+            canvas_instances: vec![instance.clone()],
+            label_pins: vec![CanvasLabelPin {
+                id: 1,
+                name: "VIN".to_string(),
+                position: egui::pos2(0.0, 0.0),
+            }],
+            macro_ports: Vec::new(),
+            connections: vec![CanvasConnection {
+                from: CanvasEndpoint::PrimitivePin {
+                    instance_id: 1,
+                    pin_name: "VIN".to_string(),
+                },
+                to: CanvasEndpoint::LabelPin { label_id: 1 },
+            }],
+            next_instance_id: 2,
+            next_label_pin_id: 2,
+            next_macro_port_id: 1,
+        };
+        let catalog = catalog_with_primitive(primitive.clone());
+        let net_index = CanvasNetIndex::from_document(&document, &catalog);
+        let voltage_constraints = HashMap::from([(
+            "VIN".to_string(),
+            PrimitiveBuildValue::Vector(vec![0.4, 0.6]),
+        )]);
+        let global_parameters =
+            HashMap::from([("current".to_string(), PrimitiveBuildValue::Scalar(100e-6))]);
+
+        let input = gui_primitive_build_input(
+            &GuiCandidateDocument::default(),
+            &instance,
+            &primitive,
+            &net_index,
+            &voltage_constraints,
+            &global_parameters,
+        )
+        .unwrap();
+
+        assert_eq!(
+            input.values.get("VIN"),
+            Some(&PrimitiveBuildValue::Vector(vec![0.4, 0.6]))
+        );
+        assert_eq!(
+            input.values.get("current"),
+            Some(&PrimitiveBuildValue::Scalar(100e-6))
+        );
+    }
+
+    #[test]
+    fn primitive_build_input_prefers_instance_override_over_global_parameter() {
+        let primitive = primitive_manifest_with_build();
+        let instance = CanvasInstance {
+            id: 7,
+            instance_name: "x7".to_string(),
+            primitive_name: primitive.name.clone(),
+            position: egui::pos2(0.0, 0.0),
+            orientation: GuiOrientation::R0,
+        };
+        let document = GuiCircuitDocument {
+            name: "macro".to_string(),
+            subckt_name: "macro".to_string(),
+            ports: Vec::new(),
+            canvas_instances: vec![instance.clone()],
+            label_pins: Vec::new(),
+            macro_ports: Vec::new(),
+            connections: Vec::new(),
+            next_instance_id: 8,
+            next_label_pin_id: 1,
+            next_macro_port_id: 1,
+        };
+        let catalog = catalog_with_primitive(primitive.clone());
+        let net_index = CanvasNetIndex::from_document(&document, &catalog);
+        let voltage_constraints =
+            HashMap::from([("x7.VIN".to_string(), PrimitiveBuildValue::Vector(vec![0.5]))]);
+        let global_parameters =
+            HashMap::from([("current".to_string(), PrimitiveBuildValue::Scalar(100e-6))]);
+        let candidates = GuiCandidateDocument {
+            primitive_build_overrides: vec![GuiPrimitiveBuildOverride {
+                instance_id: 7,
+                parameters: vec![GuiBuildParameter {
+                    name: "current".to_string(),
+                    values: "250e-6".to_string(),
+                }],
+            }],
+            ..GuiCandidateDocument::default()
+        };
+
+        let input = gui_primitive_build_input(
+            &candidates,
+            &instance,
+            &primitive,
+            &net_index,
+            &voltage_constraints,
+            &global_parameters,
+        )
+        .unwrap();
+
+        assert_eq!(
+            input.values.get("current"),
+            Some(&PrimitiveBuildValue::Scalar(250e-6))
+        );
+    }
+
+    #[test]
+    fn project_candidate_document_roundtrips_declarative_build_config() {
+        let candidates = GuiCandidateDocument {
+            net_voltage_constraints: vec![GuiNetVoltageConstraint {
+                net: "VIN".to_string(),
+                values: "linspace(0.4, 0.8, 3)".to_string(),
+            }],
+            global_build_parameters: vec![GuiBuildParameter {
+                name: "current".to_string(),
+                values: "100e-6".to_string(),
+            }],
+            primitive_build_overrides: vec![GuiPrimitiveBuildOverride {
+                instance_id: 3,
+                parameters: vec![GuiBuildParameter {
+                    name: "current".to_string(),
+                    values: "200e-6".to_string(),
+                }],
+            }],
+            python_path: "python".to_string(),
+            nmos_lut_path: "nmos.npz".to_string(),
+            pmos_lut_path: "pmos.npz".to_string(),
+            timing_output: false,
+            ..GuiCandidateDocument::default()
+        };
+
+        let restored = GuiProjectCandidateDocument::from_candidate_document(&candidates)
+            .into_candidate_document();
+
+        assert_eq!(restored.net_voltage_constraints[0].net, "VIN");
+        assert_eq!(restored.global_build_parameters[0].name, "current");
+        assert_eq!(restored.primitive_build_overrides[0].instance_id, 3);
+        assert_eq!(restored.python_path, "python");
+        assert_eq!(restored.nmos_lut_path, "nmos.npz");
+        assert_eq!(restored.pmos_lut_path, "pmos.npz");
+        assert!(!restored.timing_output);
+    }
+
+    fn catalog_with_primitive(primitive: PrimitiveManifest) -> PrimitiveCatalog {
+        let mut catalog = PrimitiveCatalog::new();
+        catalog.register(primitive);
+        catalog
+    }
+
+    fn primitive_manifest_with_build() -> PrimitiveManifest {
+        PrimitiveManifest {
+            name: "primitive".to_string(),
+            version: "1.0".to_string(),
+            description: None,
+            subckt_name: "primitive".to_string(),
+            pins: vec![Pin {
+                name: "VIN".to_string(),
+                role: PinRole::Input,
+            }],
+            files: PrimitiveFiles {
+                netlist: "netlist.spice".to_string(),
+                build: None,
+                symbol: None,
+            },
+            ui: PrimitiveUi {
+                shape: PrimitiveShape::Box,
+                symbol: None,
+            },
+            small_signal: None,
+            transistor_type: None,
+            layout_params: None,
+            lut_config: None,
+            build: Some(PrimitiveBuildSpec {
+                inputs: vec![
+                    PrimitiveBuildInputSpec {
+                        name: "current".to_string(),
+                        kind: PrimitiveBuildInputKind::Scalar,
+                        required: true,
+                        source: None,
+                    },
+                    PrimitiveBuildInputSpec {
+                        name: "VIN".to_string(),
+                        kind: PrimitiveBuildInputKind::Vector,
+                        required: true,
+                        source: Some("port_voltage".to_string()),
+                    },
+                ],
+                sweep_mode: SweepMode::Aligned,
+                derived: Vec::new(),
+                lut: Vec::new(),
+                columns: vec![BuildExpression {
+                    name: "gm".to_string(),
+                    expr: "current".to_string(),
+                }],
+            }),
+        }
     }
 }
 
