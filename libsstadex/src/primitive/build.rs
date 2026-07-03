@@ -373,7 +373,7 @@ fn default_python_gmid_helper() -> PathBuf {
 }
 
 fn validate_python_gmid_backend_paths(backend: &PythonGmidLutBackend) -> Result<(), String> {
-    if !backend.python.exists() {
+    if !is_path_search_executable(&backend.python) && !backend.python.exists() {
         return Err(format!(
             "python executable does not exist: {}",
             backend.python.display()
@@ -401,6 +401,10 @@ fn validate_python_gmid_backend_paths(backend: &PythonGmidLutBackend) -> Result<
     }
 
     Ok(())
+}
+
+fn is_path_search_executable(path: &Path) -> bool {
+    path.file_name().is_some() && path.components().count() == 1
 }
 
 pub struct PrimitiveBuildEngine<B> {
@@ -1164,6 +1168,23 @@ mod tests {
             .unwrap();
 
         assert_eq!(output.columns[0].values, vec![3.0e-6, 4.0e-6]);
+    }
+
+    #[test]
+    fn python_gmid_backend_allows_python_from_path() {
+        assert!(is_path_search_executable(Path::new("python")));
+        assert!(!is_path_search_executable(Path::new(".venv/bin/python")));
+
+        let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let lut_files = HashMap::from([(
+            "nmos".to_string(),
+            workspace_root.join("LUTs/ihp-sg13g2/lv_5w_nmos.npz"),
+        )]);
+        let backend = PythonGmidLutBackend::with_default_helper("python", lut_files);
+
+        if backend.lut_files()["nmos"].exists() {
+            assert!(validate_python_gmid_backend_paths(&backend).is_ok());
+        }
     }
 
     #[test]

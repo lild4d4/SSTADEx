@@ -3784,7 +3784,7 @@ impl GuiProjectCandidateDocument {
                 .into_iter()
                 .map(GuiProjectPrimitiveBuildOverride::into_primitive_build_override)
                 .collect(),
-            python_path: defaulted_project_text(self.python_path, default_python_gmid_path()),
+            python_path: defaulted_python_gmid_path(self.python_path),
             nmos_lut_path: defaulted_project_text(self.nmos_lut_path, default_nmos_lut_path()),
             pmos_lut_path: defaulted_project_text(self.pmos_lut_path, default_pmos_lut_path()),
             timing_output: self.timing_output,
@@ -6001,7 +6001,11 @@ fn default_project_path() -> PathBuf {
 }
 
 fn default_python_gmid_path() -> String {
-    ".venv-sstadex/bin/python".to_string()
+    "python".to_string()
+}
+
+fn legacy_python_gmid_path() -> &'static str {
+    ".venv-sstadex/bin/python"
 }
 
 fn default_nmos_lut_path() -> String {
@@ -6036,6 +6040,14 @@ fn resolve_workspace_relative_path(path: &str) -> PathBuf {
 fn defaulted_project_text(value: String, default_value: String) -> String {
     if value.trim().is_empty() {
         default_value
+    } else {
+        value
+    }
+}
+
+fn defaulted_python_gmid_path(value: String) -> String {
+    if value.trim().is_empty() || value.trim() == legacy_python_gmid_path() {
+        default_python_gmid_path()
     } else {
         value
     }
