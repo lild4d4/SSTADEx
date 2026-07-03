@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fmt::Write as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use eframe::egui;
 use libsstadex::analysis::{
@@ -4388,12 +4388,13 @@ fn gui_python_gmid_backend(
         "Python GMID backend",
         "PMOS LUT path",
     )?;
+    let python = resolve_workspace_relative_path(&python);
+    let nmos = resolve_workspace_relative_path(&nmos);
+    let pmos = resolve_workspace_relative_path(&pmos);
+
     Ok(PythonGmidLutBackend::with_default_helper(
-        PathBuf::from(python),
-        HashMap::from([
-            ("nmos".to_string(), PathBuf::from(nmos)),
-            ("pmos".to_string(), PathBuf::from(pmos)),
-        ]),
+        python,
+        HashMap::from([("nmos".to_string(), nmos), ("pmos".to_string(), pmos)]),
     )
     .with_timing_output(candidates.timing_output))
 }
@@ -6011,6 +6012,27 @@ fn default_pmos_lut_path() -> String {
     "LUTs/ihp-sg13g2/lv_5w_pmos.npz".to_string()
 }
 
+fn workspace_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(PathBuf::from)
+        .unwrap_or_else(default_project_dir)
+}
+
+fn resolve_workspace_relative_path(path: &str) -> PathBuf {
+    let candidate = PathBuf::from(path);
+    if candidate.is_absolute() || candidate.exists() {
+        return candidate;
+    }
+
+    let workspace_candidate = workspace_root().join(path);
+    if workspace_candidate.exists() {
+        workspace_candidate
+    } else {
+        candidate
+    }
+}
+
 fn defaulted_project_text(value: String, default_value: String) -> String {
     if value.trim().is_empty() {
         default_value
@@ -6312,6 +6334,13 @@ mod tests {
         assert_eq!(restored.nmos_lut_path, "nmos.npz");
         assert_eq!(restored.pmos_lut_path, "pmos.npz");
         assert!(!restored.timing_output);
+    }
+
+    #[test]
+    fn resolves_relative_gmid_paths_against_workspace_root() {
+        let resolved = resolve_workspace_relative_path("libsstadex/Cargo.toml");
+
+        assert_eq!(resolved, workspace_root().join("libsstadex/Cargo.toml"));
     }
 
     fn catalog_with_primitive(primitive: PrimitiveManifest) -> PrimitiveCatalog {
