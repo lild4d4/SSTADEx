@@ -23,15 +23,15 @@
     }
   ],
   "columns": [
-    { "name": "length", "expr": "lut.m1.length" },
-    { "name": "width", "expr": "id_m1 / lut.m1.jd" },
-    { "name": "gm", "expr": "lut.m1.gmid * id_m1" },
+    { "name": "length__m1", "expr": "lut.m1.length" },
+    { "name": "width__m1", "expr": "id_m1 / lut.m1.jd" },
+    { "name": "gm__m1", "expr": "lut.m1.gmid * id_m1" },
     { "name": "gdsid", "expr": "lut.m1.gds / lut.m1.id" },
-    { "name": "gds", "expr": "gdsid * id_m1" },
-    { "name": "Ro", "expr": "1 / gds" },
-    { "name": "cgg", "expr": "width * lut.m1.cgg" },
-    { "name": "cgs", "expr": "width * lut.m1.cgs" },
-    { "name": "cgd", "expr": "width * lut.m1.cgd" },
+    { "name": "gds__m1", "expr": "gdsid * id_m1" },
+    { "name": "ro__m1", "expr": "1 / gds__m1" },
+    { "name": "cgg__m1", "expr": "width__m1 * lut.m1.cgg" },
+    { "name": "cgs__m1", "expr": "width__m1 * lut.m1.cgs" },
+    { "name": "cgd__m1", "expr": "width__m1 * lut.m1.cgd" },
     { "name": "vdsat", "expr": "lut.m1.vdsat" }
   ]
 }

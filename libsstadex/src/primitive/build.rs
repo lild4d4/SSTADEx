@@ -7,9 +7,10 @@ use std::time::Instant;
 use serde::{Deserialize, Serialize};
 
 use crate::exploration::candidate::{
-    CandidateSet, CandidateSetBuildError, candidate_set_from_prefixed_columns,
+    CandidateSet, CandidateSetBuildError, candidate_column_name, candidate_set_from_columns,
 };
 use crate::exploration::table::ExplorationColumn;
+use crate::netlist::small_signal_param_name;
 use crate::primitive::manifest::PrimitiveManifest;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -118,8 +119,26 @@ impl PrimitiveBuildOutput {
         &self,
         instance_name: &str,
     ) -> Result<CandidateSet, CandidateSetBuildError> {
-        candidate_set_from_prefixed_columns(instance_name, instance_name, &self.columns)
+        let columns = self
+            .columns
+            .iter()
+            .map(|column| ExplorationColumn {
+                name: primitive_build_candidate_column_name(instance_name, &column.name),
+                values: column.values.clone(),
+            })
+            .collect::<Vec<_>>();
+        candidate_set_from_columns(instance_name, &columns)
     }
+}
+
+fn primitive_build_candidate_column_name(instance_name: &str, column_name: &str) -> String {
+    if let Some((param, branch)) = column_name.split_once("__") {
+        if !param.is_empty() && !branch.is_empty() && !branch.contains("__") {
+            return small_signal_param_name(param, instance_name, branch);
+        }
+    }
+
+    candidate_column_name(instance_name, column_name)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1230,14 +1249,19 @@ mod tests {
     fn output_converts_to_prefixed_candidate_set() {
         let output = PrimitiveBuildOutput {
             row_count: 2,
-            columns: vec![ExplorationColumn::new("gm__m1", vec![1.0, 2.0])],
+            columns: vec![
+                ExplorationColumn::new("gm__m1", vec![1.0, 2.0]),
+                ExplorationColumn::new("width", vec![3.0, 4.0]),
+            ],
         };
 
         let candidates = output.to_candidate_set("xdp").unwrap();
 
         assert_eq!(candidates.name, "xdp");
-        assert_eq!(candidates.points[0].get("xdp.gm__m1"), Some(1.0));
-        assert_eq!(candidates.points[1].get("xdp.gm__m1"), Some(2.0));
+        assert_eq!(candidates.points[0].get("gm__xdp__m1"), Some(1.0));
+        assert_eq!(candidates.points[1].get("gm__xdp__m1"), Some(2.0));
+        assert_eq!(candidates.points[0].get("xdp.width"), Some(3.0));
+        assert_eq!(candidates.points[1].get("xdp.width"), Some(4.0));
     }
 
     #[test]
