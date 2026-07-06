@@ -2,7 +2,11 @@ use std::{collections::HashMap, path::Path};
 
 use libsstadex::{catalog::load_primitive_catalog, circuit::load_circuit, exploration::{ExplorationSpec, PreparedSpec, PreparedSpecSource, RangeCondition, SpecOutput, SpecParameter, SpecSource, TestbenchElement, TestbenchSpec, prepare_transfer_function_spec, run_prepared_expression_flow, shared_node_filter, build_filtered_candidates, CandidatePoint}, primitive::build::{PrimitiveBuildEngine, PrimitiveBuildInput, PrimitiveBuildValue, PythonGmidLutBackend}};
 
-const VDD: f64 = 1.5;
+const VDD: f64 = 1.2;
+const VIN: f64 = 0.9;
+const VOUT: f64 = 1.0;
+
+
 const CURRENT: f64 = 20.0e-6;
 const VINP_START: f64 = 0.55;
 const VINP_STOP: f64 = 0.75;
@@ -31,14 +35,14 @@ fn main() -> Result<(), String> {
     let simplediffpair_input = PrimitiveBuildInput::new(HashMap::from([
         ("current".to_string(), PrimitiveBuildValue::Scalar(CURRENT)),
         ("VINP".to_string(), PrimitiveBuildValue::Vector(linspace(VINP_START, VINP_STOP, POINTS))),
-        ("VOUTP".to_string(), PrimitiveBuildValue::Vector(linspace(VOUTP_START, VOUTP_STOP, POINTS))),
+        ("VOUTP".to_string(), PrimitiveBuildValue::Scalar(VOUT)),
         ("VTAIL".to_string(), PrimitiveBuildValue::Vector(vec![VTAIL])),
     ]));    
     
     let simplecurrentmirror_input = PrimitiveBuildInput::new(HashMap::from([
         ("current".to_string(), PrimitiveBuildValue::Scalar(CURRENT)),
-        ("VINP".to_string(), PrimitiveBuildValue::Vector(linspace(VOUTP_START, VOUTP_STOP, POINTS))),
-        ("VOUTP".to_string(), PrimitiveBuildValue::Vector(linspace(VOUTP_START, VOUTP_STOP, POINTS))),
+        ("VINP".to_string(), PrimitiveBuildValue::Scalar(VOUT)),
+        ("VOUTP".to_string(), PrimitiveBuildValue::Scalar(VOUT)),
         ("VDD".to_string(), PrimitiveBuildValue::Scalar(VDD)),
     ]));
 
@@ -51,37 +55,31 @@ fn main() -> Result<(), String> {
     let gain_spec = gain_spec();
     let prepared_gain = prepare_transfer_function_spec(&gain_spec, &circuit, &catalog, &output_dir).map_err(|error| format!("{error:?}"))?;
     
-    let filters = vec![shared_node_filter(vec!["xdp.vout", "xcm.voutp"])];
+    //let filters = vec![
+    //    shared_node_filter(vec!["xdp.voutp", "xcm.voutp"]),
+    //    shared_node_filter(vec!["xdp.voutp", "xcm.vinp"]),
+    //];
 
-    let table = run_prepared_expression_flow(&[], &[simplediffpair_candidate_set.clone(), simplecurrentmirror_candidate_set.clone()], &[], &[prepared_gain.clone()]).map_err(|error| format!("{error:?}"))?;
-
-    let debug_candidates = build_filtered_candidates(
-        &[],
-        &[simplediffpair_candidate_set.clone(), simplecurrentmirror_candidate_set.clone()],
-        &[],
-    )
-    .map_err(|error| format!("{error:?}"))?;
-    let debug_columns = CandidatePoint::to_columns(&debug_candidates);
-
-    println!("available columns before filters:");
-    for column in &debug_columns {
-        println!("  {}", column.name);
-    }
+    let table = run_prepared_expression_flow(&[], &[simplediffpair_candidate_set, simplecurrentmirror_candidate_set], &[], &[prepared_gain.clone()]).map_err(|error| format!("{error:?}"))?;
 
     println!("Prepared gain TF:");
     println!("{}", prepared_expression(&prepared_gain));
     println!();
     println!("OTA 1-stage exploration rows:");
 
-    //for row in 0..table.row_count {
-    //    let gain = table.column("gain_1stage").unwrap().values[row];
-    //    let gain_db = 20.0 * gain.abs().log10();
-    //    //let gbw = 1.0 / (2.0 * std::f64::consts::PI * rout.abs() * CL);
+    for row in 0..table.row_count {
+        let gain = table.column("gain_1stage").unwrap().values[row];
+        let gain_db = 20.0 * gain.abs().log10();
+        let xdp_vinp = table.column("xdp.vinp").unwrap().values[row];
+        let xdp_voutp = table.column("xdp.voutp").unwrap().values[row];
+        let xcm_voutp = table.column("xcm.voutp").unwrap().values[row];
+        let xcm_vinp = table.column("xcm.vinp").unwrap().values[row];
+        //let gbw = 1.0 / (2.0 * std::f64::consts::PI * rout.abs() * CL);
 
-    //    println!(
-    //        "row={row} gain={gain:.6e} gain_db={gain_db:.3}"
-    //    );
-    //}
+        println!(
+            "row={row} xdp.vinp={xdp_vinp:.3} xdp.voutp={xdp_voutp:.3} xcm.voutp={xcm_voutp:.3} xcm.vinp={xcm_vinp:.3} gain={gain:.6e} gain_db={gain_db:.3}"
+        );
+    }
 
     Ok(())
 
