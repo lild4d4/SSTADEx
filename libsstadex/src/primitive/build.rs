@@ -470,6 +470,8 @@ impl<B: LutBackend> PrimitiveBuildEngine<B> {
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let mut columns = columns;
+        columns.extend(exposed_input_columns(spec, &rows)?);
 
         Ok(PrimitiveBuildOutput {
             row_count: rows.len(),
@@ -500,6 +502,43 @@ impl<B: LutBackend> PrimitiveBuildEngine<B> {
             .to_candidate_set(instance_name)
             .map_err(PrimitiveBuildError::CandidateSet)
     }
+}
+
+fn exposed_input_columns(
+    spec: &PrimitiveBuildSpec,
+    rows: &[HashMap<String, f64>],
+) -> Result<Vec<ExplorationColumn>, PrimitiveBuildError> {
+    let existing_columns = spec
+        .columns
+        .iter()
+        .map(|column| column.name.as_str())
+        .collect::<HashSet<_>>();
+    let mut exposed = Vec::new();
+
+    for input in &spec.inputs {
+        if input.source.as_deref() != Some("port_voltage") {
+            continue;
+        }
+
+        let column_name = input.name.to_ascii_lowercase();
+        if existing_columns.contains(column_name.as_str()) {
+            continue;
+        }
+
+        let values = rows
+            .iter()
+            .map(|row| {
+                row.get(&input.name)
+                    .copied()
+                    .ok_or_else(|| PrimitiveBuildError::MissingSymbol {
+                        symbol: input.name.clone(),
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        exposed.push(ExplorationColumn::new(column_name, values));
+    }
+
+    Ok(exposed)
 }
 
 fn validate_required_inputs(
@@ -1262,6 +1301,41 @@ mod tests {
         assert_eq!(candidates.points[1].get("gm__xdp__m1"), Some(2.0));
         assert_eq!(candidates.points[0].get("xdp.width"), Some(3.0));
         assert_eq!(candidates.points[1].get("xdp.width"), Some(4.0));
+    }
+
+    #[test]
+    fn engine_exposes_port_voltage_inputs_as_candidate_columns() {
+        let primitive = primitive_with_build(PrimitiveBuildSpec {
+            inputs: vec![
+                input("current", PrimitiveBuildInputKind::Scalar),
+                PrimitiveBuildInputSpec {
+                    name: "VINP".to_string(),
+                    kind: PrimitiveBuildInputKind::Vector,
+                    required: true,
+                    source: Some("port_voltage".to_string()),
+                },
+            ],
+            sweep_mode: SweepMode::Aligned,
+            derived: Vec::new(),
+            lut: Vec::new(),
+            columns: vec![expr("gm__m1", "current * 10")],
+        });
+        let input = PrimitiveBuildInput::new(HashMap::from([
+            ("current".to_string(), PrimitiveBuildValue::Scalar(2.0)),
+            (
+                "VINP".to_string(),
+                PrimitiveBuildValue::Vector(vec![0.5, 0.7]),
+            ),
+        ]));
+
+        let candidates = PrimitiveBuildEngine::new(DeterministicLutBackend)
+            .build_candidate_set_for_primitive(&primitive, "xcm", &input)
+            .unwrap();
+
+        assert_eq!(candidates.points[0].get("gm__xcm__m1"), Some(20.0));
+        assert_eq!(candidates.points[0].get("xcm.vinp"), Some(0.5));
+        assert_eq!(candidates.points[1].get("xcm.vinp"), Some(0.7));
+        assert_eq!(candidates.points[0].get("xcm.current"), None);
     }
 
     #[test]
