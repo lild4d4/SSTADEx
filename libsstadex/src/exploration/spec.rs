@@ -119,6 +119,7 @@ pub struct TestbenchSpec {
     pub view: CircuitView,
     pub elements: Vec<TestbenchElement>,
     pub extra_body: Option<String>,
+    pub compact_outputs: Vec<CompactOutputBinding>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -135,6 +136,7 @@ impl TestbenchSpec {
             view: CircuitView::SmallSignal,
             elements: Vec::new(),
             extra_body: None,
+            compact_outputs: Vec::new(),
         }
     }
 
@@ -158,6 +160,16 @@ impl TestbenchSpec {
         self
     }
 
+    pub fn with_compact_output(
+        mut self,
+        source_column: impl Into<String>,
+        compact_parameter: impl Into<String>,
+    ) -> Self {
+        self.compact_outputs
+            .push(CompactOutputBinding::new(source_column, compact_parameter));
+        self
+    }
+
     pub fn body_lines(&self) -> Vec<String> {
         self.elements
             .iter()
@@ -175,6 +187,21 @@ impl TestbenchSpec {
         }
 
         body.join("\n")
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompactOutputBinding {
+    pub source_column: String,
+    pub compact_parameter: String,
+}
+
+impl CompactOutputBinding {
+    pub fn new(source_column: impl Into<String>, compact_parameter: impl Into<String>) -> Self {
+        Self {
+            source_column: source_column.into(),
+            compact_parameter: compact_parameter.into(),
+        }
     }
 }
 

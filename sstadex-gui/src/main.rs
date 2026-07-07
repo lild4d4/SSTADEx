@@ -4,20 +4,21 @@ use std::path::{Path, PathBuf};
 
 use eframe::egui;
 use libsstadex::analysis::{
-    CircuitMnaOutput, analyze_circuit_mna, analyze_macro_testbench_mna_with_mode,
+    analyze_circuit_mna, analyze_macro_testbench_mna_with_mode, CircuitMnaOutput,
 };
-use libsstadex::catalog::{PrimitiveCatalog, load_primitive_catalog};
-use libsstadex::circuit::{Circuit, Connection, Instance, PinRef, save_circuit};
+use libsstadex::catalog::{load_primitive_catalog, PrimitiveCatalog};
+use libsstadex::circuit::{save_circuit, Circuit, Connection, Instance, PinRef};
 use libsstadex::exploration::{
-    CandidateAxis, CandidatePoint, CandidateSet, ExplorationCandidateInput, ExplorationSpec,
+    build_filtered_candidates, prepare_macro_testbench_specs_with_mode,
+    run_prepared_expression_flow, save_exploration_candidates, save_exploration_specs,
+    save_testbenches, submacro_results_to_compact_candidate_set, CandidateAxis, CandidatePoint,
+    CandidateSet, CompactOutputBinding, ExplorationCandidateInput, ExplorationSpec,
     ExplorationTable, PreparedSpec, PreparedSpecSource, RangeCondition, SpecOutput, SpecParameter,
-    SpecSource, TestbenchElement, TestbenchSpec, build_filtered_candidates,
-    prepare_macro_testbench_specs_with_mode, run_prepared_expression_flow,
-    save_exploration_candidates, save_exploration_specs, save_testbenches,
+    SpecSource, TestbenchElement, TestbenchSpec,
 };
 use libsstadex::macro_model::{
-    MacroCatalog, MacroMetadata, MacroModel, MacroPort, MacroPortRole, MacroSmallSignalMode,
-    MacroSmallSignalModel, MacroSymbol, MacroSymbolPin, load_macro_catalog, save_macro_model,
+    load_macro_catalog, save_macro_model, MacroCatalog, MacroMetadata, MacroModel, MacroPort,
+    MacroPortRole, MacroSmallSignalMode, MacroSmallSignalModel, MacroSymbol, MacroSymbolPin,
 };
 use libsstadex::primitive::build::{
     PrimitiveBuildEngine, PrimitiveBuildInput, PrimitiveBuildInputKind, PrimitiveBuildValue,
@@ -88,6 +89,12 @@ struct GuiMacroWorkspace {
     output_candidates: String,
     output_results: String,
     output_results_table: Option<ExplorationTable>,
+}
+
+struct GuiWorkspaceEvaluation {
+    prepared_specs: Vec<PreparedSpec>,
+    candidate_input: ExplorationCandidateInput,
+    table: ExplorationTable,
 }
 
 #[derive(Clone)]
@@ -256,12 +263,19 @@ struct GuiTestbenchDocument {
     dut_macro: String,
     dut_position: egui::Pos2,
     small_signal_mode: GuiSmallSignalMode,
+    compact_outputs: Vec<GuiCompactOutputBinding>,
     elements: Vec<GuiTestbenchElement>,
     connections: Vec<GuiTestbenchConnection>,
     selected_endpoint: Option<TestbenchEndpoint>,
     pending_connection: Option<TestbenchEndpoint>,
     extra_body: String,
     next_element_id: usize,
+}
+
+#[derive(Clone, Default)]
+struct GuiCompactOutputBinding {
+    source_column: String,
+    compact_parameter: String,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -533,11 +547,19 @@ struct GuiProjectTestbench {
     small_signal_mode: GuiProjectSmallSignalMode,
     #[serde(default)]
     dut_position: Option<GuiProjectPosition>,
+    #[serde(default)]
+    compact_outputs: Vec<GuiProjectCompactOutputBinding>,
     elements: Vec<GuiProjectTestbenchElement>,
     #[serde(default)]
     connections: Vec<GuiProjectTestbenchConnection>,
     extra_body: String,
     next_element_id: usize,
+}
+
+#[derive(Clone, Serialize, Deserialize, Default)]
+struct GuiProjectCompactOutputBinding {
+    source_column: String,
+    compact_parameter: String,
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, Default)]
@@ -842,6 +864,10 @@ impl eframe::App for SstadexApp {
                 }
                 if ui.button("Evaluate specs").clicked() {
                     self.output_log = self.evaluate_gui_specs();
+                    self.bottom_view = BottomView::Results;
+                }
+                if ui.button("Evaluate hierarchy").clicked() {
+                    self.output_log = self.evaluate_gui_hierarchy();
                     self.bottom_view = BottomView::Results;
                 }
                 if ui
@@ -2349,6 +2375,7 @@ impl SstadexApp {
             dut_macro,
             dut_position: default_dut_position(),
             small_signal_mode: GuiSmallSignalMode::CompactWhenAvailable,
+            compact_outputs: Vec::new(),
             elements: Vec::new(),
             connections: Vec::new(),
             selected_endpoint: None,
@@ -3493,6 +3520,248 @@ impl SstadexApp {
         }
     }
 
+    fn evaluate_gui_hierarchy(&mut self) -> String {
+        self.save_active_circuit_document();
+        self.save_active_macro_workspace();
+        self.output_results_table = None;
+        self.save_active_macro_workspace();
+
+        let Some(catalog) = self.catalog.clone() else {
+            return "Cannot evaluate hierarchy: primitive catalog is not loaded".to_string();
+        };
+        let Some(top_document) = self.circuits.get(self.active_circuit) else {
+            return "Cannot evaluate hierarchy: no active macro document".to_string();
+        };
+
+        let top_name = top_document.name.clone();
+        let order = match self.hierarchy_evaluation_order(self.active_circuit) {
+            Ok(order) => order,
+            Err(error) => return format!("Cannot evaluate hierarchy: {error}"),
+        };
+        let macro_models = match self.build_macro_models() {
+            Ok(macro_models) => macro_models,
+            Err(error) => return format!("Cannot evaluate hierarchy: {error}"),
+        };
+        let macro_catalog = self.runtime_macro_catalog(macro_models);
+        let macro_blocks = self.available_macro_block_views();
+        let output_dir = std::env::temp_dir()
+            .join("sstadex-gui-mna")
+            .join("hierarchy");
+        let mut results_by_macro: HashMap<String, ExplorationTable> = HashMap::new();
+        let mut evaluated = Vec::new();
+
+        for macro_index in order {
+            let macro_name = self.circuits[macro_index].name.clone();
+            let child_sets =
+                match self.compact_candidate_sets_for_children(macro_index, &results_by_macro) {
+                    Ok(child_sets) => child_sets,
+                    Err(error) => {
+                        return format!("Evaluate hierarchy failed for '{macro_name}': {error}")
+                    }
+                };
+            let prepared_dir = output_dir.join(&macro_name).join("prepared_specs");
+            let evaluation = match self.evaluate_workspace_index(
+                macro_index,
+                &catalog,
+                &macro_catalog,
+                &macro_blocks,
+                &prepared_dir,
+                child_sets,
+            ) {
+                Ok(evaluation) => evaluation,
+                Err(error) => {
+                    return format!("Evaluate hierarchy failed for '{macro_name}': {error}")
+                }
+            };
+
+            if let Some(workspace) = self.macro_workspaces.get_mut(macro_index) {
+                workspace.output_prepared_specs =
+                    format_prepared_specs_output(&evaluation.prepared_specs);
+                workspace.output_candidates =
+                    format_hierarchy_candidates_output(&evaluation.candidate_input);
+                workspace.output_results = format_exploration_table_output(&evaluation.table);
+                workspace.output_results_table = Some(evaluation.table.clone());
+            }
+
+            results_by_macro.insert(macro_name.clone(), evaluation.table);
+            evaluated.push(macro_name);
+        }
+
+        if let Some(top_table) = results_by_macro.get(&top_name).cloned() {
+            self.output_results = format_exploration_table_output(&top_table);
+            self.output_results_table = Some(top_table);
+        }
+        self.output_artifacts = format!(
+            "Hierarchy evaluated\nTop macro: {}\nEvaluated macros: {}\nOutput dir: {}",
+            top_name,
+            evaluated.join(", "),
+            output_dir.display()
+        );
+        self.save_active_macro_workspace();
+
+        format!(
+            "Evaluated hierarchy for '{}'\n\nMacros: {}\nOrder: {}",
+            top_name,
+            evaluated.len(),
+            evaluated.join(" -> ")
+        )
+    }
+
+    fn evaluate_workspace_index(
+        &self,
+        macro_index: usize,
+        catalog: &PrimitiveCatalog,
+        macro_catalog: &MacroCatalog,
+        macro_blocks: &[GuiDutMacroView],
+        prepared_dir: &std::path::Path,
+        extra_candidate_sets: Vec<CandidateSet>,
+    ) -> Result<GuiWorkspaceEvaluation, String> {
+        let document = self
+            .circuits
+            .get(macro_index)
+            .ok_or_else(|| format!("missing macro document at index {}", macro_index + 1))?;
+        let workspace = self
+            .macro_workspaces
+            .get(macro_index)
+            .ok_or_else(|| format!("missing macro workspace for '{}'", document.name))?;
+
+        std::fs::create_dir_all(prepared_dir).map_err(|error| {
+            format!(
+                "failed to create prepared specs dir '{}'\n\n{error}",
+                prepared_dir.display()
+            )
+        })?;
+
+        let testbenches = gui_testbenches_to_specs(&workspace.testbenches, &self.circuits)?;
+        let specs = gui_specs_to_exploration_specs(&workspace.specs, &testbenches)?;
+        let mut candidate_input =
+            gui_candidate_input(&workspace.candidates, document, catalog, macro_blocks)?;
+        candidate_input.sets.extend(extra_candidate_sets);
+        let gui_mode = gui_specs_small_signal_mode(&workspace.specs, &workspace.testbenches)?;
+        let mode = macro_small_signal_mode(gui_mode);
+        let prepared_specs = prepare_macro_testbench_specs_with_mode(
+            &specs,
+            catalog,
+            macro_catalog,
+            prepared_dir,
+            mode,
+        )
+        .map_err(|error| format!("failed to prepare specs\n\n{error:?}"))?;
+        let mut table = run_prepared_expression_flow(
+            &candidate_input.axes,
+            &candidate_input.sets,
+            &candidate_input.filters,
+            &prepared_specs,
+        )
+        .map_err(|error| format!("failed to evaluate specs\n\n{error:?}"))?;
+
+        add_automatic_area_column(&mut table)
+            .map_err(|error| format!("failed to add automatic area column\n\n{error:?}"))?;
+
+        Ok(GuiWorkspaceEvaluation {
+            prepared_specs,
+            candidate_input,
+            table,
+        })
+    }
+
+    fn hierarchy_evaluation_order(&self, top_index: usize) -> Result<Vec<usize>, String> {
+        let mut visiting = HashSet::new();
+        let mut visited = HashSet::new();
+        let mut order = Vec::new();
+        self.push_hierarchy_evaluation_order(top_index, &mut visiting, &mut visited, &mut order)?;
+        Ok(order)
+    }
+
+    fn push_hierarchy_evaluation_order(
+        &self,
+        macro_index: usize,
+        visiting: &mut HashSet<usize>,
+        visited: &mut HashSet<usize>,
+        order: &mut Vec<usize>,
+    ) -> Result<(), String> {
+        if visited.contains(&macro_index) {
+            return Ok(());
+        }
+        if !visiting.insert(macro_index) {
+            let name = self
+                .circuits
+                .get(macro_index)
+                .map(|document| document.name.as_str())
+                .unwrap_or("<missing>");
+            return Err(format!("macro hierarchy contains a cycle at '{name}'"));
+        }
+
+        for (_, child_macro_name) in self.direct_macro_instances(macro_index)? {
+            let child_index = self
+                .circuit_index_by_name(&child_macro_name)
+                .ok_or_else(|| format!("submacro '{child_macro_name}' is not imported locally"))?;
+            self.push_hierarchy_evaluation_order(child_index, visiting, visited, order)?;
+        }
+
+        visiting.remove(&macro_index);
+        visited.insert(macro_index);
+        order.push(macro_index);
+        Ok(())
+    }
+
+    fn compact_candidate_sets_for_children(
+        &self,
+        macro_index: usize,
+        results_by_macro: &HashMap<String, ExplorationTable>,
+    ) -> Result<Vec<CandidateSet>, String> {
+        let mut sets = Vec::new();
+
+        for (instance_name, child_macro_name) in self.direct_macro_instances(macro_index)? {
+            let child_index = self
+                .circuit_index_by_name(&child_macro_name)
+                .ok_or_else(|| format!("submacro '{child_macro_name}' is not imported locally"))?;
+            let child_workspace = self
+                .macro_workspaces
+                .get(child_index)
+                .ok_or_else(|| format!("missing workspace for submacro '{child_macro_name}'"))?;
+            let child_table = results_by_macro.get(&child_macro_name).ok_or_else(|| {
+                format!("submacro '{child_macro_name}' has not been evaluated yet")
+            })?;
+            let bindings = compact_output_bindings_for_workspace(child_workspace)?;
+            let candidate_set =
+                submacro_results_to_compact_candidate_set(&instance_name, &bindings, child_table)
+                    .map_err(|error| {
+                    format!(
+                        "failed to map results from submacro instance '{}' ({})\n\n{error:?}",
+                        instance_name, child_macro_name
+                    )
+                })?;
+            sets.push(candidate_set);
+        }
+
+        Ok(sets)
+    }
+
+    fn direct_macro_instances(&self, macro_index: usize) -> Result<Vec<(String, String)>, String> {
+        let document = self
+            .circuits
+            .get(macro_index)
+            .ok_or_else(|| format!("missing macro document at index {}", macro_index + 1))?;
+
+        Ok(document
+            .canvas_instances
+            .iter()
+            .filter_map(|instance| {
+                instance
+                    .block
+                    .macro_name()
+                    .map(|macro_name| (instance.instance_name.clone(), macro_name.to_string()))
+            })
+            .collect())
+    }
+
+    fn circuit_index_by_name(&self, name: &str) -> Option<usize> {
+        self.circuits
+            .iter()
+            .position(|document| document.name == name)
+    }
+
     fn prepare_gui_specs(&mut self) -> String {
         self.save_active_circuit_document();
         self.save_active_macro_workspace();
@@ -4360,6 +4629,11 @@ impl GuiProjectTestbench {
                 testbench.small_signal_mode,
             ),
             dut_position: Some(GuiProjectPosition::from_pos(testbench.dut_position)),
+            compact_outputs: testbench
+                .compact_outputs
+                .iter()
+                .map(GuiProjectCompactOutputBinding::from_binding)
+                .collect(),
             elements: testbench
                 .elements
                 .iter()
@@ -4399,12 +4673,33 @@ impl GuiProjectTestbench {
                 .map(|position| position.to_pos())
                 .unwrap_or_else(default_dut_position),
             small_signal_mode: self.small_signal_mode.into_gui_mode(),
+            compact_outputs: self
+                .compact_outputs
+                .into_iter()
+                .map(GuiProjectCompactOutputBinding::into_binding)
+                .collect(),
             elements,
             connections,
             selected_endpoint: None,
             pending_connection: None,
             extra_body: self.extra_body,
             next_element_id: self.next_element_id,
+        }
+    }
+}
+
+impl GuiProjectCompactOutputBinding {
+    fn from_binding(binding: &GuiCompactOutputBinding) -> Self {
+        Self {
+            source_column: binding.source_column.clone(),
+            compact_parameter: binding.compact_parameter.clone(),
+        }
+    }
+
+    fn into_binding(self) -> GuiCompactOutputBinding {
+        GuiCompactOutputBinding {
+            source_column: self.source_column,
+            compact_parameter: self.compact_parameter,
         }
     }
 }
@@ -4846,6 +5141,31 @@ fn show_testbench_editor(
     }
 
     ui.separator();
+    ui.horizontal(|ui| {
+        ui.heading("Compact outputs");
+        if ui.button("+ output").clicked() {
+            testbench
+                .compact_outputs
+                .push(GuiCompactOutputBinding::default());
+        }
+    });
+    let mut remove_binding = None;
+    for (binding_index, binding) in testbench.compact_outputs.iter_mut().enumerate() {
+        ui.horizontal(|ui| {
+            ui.label("Source column:");
+            ui.text_edit_singleline(&mut binding.source_column);
+            ui.label("Compact parameter:");
+            ui.text_edit_singleline(&mut binding.compact_parameter);
+            if ui.button("Delete").clicked() {
+                remove_binding = Some(binding_index);
+            }
+        });
+    }
+    if let Some(binding_index) = remove_binding {
+        testbench.compact_outputs.remove(binding_index);
+    }
+
+    ui.separator();
     ui.label("Extra body:");
     ui.add(
         egui::TextEdit::multiline(&mut testbench.extra_body)
@@ -4932,6 +5252,28 @@ fn gui_testbenches_to_specs(
 
         if !testbench.extra_body.trim().is_empty() {
             spec = spec.with_extra_body(testbench.extra_body.trim().to_string());
+        }
+
+        for (binding_index, binding) in testbench.compact_outputs.iter().enumerate() {
+            let source_column = required_text(
+                &binding.source_column,
+                &format!(
+                    "testbench {} compact output {}",
+                    index + 1,
+                    binding_index + 1
+                ),
+                "source column",
+            )?;
+            let compact_parameter = required_text(
+                &binding.compact_parameter,
+                &format!(
+                    "testbench {} compact output {}",
+                    index + 1,
+                    binding_index + 1
+                ),
+                "compact parameter",
+            )?;
+            spec = spec.with_compact_output(source_column, compact_parameter);
         }
 
         specs.push(spec);
@@ -5467,6 +5809,51 @@ fn gui_specs_small_signal_mode(
     Ok(selected_mode.unwrap_or(GuiSmallSignalMode::CompactWhenAvailable))
 }
 
+fn compact_output_bindings_for_workspace(
+    workspace: &GuiMacroWorkspace,
+) -> Result<Vec<CompactOutputBinding>, String> {
+    let mut bindings = Vec::new();
+
+    for (testbench_index, testbench) in workspace.testbenches.iter().enumerate() {
+        for (binding_index, binding) in testbench.compact_outputs.iter().enumerate() {
+            let source_column = required_text(
+                &binding.source_column,
+                &format!(
+                    "testbench {} compact output {}",
+                    testbench_index + 1,
+                    binding_index + 1
+                ),
+                "source column",
+            )?;
+            let compact_parameter = required_text(
+                &binding.compact_parameter,
+                &format!(
+                    "testbench {} compact output {}",
+                    testbench_index + 1,
+                    binding_index + 1
+                ),
+                "compact parameter",
+            )?;
+            bindings.push(CompactOutputBinding::new(source_column, compact_parameter));
+        }
+    }
+
+    if bindings.is_empty() {
+        return Err("submacro workspace has no compact outputs configured".to_string());
+    }
+
+    Ok(bindings)
+}
+
+fn format_hierarchy_candidates_output(candidate_input: &ExplorationCandidateInput) -> String {
+    format!(
+        "Candidate axes: {}\nCandidate sets: {}\nFilters: {}",
+        candidate_input.axes.len(),
+        candidate_input.sets.len(),
+        candidate_input.filters.len()
+    )
+}
+
 fn gui_spec_to_exploration_spec(
     spec: &GuiSpecDocument,
     testbenches: &[TestbenchSpec],
@@ -5693,12 +6080,20 @@ fn testbench_endpoint_node_text<'a>(
                 .find(|element| element.id == *element_id)?;
             let value = testbench_element_pin_text(element, *pin).trim();
 
-            if value.is_empty() { None } else { Some(value) }
+            if value.is_empty() {
+                None
+            } else {
+                Some(value)
+            }
         }
         TestbenchEndpoint::DutPort { port_name } => {
             let value = port_name.trim();
 
-            if value.is_empty() { None } else { Some(value) }
+            if value.is_empty() {
+                None
+            } else {
+                Some(value)
+            }
         }
     }
 }
@@ -7108,11 +7503,10 @@ mod tests {
             name: "current_source".to_string(),
         });
 
-        assert!(
-            app.circuits
-                .iter()
-                .any(|circuit| circuit.name == "current_source")
-        );
+        assert!(app
+            .circuits
+            .iter()
+            .any(|circuit| circuit.name == "current_source"));
         assert_eq!(app.macro_workspaces.len(), app.circuits.len());
         assert!(matches!(
             app.canvas_instances[0].block,
@@ -7139,16 +7533,14 @@ mod tests {
             name: "ota_1stage".to_string(),
         });
 
-        assert!(
-            app.circuits
-                .iter()
-                .any(|circuit| circuit.name == "ota_1stage")
-        );
-        assert!(
-            app.circuits
-                .iter()
-                .any(|circuit| circuit.name == "current_source")
-        );
+        assert!(app
+            .circuits
+            .iter()
+            .any(|circuit| circuit.name == "ota_1stage"));
+        assert!(app
+            .circuits
+            .iter()
+            .any(|circuit| circuit.name == "current_source"));
         assert_eq!(app.macro_workspaces.len(), app.circuits.len());
     }
 
@@ -7286,6 +7678,77 @@ mod tests {
             loaded.canvas_instances[0].block.macro_name(),
             Some("current_source")
         );
+    }
+
+    #[test]
+    fn project_testbench_roundtrips_compact_outputs() {
+        let testbench = GuiTestbenchDocument {
+            name: "tb_current_source".to_string(),
+            dut_macro: "current_source".to_string(),
+            dut_position: default_dut_position(),
+            small_signal_mode: GuiSmallSignalMode::CompactWhenAvailable,
+            compact_outputs: vec![GuiCompactOutputBinding {
+                source_column: "bias_current".to_string(),
+                compact_parameter: "isource".to_string(),
+            }],
+            elements: Vec::new(),
+            connections: Vec::new(),
+            selected_endpoint: None,
+            pending_connection: None,
+            extra_body: String::new(),
+            next_element_id: 1,
+        };
+
+        let project = GuiProjectTestbench::from_testbench_document(&testbench);
+        let loaded = project.into_testbench_document();
+
+        assert_eq!(loaded.compact_outputs.len(), 1);
+        assert_eq!(loaded.compact_outputs[0].source_column, "bias_current");
+        assert_eq!(loaded.compact_outputs[0].compact_parameter, "isource");
+    }
+
+    #[test]
+    fn hierarchy_child_results_become_compact_candidate_set() {
+        let mut app = SstadexApp::default();
+        app.circuits = vec![
+            macro_instance_document(),
+            GuiCircuitDocument::empty("current_source"),
+        ];
+        let mut child_workspace = GuiMacroWorkspace::default();
+        child_workspace.testbenches.push(GuiTestbenchDocument {
+            name: "tb_current_source".to_string(),
+            dut_macro: "current_source".to_string(),
+            dut_position: default_dut_position(),
+            small_signal_mode: GuiSmallSignalMode::CompactWhenAvailable,
+            compact_outputs: vec![GuiCompactOutputBinding {
+                source_column: "bias_current".to_string(),
+                compact_parameter: "isource".to_string(),
+            }],
+            elements: Vec::new(),
+            connections: Vec::new(),
+            selected_endpoint: None,
+            pending_connection: None,
+            extra_body: String::new(),
+            next_element_id: 1,
+        });
+        app.macro_workspaces = vec![GuiMacroWorkspace::default(), child_workspace];
+        let mut results_by_macro = HashMap::new();
+        results_by_macro.insert(
+            "current_source".to_string(),
+            ExplorationTable {
+                columns: vec![ExplorationColumn::new("bias_current", vec![1.0, 2.0])],
+                row_count: 2,
+            },
+        );
+
+        let sets = app
+            .compact_candidate_sets_for_children(0, &results_by_macro)
+            .unwrap();
+
+        assert_eq!(sets.len(), 1);
+        assert_eq!(sets[0].name, "xcs_macro");
+        assert_eq!(sets[0].points[0].get("isource__xcs_macro"), Some(1.0));
+        assert_eq!(sets[0].points[1].get("isource__xcs_macro"), Some(2.0));
     }
 
     #[test]

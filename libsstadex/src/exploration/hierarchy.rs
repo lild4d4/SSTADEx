@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use super::{
-    CandidateAxis, CandidateSet, ExplorationFilter, ExplorationSpec, ExplorationTable,
-    TestbenchSpec,
+    candidate_set_from_columns, CandidateAxis, CandidateSet, CompactOutputBinding,
+    ExplorationColumn, ExplorationFilter, ExplorationSpec, ExplorationTable, TestbenchSpec,
 };
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -125,6 +125,57 @@ pub enum SubmacroConditionSource {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SubmacroCandidateError {
+    EmptyBindings,
+    MissingColumn { column: String },
+    CandidateSetBuild(super::CandidateSetBuildError),
+}
+
+impl From<super::CandidateSetBuildError> for SubmacroCandidateError {
+    fn from(error: super::CandidateSetBuildError) -> Self {
+        Self::CandidateSetBuild(error)
+    }
+}
+
+pub fn compact_parameter_column_name(
+    compact_parameter: impl AsRef<str>,
+    instance: impl AsRef<str>,
+) -> String {
+    format!(
+        "{}__{}",
+        compact_parameter.as_ref().trim().replace('-', "_"),
+        instance.as_ref().trim().replace('-', "_")
+    )
+}
+
+pub fn submacro_results_to_compact_candidate_set(
+    instance: impl AsRef<str>,
+    bindings: &[CompactOutputBinding],
+    table: &ExplorationTable,
+) -> Result<CandidateSet, SubmacroCandidateError> {
+    if bindings.is_empty() {
+        return Err(SubmacroCandidateError::EmptyBindings);
+    }
+
+    let instance = instance.as_ref();
+    let mut columns = Vec::with_capacity(bindings.len());
+
+    for binding in bindings {
+        let source = table.column(&binding.source_column).ok_or_else(|| {
+            SubmacroCandidateError::MissingColumn {
+                column: binding.source_column.clone(),
+            }
+        })?;
+        columns.push(ExplorationColumn::new(
+            compact_parameter_column_name(&binding.compact_parameter, instance),
+            source.values.clone(),
+        ));
+    }
+
+    Ok(candidate_set_from_columns(instance, &columns)?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -164,5 +215,43 @@ mod tests {
         assert_eq!(workspace.outputs[0].name, "bias_current");
         assert_eq!(workspace.interface_variables[0].source_column, "xcs.voutp");
         assert_eq!(workspace.submacro_condition_rules[0].instance, "xcs_macro");
+    }
+
+    #[test]
+    fn maps_submacro_results_to_compact_candidate_set() {
+        let table = ExplorationTable {
+            columns: vec![
+                ExplorationColumn::new("bias_current", vec![1.0, 2.0]),
+                ExplorationColumn::new("gain", vec![10.0, 20.0]),
+            ],
+            row_count: 2,
+        };
+        let bindings = vec![CompactOutputBinding::new("bias_current", "isource")];
+
+        let candidate_set =
+            submacro_results_to_compact_candidate_set("xcs_macro", &bindings, &table).unwrap();
+
+        assert_eq!(candidate_set.name, "xcs_macro");
+        assert_eq!(candidate_set.points[0].get("isource__xcs_macro"), Some(1.0));
+        assert_eq!(candidate_set.points[1].get("isource__xcs_macro"), Some(2.0));
+    }
+
+    #[test]
+    fn reports_missing_compact_output_source_column() {
+        let table = ExplorationTable {
+            columns: vec![ExplorationColumn::new("gain", vec![10.0])],
+            row_count: 1,
+        };
+        let bindings = vec![CompactOutputBinding::new("bias_current", "isource")];
+
+        let error =
+            submacro_results_to_compact_candidate_set("xcs_macro", &bindings, &table).unwrap_err();
+
+        assert_eq!(
+            error,
+            SubmacroCandidateError::MissingColumn {
+                column: "bias_current".to_string(),
+            }
+        );
     }
 }

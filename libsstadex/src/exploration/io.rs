@@ -8,8 +8,8 @@ use super::candidate::{CandidateAxis, CandidatePoint, CandidateSet};
 use super::conditions::RangeCondition;
 use super::conditions::{ExplorationFilter, FilterPhase};
 use super::spec::{
-    CircuitView, DutRef, ExplorationSpec, FrequencySweep, SpecOutput, SpecParameter, SpecSource,
-    SpecVariable, TestbenchElement, TestbenchSpec,
+    CircuitView, CompactOutputBinding, DutRef, ExplorationSpec, FrequencySweep, SpecOutput,
+    SpecParameter, SpecSource, SpecVariable, TestbenchElement, TestbenchSpec,
 };
 
 #[derive(Debug)]
@@ -137,6 +137,8 @@ struct RawTestbenchSpec {
     elements: Vec<RawTestbenchElement>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     extra_body: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    compact_outputs: Vec<RawCompactOutputBinding>,
 }
 
 impl RawTestbenchSpec {
@@ -151,6 +153,11 @@ impl RawTestbenchSpec {
                 .map(RawTestbenchElement::into_element)
                 .collect(),
             extra_body: self.extra_body,
+            compact_outputs: self
+                .compact_outputs
+                .into_iter()
+                .map(RawCompactOutputBinding::into_binding)
+                .collect(),
         }
     }
 
@@ -165,6 +172,33 @@ impl RawTestbenchSpec {
                 .map(RawTestbenchElement::from_element)
                 .collect(),
             extra_body: spec.extra_body.clone(),
+            compact_outputs: spec
+                .compact_outputs
+                .iter()
+                .map(RawCompactOutputBinding::from_binding)
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct RawCompactOutputBinding {
+    source_column: String,
+    compact_parameter: String,
+}
+
+impl RawCompactOutputBinding {
+    fn into_binding(self) -> CompactOutputBinding {
+        CompactOutputBinding {
+            source_column: self.source_column,
+            compact_parameter: self.compact_parameter,
+        }
+    }
+
+    fn from_binding(binding: &CompactOutputBinding) -> Self {
+        Self {
+            source_column: binding.source_column.clone(),
+            compact_parameter: binding.compact_parameter.clone(),
         }
     }
 }
@@ -904,16 +938,15 @@ mod tests {
     fn saves_and_loads_testbenches_roundtrip() {
         let dir = make_temp_dir("roundtrip_testbenches");
         let path = dir.join("testbenches.json");
-        let testbenches = vec![
-            TestbenchSpec::new("ota_gain")
-                .with_macro_dut("ota_1stage")
-                .with_element(TestbenchElement::VoltageSource {
-                    name: "Vin".to_string(),
-                    nplus: "VINP".to_string(),
-                    nminus: "VSS".to_string(),
-                    value: "vin".to_string(),
-                }),
-        ];
+        let testbenches = vec![TestbenchSpec::new("ota_gain")
+            .with_macro_dut("ota_1stage")
+            .with_compact_output("bias_current", "isource")
+            .with_element(TestbenchElement::VoltageSource {
+                name: "Vin".to_string(),
+                nplus: "VINP".to_string(),
+                nminus: "VSS".to_string(),
+                value: "vin".to_string(),
+            })];
 
         save_testbenches(&path, &testbenches).unwrap();
         let loaded = load_testbenches(&path).unwrap();
