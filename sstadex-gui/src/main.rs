@@ -70,6 +70,7 @@ struct SstadexApp {
     output_prepared_specs: String,
     output_candidates: String,
     output_results: String,
+    output_results_table: Option<ExplorationTable>,
     next_instance_id: usize,
     next_label_pin_id: usize,
     next_macro_port_id: usize,
@@ -675,6 +676,7 @@ impl Default for SstadexApp {
             output_prepared_specs: "Prepared exploration specs will appear here".to_string(),
             output_candidates: "Generated candidates will appear here".to_string(),
             output_results: "Exploration results will appear here".to_string(),
+            output_results_table: None,
             next_instance_id: 1,
             next_label_pin_id: 1,
             next_macro_port_id: 1,
@@ -932,7 +934,11 @@ impl eframe::App for SstadexApp {
                     BottomView::Artifacts => show_text_output(ui, &self.output_artifacts),
                     BottomView::Prepared => show_text_output(ui, &self.output_prepared_specs),
                     BottomView::Candidates => show_text_output(ui, &self.output_candidates),
-                    BottomView::Results => show_text_output(ui, &self.output_results),
+                    BottomView::Results => show_results_output(
+                        ui,
+                        &self.output_results,
+                        self.output_results_table.as_ref(),
+                    ),
                     BottomView::Testbenches => self.show_testbenches_ui(ui),
                 }
             });
@@ -3089,6 +3095,7 @@ impl SstadexApp {
 
     fn evaluate_gui_specs(&mut self) -> String {
         self.save_active_circuit_document();
+        self.output_results_table = None;
 
         let Some(catalog) = &self.catalog else {
             return "Cannot evaluate specs: primitive catalog is not loaded".to_string();
@@ -3204,6 +3211,7 @@ impl SstadexApp {
                     );
                 }
                 self.output_results = format_exploration_table_output(&table);
+                self.output_results_table = Some(table.clone());
                 if let Err(error) = std::fs::write(&results_path, exploration_table_to_csv(&table))
                 {
                     return format!(
@@ -3344,6 +3352,65 @@ impl SstadexApp {
             ),
         }
     }
+}
+
+const MAX_VISIBLE_RESULT_ROWS: usize = 200;
+
+fn show_results_output(ui: &mut egui::Ui, fallback_text: &str, table: Option<&ExplorationTable>) {
+    let Some(table) = table else {
+        show_text_output(ui, fallback_text);
+        return;
+    };
+
+    ui.horizontal(|ui| {
+        for line in exploration_table_summary_lines(table) {
+            ui.label(line);
+        }
+    });
+    ui.separator();
+
+    egui::ScrollArea::both().show(ui, |ui| {
+        egui::Grid::new("exploration_results_table")
+            .striped(true)
+            .spacing(egui::vec2(16.0, 4.0))
+            .show(ui, |ui| {
+                ui.strong("index");
+                for column in &table.columns {
+                    ui.strong(&column.name);
+                }
+                ui.end_row();
+
+                for row in 0..results_table_shown_rows(table) {
+                    ui.monospace(row.to_string());
+                    for column in &table.columns {
+                        if let Some(value) = column.values.get(row) {
+                            ui.monospace(format!("{value:.6e}"));
+                        } else {
+                            ui.label("");
+                        }
+                    }
+                    ui.end_row();
+                }
+            });
+    });
+}
+
+fn exploration_table_summary_lines(table: &ExplorationTable) -> Vec<String> {
+    let mut lines = vec![
+        format!("rows: {}", table.row_count),
+        format!("columns: {}", table.columns.len()),
+    ];
+
+    let shown_rows = results_table_shown_rows(table);
+    if table.row_count > shown_rows {
+        lines.push(format!("showing first {shown_rows} rows"));
+    }
+
+    lines
+}
+
+fn results_table_shown_rows(table: &ExplorationTable) -> usize {
+    table.row_count.min(MAX_VISIBLE_RESULT_ROWS)
 }
 
 fn show_text_output(ui: &mut egui::Ui, text: &str) {
@@ -6801,6 +6868,24 @@ mod tests {
     }
 
     #[test]
+    fn exploration_table_summary_reports_visible_row_limit() {
+        let table = ExplorationTable {
+            row_count: 201,
+            columns: vec![ExplorationColumn::new("gain", vec![1.0; 201])],
+        };
+
+        assert_eq!(results_table_shown_rows(&table), 200);
+        assert_eq!(
+            exploration_table_summary_lines(&table),
+            vec![
+                "rows: 201".to_string(),
+                "columns: 1".to_string(),
+                "showing first 200 rows".to_string(),
+            ]
+        );
+    }
+
+    #[test]
     fn automatic_area_column_sums_width_columns() {
         let mut table = ExplorationTable {
             row_count: 2,
@@ -7258,8 +7343,7 @@ fn format_exploration_table_output(table: &ExplorationTable) -> String {
         return format!("rows: {}\ncolumns: 0", table.row_count);
     }
 
-    let max_rows = 200;
-    let shown_rows = table.row_count.min(max_rows);
+    let shown_rows = results_table_shown_rows(table);
     let mut output = String::new();
 
     let _ = writeln!(output, "rows: {}", table.row_count);
