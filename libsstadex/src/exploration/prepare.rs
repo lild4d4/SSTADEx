@@ -2,8 +2,8 @@ use std::fmt::Debug;
 use std::path::Path;
 
 use crate::analysis::{
-    TransferFunctionError, analyze_macro_testbench_mna_with_mode, analyze_small_signal_netlist_mna,
-    transfer_function_expression,
+    analyze_macro_testbench_mna_with_mode, analyze_small_signal_netlist_mna,
+    transfer_function_expression, TransferFunctionError,
 };
 use crate::catalog::PrimitiveCatalog;
 use crate::circuit::Circuit;

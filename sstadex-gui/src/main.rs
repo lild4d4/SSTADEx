@@ -51,6 +51,7 @@ struct SstadexApp {
     pending_connection: Option<CanvasEndpoint>,
     connections: Vec<CanvasConnection>,
     circuits: Vec<GuiCircuitDocument>,
+    macro_workspaces: Vec<GuiMacroWorkspace>,
     active_circuit: usize,
     active_document: ActiveDocument,
     renaming_circuit: Option<usize>,
@@ -74,6 +75,19 @@ struct SstadexApp {
     next_instance_id: usize,
     next_label_pin_id: usize,
     next_macro_port_id: usize,
+}
+
+#[derive(Clone)]
+struct GuiMacroWorkspace {
+    testbenches: Vec<GuiTestbenchDocument>,
+    selected_testbench: Option<usize>,
+    specs: Vec<GuiSpecDocument>,
+    selected_spec: Option<usize>,
+    candidates: GuiCandidateDocument,
+    output_prepared_specs: String,
+    output_candidates: String,
+    output_results: String,
+    output_results_table: Option<ExplorationTable>,
 }
 
 #[derive(Clone)]
@@ -371,7 +385,23 @@ struct GuiProject {
     version: u32,
     active_circuit: usize,
     circuits: Vec<GuiProjectCircuit>,
+    #[serde(default)]
+    macro_workspaces: Vec<GuiProjectMacroWorkspace>,
     selected_testbench: Option<usize>,
+    testbenches: Vec<GuiProjectTestbench>,
+    #[serde(default)]
+    selected_spec: Option<usize>,
+    #[serde(default)]
+    specs: Vec<GuiProjectSpec>,
+    #[serde(default)]
+    candidates: GuiProjectCandidateDocument,
+}
+
+#[derive(Serialize, Deserialize)]
+struct GuiProjectMacroWorkspace {
+    #[serde(default)]
+    selected_testbench: Option<usize>,
+    #[serde(default)]
     testbenches: Vec<GuiProjectTestbench>,
     #[serde(default)]
     selected_spec: Option<usize>,
@@ -657,6 +687,7 @@ impl Default for SstadexApp {
             pending_connection: None,
             connections: Vec::new(),
             circuits: vec![GuiCircuitDocument::empty("macro_1")],
+            macro_workspaces: vec![GuiMacroWorkspace::default()],
             active_circuit: 0,
             active_document: ActiveDocument::Circuit,
             renaming_circuit: None,
@@ -680,6 +711,22 @@ impl Default for SstadexApp {
             next_instance_id: 1,
             next_label_pin_id: 1,
             next_macro_port_id: 1,
+        }
+    }
+}
+
+impl Default for GuiMacroWorkspace {
+    fn default() -> Self {
+        Self {
+            testbenches: Vec::new(),
+            selected_testbench: None,
+            specs: Vec::new(),
+            selected_spec: None,
+            candidates: GuiCandidateDocument::default(),
+            output_prepared_specs: "Prepared exploration specs will appear here".to_string(),
+            output_candidates: "Generated candidates will appear here".to_string(),
+            output_results: "Exploration results will appear here".to_string(),
+            output_results_table: None,
         }
     }
 }
@@ -1560,9 +1607,11 @@ impl SstadexApp {
             self.show_circuit_browser_item(ui, index);
         }
 
+        self.show_hierarchy_browser_ui(ui);
+
         ui.separator();
         ui.horizontal(|ui| {
-            ui.label("Testbenches");
+            ui.label("Testbenches for active macro");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button("+").clicked() {
                     self.add_testbench();
@@ -1576,7 +1625,7 @@ impl SstadexApp {
 
         ui.separator();
         ui.horizontal(|ui| {
-            ui.label("Specs");
+            ui.label("Specs for active macro");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button("+").clicked() {
                     self.add_spec();
@@ -1589,7 +1638,7 @@ impl SstadexApp {
         }
 
         ui.separator();
-        ui.label("Exploration");
+        ui.label("Exploration for active macro");
         if ui
             .selectable_label(
                 self.active_document == ActiveDocument::Candidates,
@@ -1599,6 +1648,43 @@ impl SstadexApp {
         {
             self.active_document = ActiveDocument::Candidates;
             self.bottom_view = BottomView::Candidates;
+        }
+    }
+
+    fn show_hierarchy_browser_ui(&mut self, ui: &mut egui::Ui) {
+        let Some(document) = self.circuits.get(self.active_circuit) else {
+            return;
+        };
+        let children = document
+            .canvas_instances
+            .iter()
+            .filter_map(|instance| {
+                let macro_name = instance.block.macro_name()?;
+                let macro_index = self
+                    .circuits
+                    .iter()
+                    .position(|circuit| circuit.name == macro_name)?;
+                Some((
+                    exported_instance_name(instance),
+                    macro_name.to_string(),
+                    macro_index,
+                ))
+            })
+            .collect::<Vec<_>>();
+
+        ui.separator();
+        ui.label("Hierarchy");
+        if children.is_empty() {
+            ui.label("No child macro instances");
+            return;
+        }
+
+        for (instance_name, macro_name, macro_index) in children {
+            let label = format!("{instance_name}: {macro_name}");
+            if ui.button(label).clicked() {
+                self.switch_circuit_document(macro_index);
+                self.active_document = ActiveDocument::Circuit;
+            }
         }
     }
 
@@ -1646,6 +1732,13 @@ impl SstadexApp {
                 for testbench in &mut self.testbenches {
                     if testbench.dut_macro == old_name {
                         testbench.dut_macro = new_name.clone();
+                    }
+                }
+                for workspace in &mut self.macro_workspaces {
+                    for testbench in &mut workspace.testbenches {
+                        if testbench.dut_macro == old_name {
+                            testbench.dut_macro = new_name.clone();
+                        }
                     }
                 }
             }
@@ -1762,12 +1855,15 @@ impl SstadexApp {
 
     fn add_circuit_document(&mut self) {
         self.save_active_circuit_document();
+        self.save_active_macro_workspace();
 
         let name = next_available_circuit_name(&self.circuits);
         self.circuits.push(GuiCircuitDocument::empty(name));
+        self.macro_workspaces.push(GuiMacroWorkspace::default());
         self.active_circuit = self.circuits.len() - 1;
         self.active_document = ActiveDocument::Circuit;
         self.load_active_circuit_document();
+        self.load_active_macro_workspace();
     }
 
     fn switch_circuit_document(&mut self, index: usize) {
@@ -1776,8 +1872,10 @@ impl SstadexApp {
         }
 
         self.save_active_circuit_document();
+        self.save_active_macro_workspace();
         self.active_circuit = index;
         self.load_active_circuit_document();
+        self.load_active_macro_workspace();
     }
 
     fn delete_circuit_document(&mut self, index: usize) {
@@ -1786,11 +1884,16 @@ impl SstadexApp {
         }
 
         self.save_active_circuit_document();
+        self.save_active_macro_workspace();
         self.circuits.remove(index);
+        if index < self.macro_workspaces.len() {
+            self.macro_workspaces.remove(index);
+        }
 
         if self.active_circuit == index {
             self.active_circuit = index.saturating_sub(1).min(self.circuits.len() - 1);
             self.load_active_circuit_document();
+            self.load_active_macro_workspace();
         } else if self.active_circuit > index {
             self.active_circuit -= 1;
         }
@@ -1866,6 +1969,54 @@ impl SstadexApp {
         circuit.next_instance_id = self.next_instance_id;
         circuit.next_label_pin_id = self.next_label_pin_id;
         circuit.next_macro_port_id = self.next_macro_port_id;
+    }
+
+    fn save_active_macro_workspace(&mut self) {
+        self.ensure_macro_workspace_count();
+        let Some(workspace) = self.macro_workspaces.get_mut(self.active_circuit) else {
+            return;
+        };
+
+        workspace.testbenches = self.testbenches.clone();
+        workspace.selected_testbench = self.selected_testbench;
+        workspace.specs = self.specs.clone();
+        workspace.selected_spec = self.selected_spec;
+        workspace.candidates = self.candidates.clone();
+        workspace.output_prepared_specs = self.output_prepared_specs.clone();
+        workspace.output_candidates = self.output_candidates.clone();
+        workspace.output_results = self.output_results.clone();
+        workspace.output_results_table = self.output_results_table.clone();
+    }
+
+    fn load_active_macro_workspace(&mut self) {
+        self.ensure_macro_workspace_count();
+        let Some(workspace) = self.macro_workspaces.get(self.active_circuit).cloned() else {
+            return;
+        };
+
+        self.testbenches = workspace.testbenches;
+        self.selected_testbench = workspace
+            .selected_testbench
+            .filter(|index| *index < self.testbenches.len());
+        self.specs = workspace.specs;
+        self.selected_spec = workspace
+            .selected_spec
+            .filter(|index| *index < self.specs.len());
+        self.candidates = workspace.candidates;
+        self.output_prepared_specs = workspace.output_prepared_specs;
+        self.output_candidates = workspace.output_candidates;
+        self.output_results = workspace.output_results;
+        self.output_results_table = workspace.output_results_table;
+        self.renaming_testbench = None;
+        self.renaming_spec = None;
+        self.ensure_testbench_dut_macros();
+    }
+
+    fn ensure_macro_workspace_count(&mut self) {
+        while self.macro_workspaces.len() < self.circuits.len() {
+            self.macro_workspaces.push(GuiMacroWorkspace::default());
+        }
+        self.macro_workspaces.truncate(self.circuits.len());
     }
 
     fn load_active_circuit_document(&mut self) {
@@ -2421,6 +2572,7 @@ impl SstadexApp {
 
     fn save_flow_inputs(&mut self) -> String {
         self.save_active_circuit_document();
+        self.save_active_macro_workspace();
 
         let Some(catalog) = &self.catalog else {
             return "Cannot save flow inputs: primitive catalog is not loaded".to_string();
@@ -2618,6 +2770,7 @@ impl SstadexApp {
 
     fn save_gui_project(&mut self) -> String {
         self.save_active_circuit_document();
+        self.save_active_macro_workspace();
 
         let project_path = match project_path_from_input(&self.project_path) {
             Ok(path) => path,
@@ -2694,7 +2847,7 @@ impl SstadexApp {
             }
         };
 
-        if !(4..=8).contains(&project.version) {
+        if !(4..=9).contains(&project.version) {
             return format!(
                 "Cannot open project: unsupported GUI project version {}",
                 project.version
@@ -2714,12 +2867,17 @@ impl SstadexApp {
 
     fn gui_project(&self) -> GuiProject {
         GuiProject {
-            version: 8,
+            version: 9,
             active_circuit: self.active_circuit,
             circuits: self
                 .circuits
                 .iter()
                 .map(GuiProjectCircuit::from_circuit_document)
+                .collect(),
+            macro_workspaces: self
+                .macro_workspaces
+                .iter()
+                .map(GuiProjectMacroWorkspace::from_macro_workspace)
                 .collect(),
             selected_testbench: self.selected_testbench,
             testbenches: self
@@ -2749,26 +2907,48 @@ impl SstadexApp {
         }
 
         self.circuits = circuits;
+        self.macro_workspaces = if project.macro_workspaces.is_empty() {
+            let mut workspaces = (0..self.circuits.len())
+                .map(|_| GuiMacroWorkspace::default())
+                .collect::<Vec<_>>();
+            if let Some(workspace) =
+                workspaces.get_mut(project.active_circuit.min(self.circuits.len() - 1))
+            {
+                workspace.testbenches = project
+                    .testbenches
+                    .into_iter()
+                    .map(GuiProjectTestbench::into_testbench_document)
+                    .collect();
+                workspace.selected_testbench = project
+                    .selected_testbench
+                    .filter(|index| *index < workspace.testbenches.len());
+                workspace.specs = project
+                    .specs
+                    .into_iter()
+                    .map(GuiProjectSpec::into_spec_document)
+                    .collect();
+                workspace.selected_spec = project
+                    .selected_spec
+                    .filter(|index| *index < workspace.specs.len());
+                workspace.candidates = project.candidates.into_candidate_document();
+            }
+            workspaces
+        } else {
+            let mut workspaces = project
+                .macro_workspaces
+                .into_iter()
+                .map(GuiProjectMacroWorkspace::into_macro_workspace)
+                .collect::<Vec<_>>();
+            while workspaces.len() < self.circuits.len() {
+                workspaces.push(GuiMacroWorkspace::default());
+            }
+            workspaces.truncate(self.circuits.len());
+            workspaces
+        };
         self.active_circuit = project.active_circuit.min(self.circuits.len() - 1);
-        self.testbenches = project
-            .testbenches
-            .into_iter()
-            .map(GuiProjectTestbench::into_testbench_document)
-            .collect();
-        self.selected_testbench = project
-            .selected_testbench
-            .filter(|index| *index < self.testbenches.len());
-        self.specs = project
-            .specs
-            .into_iter()
-            .map(GuiProjectSpec::into_spec_document)
-            .collect();
-        self.selected_spec = project
-            .selected_spec
-            .filter(|index| *index < self.specs.len());
-        self.candidates = project.candidates.into_candidate_document();
         self.ensure_testbench_dut_macros();
         self.load_active_circuit_document();
+        self.load_active_macro_workspace();
 
         self.selected_instance_id = None;
         self.selected_endpoint = None;
@@ -2778,12 +2958,9 @@ impl SstadexApp {
     fn ensure_testbench_dut_macros(&mut self) {
         let default_dut = self.default_dut_macro_name();
         let macro_names = self.macro_names();
-        for testbench in &mut self.testbenches {
-            if testbench.dut_macro.trim().is_empty()
-                || !macro_names.iter().any(|name| name == &testbench.dut_macro)
-            {
-                testbench.dut_macro = default_dut.clone();
-            }
+        ensure_testbench_dut_macros_for(&mut self.testbenches, &macro_names, &default_dut);
+        for workspace in &mut self.macro_workspaces {
+            ensure_testbench_dut_macros_for(&mut workspace.testbenches, &macro_names, &default_dut);
         }
     }
 
@@ -3038,6 +3215,7 @@ impl SstadexApp {
 
     fn generate_gui_candidates(&mut self) -> String {
         self.save_active_circuit_document();
+        self.save_active_macro_workspace();
 
         let Some(catalog) = &self.catalog else {
             return "Cannot generate candidates: primitive catalog is not loaded".to_string();
@@ -3077,6 +3255,7 @@ impl SstadexApp {
                     candidate_input.sets.len(),
                     candidates.len()
                 );
+                self.save_active_macro_workspace();
 
                 format!(
                     "Generated {} candidate point(s)\n\nAxes: {}\nPrimitive sets: {}\nCandidates JSON: {}",
@@ -3095,7 +3274,9 @@ impl SstadexApp {
 
     fn evaluate_gui_specs(&mut self) -> String {
         self.save_active_circuit_document();
+        self.save_active_macro_workspace();
         self.output_results_table = None;
+        self.save_active_macro_workspace();
 
         let Some(catalog) = &self.catalog else {
             return "Cannot evaluate specs: primitive catalog is not loaded".to_string();
@@ -3229,6 +3410,7 @@ impl SstadexApp {
                     prepared_dir.display(),
                     gui_mode.label()
                 );
+                self.save_active_macro_workspace();
 
                 format!(
                     "Evaluated exploration specs\n\nRows kept: {}\nColumns: {}\nSpecs: {}\nSmall-signal mode: {}\nResults CSV: {}",
@@ -3252,6 +3434,7 @@ impl SstadexApp {
 
     fn prepare_gui_specs(&mut self) -> String {
         self.save_active_circuit_document();
+        self.save_active_macro_workspace();
 
         let Some(catalog) = &self.catalog else {
             return "Cannot prepare specs: primitive catalog is not loaded".to_string();
@@ -3333,6 +3516,7 @@ impl SstadexApp {
                     prepared_dir.display(),
                     gui_mode.label()
                 );
+                self.save_active_macro_workspace();
 
                 format!(
                     "Prepared {} exploration spec(s)\n\nMacros: {}\nSpecs: {}\nSmall-signal mode: {}\nPrepared dir: {}",
@@ -3949,6 +4133,50 @@ impl GuiProjectMacroPortRole {
     }
 }
 
+impl GuiProjectMacroWorkspace {
+    fn from_macro_workspace(workspace: &GuiMacroWorkspace) -> Self {
+        Self {
+            selected_testbench: workspace.selected_testbench,
+            testbenches: workspace
+                .testbenches
+                .iter()
+                .map(GuiProjectTestbench::from_testbench_document)
+                .collect(),
+            selected_spec: workspace.selected_spec,
+            specs: workspace
+                .specs
+                .iter()
+                .map(GuiProjectSpec::from_spec_document)
+                .collect(),
+            candidates: GuiProjectCandidateDocument::from_candidate_document(&workspace.candidates),
+        }
+    }
+
+    fn into_macro_workspace(self) -> GuiMacroWorkspace {
+        let testbenches = self
+            .testbenches
+            .into_iter()
+            .map(GuiProjectTestbench::into_testbench_document)
+            .collect::<Vec<_>>();
+        let specs = self
+            .specs
+            .into_iter()
+            .map(GuiProjectSpec::into_spec_document)
+            .collect::<Vec<_>>();
+
+        GuiMacroWorkspace {
+            selected_testbench: self
+                .selected_testbench
+                .filter(|index| *index < testbenches.len()),
+            testbenches,
+            selected_spec: self.selected_spec.filter(|index| *index < specs.len()),
+            specs,
+            candidates: self.candidates.into_candidate_document(),
+            ..GuiMacroWorkspace::default()
+        }
+    }
+}
+
 impl GuiProjectTestbench {
     fn from_testbench_document(testbench: &GuiTestbenchDocument) -> Self {
         Self {
@@ -4536,6 +4764,20 @@ fn gui_testbenches_to_specs(
     }
 
     Ok(specs)
+}
+
+fn ensure_testbench_dut_macros_for(
+    testbenches: &mut [GuiTestbenchDocument],
+    macro_names: &[String],
+    default_dut: &str,
+) {
+    for testbench in testbenches {
+        if testbench.dut_macro.trim().is_empty()
+            || !macro_names.iter().any(|name| name == &testbench.dut_macro)
+        {
+            testbench.dut_macro = default_dut.to_string();
+        }
+    }
 }
 
 fn gui_specs_to_exploration_specs(
@@ -6635,6 +6877,33 @@ mod tests {
         BuildExpression, PrimitiveBuildInputSpec, PrimitiveBuildSpec, SweepMode,
     };
     use libsstadex::primitive::manifest::{Pin, PrimitiveFiles, PrimitiveShape, PrimitiveUi};
+
+    #[test]
+    fn macro_workspace_switching_preserves_per_macro_candidates() {
+        let mut app = SstadexApp::default();
+
+        app.candidates.axes = vec![GuiCandidateAxis {
+            name: "gain_target".to_string(),
+            values: "10, 20".to_string(),
+        }];
+        app.add_circuit_document();
+        app.candidates.axes = vec![GuiCandidateAxis {
+            name: "bias_current".to_string(),
+            values: "1e-6, 2e-6".to_string(),
+        }];
+
+        app.switch_circuit_document(0);
+
+        assert_eq!(app.active_circuit, 0);
+        assert_eq!(app.candidates.axes.len(), 1);
+        assert_eq!(app.candidates.axes[0].name, "gain_target");
+
+        app.switch_circuit_document(1);
+
+        assert_eq!(app.active_circuit, 1);
+        assert_eq!(app.candidates.axes.len(), 1);
+        assert_eq!(app.candidates.axes[0].name, "bias_current");
+    }
 
     #[test]
     fn primitive_build_input_uses_shared_net_voltage_constraint() {

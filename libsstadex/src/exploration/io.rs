@@ -904,16 +904,14 @@ mod tests {
     fn saves_and_loads_testbenches_roundtrip() {
         let dir = make_temp_dir("roundtrip_testbenches");
         let path = dir.join("testbenches.json");
-        let testbenches = vec![
-            TestbenchSpec::new("ota_gain")
-                .with_macro_dut("ota_1stage")
-                .with_element(TestbenchElement::VoltageSource {
-                    name: "Vin".to_string(),
-                    nplus: "VINP".to_string(),
-                    nminus: "VSS".to_string(),
-                    value: "vin".to_string(),
-                }),
-        ];
+        let testbenches = vec![TestbenchSpec::new("ota_gain")
+            .with_macro_dut("ota_1stage")
+            .with_element(TestbenchElement::VoltageSource {
+                name: "Vin".to_string(),
+                nplus: "VINP".to_string(),
+                nminus: "VSS".to_string(),
+                value: "vin".to_string(),
+            })];
 
         save_testbenches(&path, &testbenches).unwrap();
         let loaded = load_testbenches(&path).unwrap();
