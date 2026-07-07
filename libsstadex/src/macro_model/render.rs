@@ -649,9 +649,8 @@ mod tests {
         assert!(netlist.contains("R_ro__xdp__m1 VOUT IBIAS ro__xdp__m1"));
         assert!(netlist.contains("G_gm__xdp__m1 VOUT IBIAS VINP IBIAS gm__xdp__m1"));
         assert!(netlist.contains("R_ro__xcm__m1 VOUT VDD ro__xcm__m1"));
-        assert!(netlist.contains("R_ro__xcs_macro IBIAS VSS ro__xcs_macro"));
-        assert!(netlist.contains("G_gm__xcs_macro IBIAS VSS VBIAS VSS gm__xcs_macro"));
-        assert!(!netlist.contains("R_ro__xcs_macro__xcs__m1"));
+        assert!(netlist.contains("I_isource__xcs_macro IBIAS VSS isource__xcs_macro"));
+        assert!(!netlist.contains("I_isource__xcs_macro__xcs__m1"));
     }
 
     #[test]
@@ -676,8 +675,7 @@ mod tests {
         .unwrap();
 
         assert!(netlist.contains("* Compact small-signal macro: current_source"));
-        assert!(netlist.contains("R_ro__current_source VOUT VSS ro__current_source"));
-        assert!(netlist.contains("G_gm__current_source VOUT VSS VBIAS VSS gm__current_source"));
+        assert!(netlist.contains("I_isource__current_source VOUT VSS isource__current_source"));
     }
 
     #[test]
@@ -709,7 +707,7 @@ mod tests {
             "{compact_current_source}"
         );
         assert!(
-            compact_current_source.contains("R_ro__current_source VOUT VSS ro__current_source")
+            compact_current_source.contains("I_isource__current_source VOUT VSS isource__current_source")
         );
 
         let expanded_ota = render_macro_small_signal_netlist_with_mode(
@@ -720,9 +718,8 @@ mod tests {
         )
         .unwrap();
         assert!(expanded_ota.contains("* Small-signal macro: ota_1stage"));
-        assert!(expanded_ota.contains("R_ro__xcs_macro IBIAS VSS ro__xcs_macro"));
-        assert!(expanded_ota.contains("G_gm__xcs_macro IBIAS VSS VBIAS VSS gm__xcs_macro"));
-        assert!(!expanded_ota.contains("R_ro__xcs_macro__xcs__m1"));
+        assert!(expanded_ota.contains("I_isource__xcs_macro IBIAS VSS isource__xcs_macro"));
+        assert!(!expanded_ota.contains("I_isource__xcs_macro__xcs__m1"));
 
         let fully_expanded_ota = render_macro_small_signal_netlist_with_mode(
             ota,
@@ -734,6 +731,10 @@ mod tests {
         assert!(
             fully_expanded_ota
                 .contains("R_ro__xcs_macro__xcs__m1 IBIAS VSS ro__xcs_macro__xcs__m1")
+        );
+        assert!(
+            fully_expanded_ota
+                .contains("G_gm__xcs_macro__xcs__m1 IBIAS VSS VBIAS VSS gm__xcs_macro__xcs__m1")
         );
 
         let compact_error = render_macro_small_signal_netlist_with_mode(
@@ -783,7 +784,7 @@ mod tests {
         )
         .unwrap();
 
-        assert!(netlist.contains("G_gm__xcs_macro IBIAS VSS VBIAS VSS gm__xcs_macro"));
+        assert!(netlist.contains("I_isource__xcs_macro IBIAS VSS isource__xcs_macro"));
         assert!(!netlist.contains("G_gm__xcs_macro__xcs__m1"));
         assert!(netlist.contains("* testbench ota_gain"));
         assert!(netlist.contains("Vdd VDD VSS 0"));

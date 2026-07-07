@@ -53,12 +53,8 @@
   "small_signal": {
     "elements": [
       {
-        "name": "ro",
-        "template": "R_ro__{instance} {VOUT} {VSS} ro__{instance}"
-      },
-      {
-        "name": "gm",
-        "template": "G_gm__{instance} {VOUT} {VSS} {VBIAS} {VSS} gm__{instance}"
+        "name": "isource",
+        "template": "I_isource__{instance} {VOUT} {VSS} isource__{instance}"
       }
     ]
   },
