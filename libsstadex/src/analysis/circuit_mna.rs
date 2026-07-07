@@ -5,12 +5,12 @@ use crate::catalog::PrimitiveCatalog;
 use crate::circuit::Circuit;
 use crate::exploration::TestbenchSpec;
 use crate::macro_model::{
+    MacroCatalog, MacroModel, MacroRenderError, MacroSmallSignalMode,
     render_macro_small_signal_netlist_with_mode,
-    render_macro_testbench_small_signal_netlist_with_mode, MacroCatalog, MacroModel,
-    MacroRenderError, MacroSmallSignalMode,
+    render_macro_testbench_small_signal_netlist_with_mode,
 };
-use crate::mna::mna::{mna, mna_solve, MnaError, MnaResult, MnaSolveResult};
-use crate::netlist::{render_small_signal_netlist, SmallSignalRenderError};
+use crate::mna::mna::{MnaError, MnaResult, MnaSolveResult, mna, mna_solve};
+use crate::netlist::{SmallSignalRenderError, render_small_signal_netlist};
 
 #[derive(Debug)]
 pub struct CircuitMnaAnalysis {
@@ -191,7 +191,7 @@ mod tests {
     use super::*;
     use crate::analysis::CircuitMnaOutput;
     use crate::catalog::load_primitive_catalog;
-    use crate::circuit::{load_circuit, Connection, Instance, PinRef};
+    use crate::circuit::{Connection, Instance, PinRef, load_circuit};
     use crate::exploration::TestbenchElement;
     use crate::macro_model::load_macro_catalog;
     use crate::mna::spice_parser::NodeMap;
@@ -215,15 +215,19 @@ mod tests {
         assert!(analysis.spice_path.exists());
         assert!(analysis.cir_path.exists());
         assert!(analysis.solution.is_none());
-        assert!(analysis
-            .small_signal_netlist
-            .contains("G_gm__xdp__m1 VOUT IBIAS VINP IBIAS gm__xdp__m1"));
-        assert!(analysis
-            .mna
-            .a
-            .iter()
-            .flatten()
-            .any(|expr| expr.to_string().contains("gm__xdp__m1")));
+        assert!(
+            analysis
+                .small_signal_netlist
+                .contains("G_gm__xdp__m1 VOUT IBIAS VINP IBIAS gm__xdp__m1")
+        );
+        assert!(
+            analysis
+                .mna
+                .a
+                .iter()
+                .flatten()
+                .any(|expr| expr.to_string().contains("gm__xdp__m1"))
+        );
         assert_eq!(
             analysis.mna.variable_for_node_name("VOUT").as_deref(),
             Some("v1")
@@ -256,10 +260,12 @@ mod tests {
         assert_eq!(output.variables[0].variable, "v1");
         assert_eq!(output.variables[0].node_name, "VOUT");
         assert_eq!(output.solution, None);
-        assert!(output
-            .equations
-            .iter()
-            .any(|equation| equation.text.contains("gm__xdp__m1")));
+        assert!(
+            output
+                .equations
+                .iter()
+                .any(|equation| equation.text.contains("gm__xdp__m1"))
+        );
 
         fs::remove_dir_all(output_dir).unwrap();
     }
@@ -283,14 +289,18 @@ mod tests {
         assert!(analysis.spice_path.exists());
         assert!(analysis.cir_path.exists());
         assert!(analysis.solution.is_none());
-        assert!(analysis
-            .small_signal_netlist
-            .contains("I_isource__xcs_macro IBIAS VSS isource__xcs_macro"));
-        assert!(analysis
-            .mna
-            .z
-            .iter()
-            .any(|expr| expr.to_string().contains("isource__xcs_macro")));
+        assert!(
+            analysis
+                .small_signal_netlist
+                .contains("I_isource__xcs_macro IBIAS VSS isource__xcs_macro")
+        );
+        assert!(
+            analysis
+                .mna
+                .z
+                .iter()
+                .any(|expr| expr.to_string().contains("isource__xcs_macro"))
+        );
 
         let expanded_output_dir = std::env::temp_dir().join(format!(
             "sstadex-macro-mna-expand-test-{}",
@@ -305,9 +315,11 @@ mod tests {
             MacroSmallSignalMode::Expand,
         )
         .unwrap();
-        assert!(expanded_analysis
-            .small_signal_netlist
-            .contains("G_gm__xcs_macro__xcs__m1 IBIAS VSS VBIAS VSS gm__xcs_macro__xcs__m1"));
+        assert!(
+            expanded_analysis
+                .small_signal_netlist
+                .contains("G_gm__xcs_macro__xcs__m1 IBIAS VSS VBIAS VSS gm__xcs_macro__xcs__m1")
+        );
 
         fs::remove_dir_all(output_dir).unwrap();
         fs::remove_dir_all(expanded_output_dir).unwrap();
@@ -353,15 +365,19 @@ mod tests {
         assert!(analysis.spice_path.exists());
         assert!(analysis.cir_path.exists());
         assert!(analysis.solution.is_none());
-        assert!(analysis
-            .small_signal_netlist
-            .contains("* testbench ota_gain"));
+        assert!(
+            analysis
+                .small_signal_netlist
+                .contains("* testbench ota_gain")
+        );
         assert!(analysis.small_signal_netlist.contains("Vin VINP VSS 1"));
-        assert!(analysis
-            .mna
-            .z
-            .iter()
-            .any(|expr| expr.to_string().contains("isource__xcs_macro")));
+        assert!(
+            analysis
+                .mna
+                .z
+                .iter()
+                .any(|expr| expr.to_string().contains("isource__xcs_macro"))
+        );
 
         let expanded_output_dir = std::env::temp_dir().join(format!(
             "sstadex-macro-testbench-mna-expand-test-{}",
@@ -376,9 +392,11 @@ mod tests {
             MacroSmallSignalMode::Expand,
         )
         .unwrap();
-        assert!(expanded_analysis
-            .small_signal_netlist
-            .contains("G_gm__xcs_macro__xcs__m1 IBIAS VSS VBIAS VSS gm__xcs_macro__xcs__m1"));
+        assert!(
+            expanded_analysis
+                .small_signal_netlist
+                .contains("G_gm__xcs_macro__xcs__m1 IBIAS VSS VBIAS VSS gm__xcs_macro__xcs__m1")
+        );
 
         fs::remove_dir_all(output_dir).unwrap();
         fs::remove_dir_all(expanded_output_dir).unwrap();
@@ -413,12 +431,14 @@ mod tests {
             analysis.mna.variable_for_node_name("VOUT").as_deref(),
             Some("v2")
         );
-        assert!(analysis
-            .mna
-            .a
-            .iter()
-            .flatten()
-            .any(|expr| expr.to_string().contains("gm")));
+        assert!(
+            analysis
+                .mna
+                .a
+                .iter()
+                .flatten()
+                .any(|expr| expr.to_string().contains("gm"))
+        );
 
         fs::remove_dir_all(output_dir).unwrap();
     }

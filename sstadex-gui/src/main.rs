@@ -4,20 +4,20 @@ use std::path::{Path, PathBuf};
 
 use eframe::egui;
 use libsstadex::analysis::{
-    analyze_circuit_mna, analyze_macro_testbench_mna_with_mode, CircuitMnaOutput,
+    CircuitMnaOutput, analyze_circuit_mna, analyze_macro_testbench_mna_with_mode,
 };
-use libsstadex::catalog::{load_primitive_catalog, PrimitiveCatalog};
-use libsstadex::circuit::{save_circuit, Circuit, Connection, Instance, PinRef};
+use libsstadex::catalog::{PrimitiveCatalog, load_primitive_catalog};
+use libsstadex::circuit::{Circuit, Connection, Instance, PinRef, save_circuit};
 use libsstadex::exploration::{
-    build_filtered_candidates, prepare_macro_testbench_specs_with_mode,
-    run_prepared_expression_flow, save_exploration_candidates, save_exploration_specs,
-    save_testbenches, CandidateAxis, CandidatePoint, CandidateSet, ExplorationCandidateInput,
-    ExplorationSpec, ExplorationTable, PreparedSpec, PreparedSpecSource, RangeCondition,
-    SpecOutput, SpecParameter, SpecSource, TestbenchElement, TestbenchSpec,
+    CandidateAxis, CandidatePoint, CandidateSet, ExplorationCandidateInput, ExplorationSpec,
+    ExplorationTable, PreparedSpec, PreparedSpecSource, RangeCondition, SpecOutput, SpecParameter,
+    SpecSource, TestbenchElement, TestbenchSpec, build_filtered_candidates,
+    prepare_macro_testbench_specs_with_mode, run_prepared_expression_flow,
+    save_exploration_candidates, save_exploration_specs, save_testbenches,
 };
 use libsstadex::macro_model::{
-    load_macro_catalog, save_macro_model, MacroCatalog, MacroMetadata, MacroModel, MacroPort,
-    MacroPortRole, MacroSmallSignalMode, MacroSmallSignalModel, MacroSymbol, MacroSymbolPin,
+    MacroCatalog, MacroMetadata, MacroModel, MacroPort, MacroPortRole, MacroSmallSignalMode,
+    MacroSmallSignalModel, MacroSymbol, MacroSymbolPin, load_macro_catalog, save_macro_model,
 };
 use libsstadex::primitive::build::{
     PrimitiveBuildEngine, PrimitiveBuildInput, PrimitiveBuildInputKind, PrimitiveBuildValue,
@@ -5693,20 +5693,12 @@ fn testbench_endpoint_node_text<'a>(
                 .find(|element| element.id == *element_id)?;
             let value = testbench_element_pin_text(element, *pin).trim();
 
-            if value.is_empty() {
-                None
-            } else {
-                Some(value)
-            }
+            if value.is_empty() { None } else { Some(value) }
         }
         TestbenchEndpoint::DutPort { port_name } => {
             let value = port_name.trim();
 
-            if value.is_empty() {
-                None
-            } else {
-                Some(value)
-            }
+            if value.is_empty() { None } else { Some(value) }
         }
     }
 }
@@ -7116,10 +7108,11 @@ mod tests {
             name: "current_source".to_string(),
         });
 
-        assert!(app
-            .circuits
-            .iter()
-            .any(|circuit| circuit.name == "current_source"));
+        assert!(
+            app.circuits
+                .iter()
+                .any(|circuit| circuit.name == "current_source")
+        );
         assert_eq!(app.macro_workspaces.len(), app.circuits.len());
         assert!(matches!(
             app.canvas_instances[0].block,
@@ -7146,14 +7139,16 @@ mod tests {
             name: "ota_1stage".to_string(),
         });
 
-        assert!(app
-            .circuits
-            .iter()
-            .any(|circuit| circuit.name == "ota_1stage"));
-        assert!(app
-            .circuits
-            .iter()
-            .any(|circuit| circuit.name == "current_source"));
+        assert!(
+            app.circuits
+                .iter()
+                .any(|circuit| circuit.name == "ota_1stage")
+        );
+        assert!(
+            app.circuits
+                .iter()
+                .any(|circuit| circuit.name == "current_source")
+        );
         assert_eq!(app.macro_workspaces.len(), app.circuits.len());
     }
 

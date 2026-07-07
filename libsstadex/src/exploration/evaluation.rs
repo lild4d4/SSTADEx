@@ -389,9 +389,9 @@ fn is_identifier_body(byte: u8) -> bool {
 mod tests {
     use super::*;
     use crate::exploration::{
+        CandidateAxis, CandidatePoint, CandidateSet, SpecOutput, SpecParameter, SpecSource,
         assemble_filtered_table, build_filtered_candidates, filter_conditions,
-        prepare_candidate_expression_spec, shared_node_filter, CandidateAxis, CandidatePoint,
-        CandidateSet, SpecOutput, SpecParameter, SpecSource,
+        prepare_candidate_expression_spec, shared_node_filter,
     };
 
     #[test]

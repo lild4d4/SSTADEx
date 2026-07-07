@@ -1,5 +1,5 @@
 use super::conditions::{
-    filter_equal_columns, ExplorationFilter, FilterEqualColumnsError, FilterPhase,
+    ExplorationFilter, FilterEqualColumnsError, FilterPhase, filter_equal_columns,
 };
 use super::table::ExplorationColumn;
 
@@ -756,23 +756,27 @@ mod tests {
         assert_eq!(candidates[0].get("xcm.gm"), Some(2.0));
         assert_eq!(candidates[0].get("xcm.gds"), Some(0.02));
 
-        assert!(candidates
-            .iter()
-            .all(|candidate| match candidate.get("xdp.gm").unwrap() {
-                1.0 => candidate.get("xdp.gds") == Some(0.1),
-                10.0 => candidate.get("xdp.gds") == Some(0.2),
-                100.0 => candidate.get("xdp.gds") == Some(0.4),
-                _ => false,
-            }));
-        assert!(candidates
-            .iter()
-            .all(|candidate| match candidate.get("xcm.gm").unwrap() {
-                2.0 => candidate.get("xcm.gds") == Some(0.02),
-                20.0 => candidate.get("xcm.gds") == Some(0.05),
-                200.0 => candidate.get("xcm.gds") == Some(0.08),
-                2000.0 => candidate.get("xcm.gds") == Some(0.13),
-                _ => false,
-            }));
+        assert!(
+            candidates
+                .iter()
+                .all(|candidate| match candidate.get("xdp.gm").unwrap() {
+                    1.0 => candidate.get("xdp.gds") == Some(0.1),
+                    10.0 => candidate.get("xdp.gds") == Some(0.2),
+                    100.0 => candidate.get("xdp.gds") == Some(0.4),
+                    _ => false,
+                })
+        );
+        assert!(
+            candidates
+                .iter()
+                .all(|candidate| match candidate.get("xcm.gm").unwrap() {
+                    2.0 => candidate.get("xcm.gds") == Some(0.02),
+                    20.0 => candidate.get("xcm.gds") == Some(0.05),
+                    200.0 => candidate.get("xcm.gds") == Some(0.08),
+                    2000.0 => candidate.get("xcm.gds") == Some(0.13),
+                    _ => false,
+                })
+        );
     }
 
     #[test]
