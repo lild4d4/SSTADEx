@@ -4,20 +4,20 @@ use std::path::{Path, PathBuf};
 
 use eframe::egui;
 use libsstadex::analysis::{
-    CircuitMnaOutput, analyze_circuit_mna, analyze_macro_testbench_mna_with_mode,
+    analyze_circuit_mna, analyze_macro_testbench_mna_with_mode, CircuitMnaOutput,
 };
-use libsstadex::catalog::{PrimitiveCatalog, load_primitive_catalog};
-use libsstadex::circuit::{Circuit, Connection, Instance, PinRef, save_circuit};
+use libsstadex::catalog::{load_primitive_catalog, PrimitiveCatalog};
+use libsstadex::circuit::{save_circuit, Circuit, Connection, Instance, PinRef};
 use libsstadex::exploration::{
-    CandidateAxis, CandidatePoint, CandidateSet, ExplorationCandidateInput, ExplorationSpec,
-    ExplorationTable, PreparedSpec, PreparedSpecSource, RangeCondition, SpecOutput, SpecParameter,
-    SpecSource, TestbenchElement, TestbenchSpec, build_filtered_candidates,
-    prepare_macro_testbench_specs_with_mode, run_prepared_expression_flow,
-    save_exploration_candidates, save_exploration_specs, save_testbenches,
+    build_filtered_candidates, prepare_macro_testbench_specs_with_mode,
+    run_prepared_expression_flow, save_exploration_candidates, save_exploration_specs,
+    save_testbenches, CandidateAxis, CandidatePoint, CandidateSet, ExplorationCandidateInput,
+    ExplorationSpec, ExplorationTable, PreparedSpec, PreparedSpecSource, RangeCondition,
+    SpecOutput, SpecParameter, SpecSource, TestbenchElement, TestbenchSpec,
 };
 use libsstadex::macro_model::{
-    MacroCatalog, MacroMetadata, MacroModel, MacroPort, MacroPortRole, MacroSmallSignalMode,
-    MacroSymbol, MacroSymbolPin, save_macro_model,
+    load_macro_catalog, save_macro_model, MacroCatalog, MacroMetadata, MacroModel, MacroPort,
+    MacroPortRole, MacroSmallSignalMode, MacroSymbol, MacroSymbolPin,
 };
 use libsstadex::primitive::build::{
     PrimitiveBuildEngine, PrimitiveBuildInput, PrimitiveBuildInputKind, PrimitiveBuildValue,
@@ -38,9 +38,11 @@ fn main() -> eframe::Result {
 
 struct SstadexApp {
     catalog: Option<PrimitiveCatalog>,
+    macro_catalog: Option<MacroCatalog>,
     load_error: Option<String>,
-    show_insert_primitive_window: bool,
-    insert_primitive_selection: Option<String>,
+    macro_load_error: Option<String>,
+    show_insert_block_window: bool,
+    insert_block_selection: Option<GuiInsertBlockSelection>,
     canvas_instances: Vec<CanvasInstance>,
     label_pins: Vec<CanvasLabelPin>,
     macro_ports: Vec<CanvasMacroPort>,
@@ -77,9 +79,59 @@ struct SstadexApp {
 struct CanvasInstance {
     id: usize,
     instance_name: String,
-    primitive_name: String,
+    block: GuiBlockRef,
     position: egui::Pos2,
     orientation: GuiOrientation,
+}
+
+#[derive(Clone)]
+enum GuiBlockRef {
+    Primitive { name: String },
+    Macro { name: String },
+}
+
+#[derive(Clone, PartialEq, Eq)]
+enum GuiInsertBlockSelection {
+    Primitive(String),
+    Macro(String),
+}
+
+impl GuiInsertBlockSelection {
+    fn into_block_ref(self) -> GuiBlockRef {
+        match self {
+            Self::Primitive(name) => GuiBlockRef::Primitive { name },
+            Self::Macro(name) => GuiBlockRef::Macro { name },
+        }
+    }
+}
+
+impl GuiBlockRef {
+    fn primitive_name(&self) -> Option<&str> {
+        match self {
+            Self::Primitive { name } => Some(name),
+            Self::Macro { .. } => None,
+        }
+    }
+
+    fn macro_name(&self) -> Option<&str> {
+        match self {
+            Self::Primitive { .. } => None,
+            Self::Macro { name } => Some(name),
+        }
+    }
+
+    fn name(&self) -> &str {
+        match self {
+            Self::Primitive { name } | Self::Macro { name } => name,
+        }
+    }
+
+    fn kind_label(&self) -> &'static str {
+        match self {
+            Self::Primitive { .. } => "Primitive",
+            Self::Macro { .. } => "Macro",
+        }
+    }
 }
 
 #[derive(Clone, Hash, PartialEq, Eq)]
@@ -523,10 +575,20 @@ enum GuiProjectTestbenchElementKind {
 struct GuiProjectInstance {
     id: usize,
     name: String,
+    #[serde(default)]
     primitive: String,
+    #[serde(default)]
+    block: Option<GuiProjectBlockRef>,
     position: GuiProjectPosition,
     #[serde(default)]
     orientation: GuiProjectOrientation,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum GuiProjectBlockRef {
+    Primitive { name: String },
+    Macro { name: String },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -569,16 +631,23 @@ impl CanvasView {
 impl Default for SstadexApp {
     fn default() -> Self {
         let primitives_dir = PathBuf::from("analoglib/primitives");
+        let macros_dir = PathBuf::from("analoglib/macros");
         let (catalog, load_error) = match load_primitive_catalog(&primitives_dir) {
+            Ok(catalog) => (Some(catalog), None),
+            Err(error) => (None, Some(format!("{error:?}"))),
+        };
+        let (macro_catalog, macro_load_error) = match load_macro_catalog(&macros_dir) {
             Ok(catalog) => (Some(catalog), None),
             Err(error) => (None, Some(format!("{error:?}"))),
         };
 
         Self {
             catalog,
+            macro_catalog,
             load_error,
-            show_insert_primitive_window: false,
-            insert_primitive_selection: None,
+            macro_load_error,
+            show_insert_block_window: false,
+            insert_block_selection: None,
             canvas_instances: Vec::new(),
             label_pins: Vec::new(),
             macro_ports: Vec::new(),
@@ -685,10 +754,10 @@ impl eframe::App for SstadexApp {
                     self.add_macro_port();
                 }
                 if ui
-                    .add_enabled(is_circuit_active, egui::Button::new("Insert primitive"))
+                    .add_enabled(is_circuit_active, egui::Button::new("Insert block"))
                     .clicked()
                 {
-                    self.show_insert_primitive_window = true;
+                    self.show_insert_block_window = true;
                 }
                 if ui
                     .add_enabled(is_circuit_active, egui::Button::new("Save macro"))
@@ -742,7 +811,7 @@ impl eframe::App for SstadexApp {
             });
         });
 
-        self.show_insert_primitive_window(ctx);
+        self.show_insert_block_window(ctx);
 
         egui::SidePanel::left("project_browser")
             .resizable(true)
@@ -890,6 +959,7 @@ impl SstadexApp {
         let canvas_rect = ui.available_rect_before_wrap();
         let canvas = CanvasView { rect: canvas_rect };
         let painter = ui.painter_at(canvas_rect);
+        let macro_blocks = self.available_macro_block_views();
 
         painter.rect_filled(canvas_rect, 0.0, egui::Color32::from_gray(24));
 
@@ -904,6 +974,7 @@ impl SstadexApp {
             &self.label_pins,
             &self.macro_ports,
             self.catalog.as_ref(),
+            &macro_blocks,
             &self.connections,
         );
 
@@ -920,13 +991,10 @@ impl SstadexApp {
             }
 
             let selected = self.selected_instance_id == Some(instance.id);
-            let primitive = self
-                .catalog
-                .as_ref()
-                .and_then(|catalog| catalog.get(&instance.primitive_name));
-
-            if let Some(primitive) = primitive {
-                for pin_view in pin_views(rect, primitive, instance.orientation) {
+            if let Some(pin_views) =
+                block_pin_views(rect, instance, self.catalog.as_ref(), &macro_blocks)
+            {
+                for pin_view in pin_views {
                     let hit_rect =
                         egui::Rect::from_center_size(pin_view.position, egui::vec2(14.0, 14.0));
                     let response = ui.allocate_rect(hit_rect, egui::Sense::click());
@@ -952,10 +1020,19 @@ impl SstadexApp {
                 &painter,
                 rect,
                 instance,
-                primitive,
                 self.selected_endpoint.as_ref(),
                 selected,
             );
+            if let Some(pin_views) =
+                block_pin_views(rect, instance, self.catalog.as_ref(), &macro_blocks)
+            {
+                draw_instance_pin_views(
+                    &painter,
+                    instance.id,
+                    &pin_views,
+                    self.selected_endpoint.as_ref(),
+                );
+            }
         }
 
         for label_pin in &mut self.label_pins {
@@ -1183,12 +1260,13 @@ impl SstadexApp {
         ui.heading("Candidates");
         ui.separator();
 
+        let macro_blocks = self.available_macro_block_views();
         let net_names = self
             .catalog
             .as_ref()
             .and_then(|catalog| {
                 self.circuits.get(self.active_circuit).map(|document| {
-                    CanvasNetIndex::from_document(document, catalog)
+                    CanvasNetIndex::from_document(document, catalog, &macro_blocks)
                         .nets()
                         .iter()
                         .map(|net| net.name.clone())
@@ -1530,7 +1608,10 @@ impl SstadexApp {
             .canvas_instances
             .iter()
             .filter_map(|instance| {
-                let primitive = catalog.get(&instance.primitive_name)?;
+                let primitive = instance
+                    .block
+                    .primitive_name()
+                    .and_then(|name| catalog.get(name))?;
                 let build = primitive.build.as_ref()?;
                 Some(GuiPrimitiveBuildInstanceSummary {
                     id: instance.id,
@@ -1818,35 +1899,43 @@ impl SstadexApp {
         self.specs.get(index)
     }
 
-    fn show_insert_primitive_window(&mut self, ctx: &egui::Context) {
-        if !self.show_insert_primitive_window {
+    fn show_insert_block_window(&mut self, ctx: &egui::Context) {
+        if !self.show_insert_block_window {
             return;
         }
 
-        let mut is_open = self.show_insert_primitive_window;
-        let mut primitive_to_insert = None;
+        let mut is_open = self.show_insert_block_window;
+        let mut block_to_insert = None;
         let mut close_requested = false;
+        let macro_blocks = self.available_macro_block_views();
 
-        egui::Window::new("Insert primitive")
+        egui::Window::new("Insert block")
             .open(&mut is_open)
-            .fixed_size(egui::vec2(440.0, 300.0))
+            .fixed_size(egui::vec2(520.0, 340.0))
             .resizable(false)
             .show(ctx, |ui| {
                 if let Some(error) = &self.load_error {
-                    ui.label(format!("Failed to load catalog: {error}"));
-                    return;
+                    ui.label(format!("Failed to load primitive catalog: {error}"));
                 }
 
-                let Some(catalog) = &self.catalog else {
-                    ui.label("No primitives loaded yet");
-                    return;
-                };
+                if let Some(error) = &self.macro_load_error {
+                    ui.label(format!("Failed to load macro catalog: {error}"));
+                }
 
-                if self.insert_primitive_selection.is_none() {
-                    self.insert_primitive_selection = catalog
-                        .list()
-                        .first()
-                        .map(|primitive| primitive.name.clone());
+                if self.insert_block_selection.is_none() {
+                    self.insert_block_selection = self
+                        .catalog
+                        .as_ref()
+                        .and_then(|catalog| {
+                            catalog.list().first().map(|primitive| {
+                                GuiInsertBlockSelection::Primitive(primitive.name.clone())
+                            })
+                        })
+                        .or_else(|| {
+                            macro_blocks.first().map(|macro_block| {
+                                GuiInsertBlockSelection::Macro(macro_block.name.clone())
+                            })
+                        });
                 }
 
                 ui.horizontal_top(|ui| {
@@ -1857,13 +1946,39 @@ impl SstadexApp {
 
                         egui::ScrollArea::vertical()
                             .id_salt("insert_primitive_catalog_scroll")
-                            .max_height(190.0)
+                            .max_height(220.0)
                             .show(ui, |ui| {
-                                for primitive in catalog.list() {
+                                if let Some(catalog) = &self.catalog {
+                                    for primitive in catalog.list() {
+                                        ui.selectable_value(
+                                            &mut self.insert_block_selection,
+                                            Some(GuiInsertBlockSelection::Primitive(
+                                                primitive.name.clone(),
+                                            )),
+                                            &primitive.name,
+                                        );
+                                    }
+                                } else {
+                                    ui.label("No primitives loaded");
+                                }
+                            });
+
+                        ui.separator();
+                        ui.heading("Macros");
+                        egui::ScrollArea::vertical()
+                            .id_salt("insert_macro_catalog_scroll")
+                            .max_height(90.0)
+                            .show(ui, |ui| {
+                                if macro_blocks.is_empty() {
+                                    ui.label("No insertable macros");
+                                }
+                                for macro_block in &macro_blocks {
                                     ui.selectable_value(
-                                        &mut self.insert_primitive_selection,
-                                        Some(primitive.name.clone()),
-                                        &primitive.name,
+                                        &mut self.insert_block_selection,
+                                        Some(GuiInsertBlockSelection::Macro(
+                                            macro_block.name.clone(),
+                                        )),
+                                        &macro_block.name,
                                     );
                                 }
                             });
@@ -1877,19 +1992,30 @@ impl SstadexApp {
                         ui.separator();
 
                         egui::ScrollArea::vertical()
-                            .id_salt("insert_primitive_preview_scroll")
-                            .max_height(210.0)
-                            .show(ui, |ui| {
-                                if let Some(primitive) = self
-                                    .insert_primitive_selection
-                                    .as_ref()
-                                    .and_then(|name| catalog.get(name))
-                                {
-                                    show_primitive_details(ui, primitive);
-                                    ui.separator();
-                                    draw_primitive_preview(ui, primitive);
-                                } else {
-                                    ui.label("Select a primitive");
+                            .id_salt("insert_block_preview_scroll")
+                            .max_height(250.0)
+                            .show(ui, |ui| match &self.insert_block_selection {
+                                Some(GuiInsertBlockSelection::Primitive(name)) => {
+                                    if let Some(primitive) =
+                                        self.catalog.as_ref().and_then(|catalog| catalog.get(name))
+                                    {
+                                        show_primitive_details(ui, primitive);
+                                        ui.separator();
+                                        draw_primitive_preview(ui, primitive);
+                                    }
+                                }
+                                Some(GuiInsertBlockSelection::Macro(name)) => {
+                                    if let Some(macro_block) = macro_blocks
+                                        .iter()
+                                        .find(|macro_block| &macro_block.name == name)
+                                    {
+                                        show_macro_block_details(ui, macro_block);
+                                        ui.separator();
+                                        draw_macro_block_preview(ui, macro_block);
+                                    }
+                                }
+                                None => {
+                                    ui.label("Select a block");
                                 }
                             });
                     });
@@ -1897,12 +2023,12 @@ impl SstadexApp {
 
                 ui.separator();
                 ui.horizontal(|ui| {
-                    let can_insert = self.insert_primitive_selection.is_some();
+                    let can_insert = self.insert_block_selection.is_some();
                     if ui
                         .add_enabled(can_insert, egui::Button::new("Insert"))
                         .clicked()
                     {
-                        primitive_to_insert = self.insert_primitive_selection.clone();
+                        block_to_insert = self.insert_block_selection.clone();
                     }
                     if ui.button("Cancel").clicked() {
                         close_requested = true;
@@ -1910,14 +2036,14 @@ impl SstadexApp {
                 });
             });
 
-        if let Some(primitive_name) = primitive_to_insert {
-            self.add_canvas_instance(&primitive_name);
+        if let Some(block) = block_to_insert {
+            self.add_canvas_instance(block.into_block_ref());
             is_open = false;
         } else if close_requested {
             is_open = false;
         }
 
-        self.show_insert_primitive_window = is_open;
+        self.show_insert_block_window = is_open;
     }
 
     fn selected_label_pin_mut(&mut self) -> Option<&mut CanvasLabelPin> {
@@ -1942,7 +2068,7 @@ impl SstadexApp {
             .find(|macro_port| macro_port.id == port_id)
     }
 
-    fn add_canvas_instance(&mut self, primitive_name: &str) {
+    fn add_canvas_instance(&mut self, block: GuiBlockRef) {
         let offset = 28.0 * self.canvas_instances.len() as f32;
         let id = self.next_instance_id;
         let instance_name = next_available_instance_name(&self.canvas_instances);
@@ -1950,7 +2076,7 @@ impl SstadexApp {
         self.canvas_instances.push(CanvasInstance {
             id,
             instance_name,
-            primitive_name: primitive_name.to_string(),
+            block,
             position: egui::pos2(40.0 + offset, 40.0 + offset),
             orientation: GuiOrientation::R0,
         });
@@ -2053,6 +2179,51 @@ impl SstadexApp {
             .iter()
             .map(|circuit| circuit.name.clone())
             .collect()
+    }
+
+    fn available_macro_block_views(&self) -> Vec<GuiDutMacroView> {
+        let active_name = self
+            .circuits
+            .get(self.active_circuit)
+            .map(|document| document.name.as_str());
+        let mut macros = Vec::new();
+
+        for document in &self.circuits {
+            if Some(document.name.as_str()) == active_name {
+                continue;
+            }
+            macros.push(GuiDutMacroView::from_circuit_document(document));
+        }
+
+        if let Some(catalog) = &self.macro_catalog {
+            for macro_model in catalog.list() {
+                if Some(macro_model.name.as_str()) == active_name {
+                    continue;
+                }
+                if macros.iter().any(|view| view.name == macro_model.name) {
+                    continue;
+                }
+                macros.push(GuiDutMacroView::from_macro_model(macro_model));
+            }
+        }
+
+        macros
+    }
+
+    fn runtime_macro_catalog(&self, macro_models: Vec<MacroModel>) -> MacroCatalog {
+        let mut catalog = MacroCatalog::new();
+
+        if let Some(library_catalog) = &self.macro_catalog {
+            for macro_model in library_catalog.list() {
+                catalog.register(macro_model.clone());
+            }
+        }
+
+        for macro_model in macro_models {
+            catalog.register(macro_model);
+        }
+
+        catalog
     }
 
     fn delete_selected_canvas_item(&mut self) {
@@ -2277,10 +2448,12 @@ impl SstadexApp {
             Ok(specs) => specs,
             Err(error) => return format!("Cannot save flow inputs: {error}"),
         };
-        let candidates = match gui_candidate_input(&self.candidates, document, catalog) {
-            Ok(candidates) => candidates,
-            Err(error) => return format!("Cannot save flow inputs: {error}"),
-        };
+        let macro_blocks = self.available_macro_block_views();
+        let candidates =
+            match gui_candidate_input(&self.candidates, document, catalog, &macro_blocks) {
+                Ok(candidates) => candidates,
+                Err(error) => return format!("Cannot save flow inputs: {error}"),
+            };
 
         for macro_model in &macro_models {
             let macro_path = macro_dir.join(&macro_model.name).join("macro.json");
@@ -2382,10 +2555,7 @@ impl SstadexApp {
             );
         }
 
-        let mut macro_catalog = MacroCatalog::new();
-        for macro_model in macro_models {
-            macro_catalog.register(macro_model);
-        }
+        let macro_catalog = self.runtime_macro_catalog(macro_models);
 
         match analyze_macro_testbench_mna_with_mode(
             testbench,
@@ -2689,10 +2859,15 @@ impl SstadexApp {
         let mut circuit = Circuit::new(circuit_name);
 
         for instance in &document.canvas_instances {
-            circuit.add_instance(Instance::new(
-                exported_instance_name(instance),
-                instance.primitive_name.clone(),
-            ));
+            let instance_name = exported_instance_name(instance);
+            match &instance.block {
+                GuiBlockRef::Primitive { name } => {
+                    circuit.add_instance(Instance::primitive(instance_name, name.clone()));
+                }
+                GuiBlockRef::Macro { name } => {
+                    circuit.add_instance(Instance::macro_instance(instance_name, name.clone()));
+                }
+            }
         }
 
         for (net_index, endpoints) in connected_endpoint_groups(&document.connections)
@@ -2868,10 +3043,12 @@ impl SstadexApp {
         let output_dir = std::env::temp_dir().join("sstadex-gui-mna");
         let candidates_path = output_dir.join("gui_candidates.json");
 
-        let candidate_input = match gui_candidate_input(&self.candidates, document, catalog) {
-            Ok(candidate_input) => candidate_input,
-            Err(error) => return format!("Cannot generate candidates: {error}"),
-        };
+        let macro_blocks = self.available_macro_block_views();
+        let candidate_input =
+            match gui_candidate_input(&self.candidates, document, catalog, &macro_blocks) {
+                Ok(candidate_input) => candidate_input,
+                Err(error) => return format!("Cannot generate candidates: {error}"),
+            };
 
         if let Err(error) = save_exploration_candidates(&candidates_path, &candidate_input) {
             return format!(
@@ -2947,10 +3124,12 @@ impl SstadexApp {
         let Some(document) = self.circuits.get(self.active_circuit) else {
             return "Cannot evaluate specs: no active macro document".to_string();
         };
-        let candidate_input = match gui_candidate_input(&self.candidates, document, catalog) {
-            Ok(candidate_input) => candidate_input,
-            Err(error) => return format!("Cannot evaluate specs: {error}"),
-        };
+        let macro_blocks = self.available_macro_block_views();
+        let candidate_input =
+            match gui_candidate_input(&self.candidates, document, catalog, &macro_blocks) {
+                Ok(candidate_input) => candidate_input,
+                Err(error) => return format!("Cannot evaluate specs: {error}"),
+            };
         let gui_mode = match gui_specs_small_signal_mode(&self.specs, &self.testbenches) {
             Ok(mode) => mode,
             Err(error) => return format!("Cannot evaluate specs: {error}"),
@@ -2988,10 +3167,7 @@ impl SstadexApp {
             );
         }
 
-        let mut macro_catalog = MacroCatalog::new();
-        for macro_model in macro_models {
-            macro_catalog.register(macro_model);
-        }
+        let macro_catalog = self.runtime_macro_catalog(macro_models);
 
         let prepared_specs = match prepare_macro_testbench_specs_with_mode(
             &specs,
@@ -3130,10 +3306,7 @@ impl SstadexApp {
 
         let macro_count = macro_models.len();
         let spec_count = specs.len();
-        let mut macro_catalog = MacroCatalog::new();
-        for macro_model in macro_models {
-            macro_catalog.register(macro_model);
-        }
+        let macro_catalog = self.runtime_macro_catalog(macro_models);
 
         match prepare_macro_testbench_specs_with_mode(
             &specs,
@@ -3308,6 +3481,35 @@ impl GuiDutMacroView {
                 .collect(),
         }
     }
+
+    fn from_macro_model(macro_model: &MacroModel) -> Self {
+        let ports = macro_model
+            .ports
+            .iter()
+            .enumerate()
+            .map(|(index, port)| {
+                let symbol_pin = macro_model
+                    .symbol
+                    .as_ref()
+                    .and_then(|symbol| symbol.pins.iter().find(|pin| pin.name == port.name));
+                GuiMacroPort {
+                    name: port.name.clone(),
+                    role: gui_macro_port_role(port.role.clone()),
+                    symbol_side: symbol_pin
+                        .map(|pin| pin.side)
+                        .unwrap_or_else(|| default_symbol_side_for_index(index)),
+                    symbol_offset: symbol_pin
+                        .map(|pin| pin.offset)
+                        .unwrap_or_else(|| default_symbol_offset_for_index(index)),
+                }
+            })
+            .collect();
+
+        Self {
+            name: macro_model.name.clone(),
+            ports,
+        }
+    }
 }
 
 impl GuiTestbenchDocument {
@@ -3432,6 +3634,34 @@ impl GuiProjectOrientation {
     }
 }
 
+impl GuiProjectBlockRef {
+    fn from_gui_block_ref(block: &GuiBlockRef) -> Self {
+        match block {
+            GuiBlockRef::Primitive { name } => Self::Primitive { name: name.clone() },
+            GuiBlockRef::Macro { name } => Self::Macro { name: name.clone() },
+        }
+    }
+
+    fn into_gui_block_ref(self) -> GuiBlockRef {
+        match self {
+            Self::Primitive { name } => GuiBlockRef::Primitive { name },
+            Self::Macro { name } => GuiBlockRef::Macro { name },
+        }
+    }
+}
+
+impl GuiProjectInstance {
+    fn into_gui_block_ref(self) -> GuiBlockRef {
+        if let Some(block) = self.block {
+            return block.into_gui_block_ref();
+        }
+
+        GuiBlockRef::Primitive {
+            name: self.primitive,
+        }
+    }
+}
+
 impl GuiProjectCircuit {
     fn from_circuit_document(circuit: &GuiCircuitDocument) -> Self {
         Self {
@@ -3448,7 +3678,12 @@ impl GuiProjectCircuit {
                 .map(|instance| GuiProjectInstance {
                     id: instance.id,
                     name: exported_instance_name(instance),
-                    primitive: instance.primitive_name.clone(),
+                    primitive: instance
+                        .block
+                        .primitive_name()
+                        .unwrap_or_default()
+                        .to_string(),
+                    block: Some(GuiProjectBlockRef::from_gui_block_ref(&instance.block)),
                     position: GuiProjectPosition::from_pos(instance.position),
                     orientation: GuiProjectOrientation::from_gui_orientation(instance.orientation),
                 })
@@ -3487,12 +3722,20 @@ impl GuiProjectCircuit {
         let canvas_instances = self
             .instances
             .into_iter()
-            .map(|instance| CanvasInstance {
-                id: instance.id,
-                instance_name: instance.name,
-                primitive_name: instance.primitive,
-                position: instance.position.to_pos(),
-                orientation: instance.orientation.into_gui_orientation(),
+            .map(|instance| {
+                let id = instance.id;
+                let instance_name = instance.name.clone();
+                let position = instance.position.to_pos();
+                let orientation = instance.orientation.into_gui_orientation();
+                let block = instance.into_gui_block_ref();
+
+                CanvasInstance {
+                    id,
+                    instance_name,
+                    block,
+                    position,
+                    orientation,
+                }
             })
             .collect::<Vec<_>>();
         let label_pins = self
@@ -4243,6 +4486,7 @@ fn gui_candidate_input(
     candidates: &GuiCandidateDocument,
     document: &GuiCircuitDocument,
     catalog: &PrimitiveCatalog,
+    macro_blocks: &[GuiDutMacroView],
 ) -> Result<ExplorationCandidateInput, String> {
     let axes = candidates
         .axes
@@ -4250,7 +4494,7 @@ fn gui_candidate_input(
         .enumerate()
         .map(|(index, axis)| gui_candidate_axis(axis, index + 1))
         .collect::<Result<Vec<_>, _>>()?;
-    let sets = gui_primitive_candidate_sets(candidates, document, catalog)?;
+    let sets = gui_primitive_candidate_sets(candidates, document, catalog, macro_blocks)?;
 
     Ok(ExplorationCandidateInput {
         axes,
@@ -4263,12 +4507,16 @@ fn gui_primitive_candidate_sets(
     candidates: &GuiCandidateDocument,
     document: &GuiCircuitDocument,
     catalog: &PrimitiveCatalog,
+    macro_blocks: &[GuiDutMacroView],
 ) -> Result<Vec<CandidateSet>, String> {
     let build_instances = document
         .canvas_instances
         .iter()
         .filter_map(|instance| {
-            let primitive = catalog.get(&instance.primitive_name)?;
+            let primitive = instance
+                .block
+                .primitive_name()
+                .and_then(|name| catalog.get(name))?;
             primitive.build.as_ref()?;
             Some((instance, primitive))
         })
@@ -4278,7 +4526,7 @@ fn gui_primitive_candidate_sets(
         return Ok(Vec::new());
     }
 
-    let net_index = CanvasNetIndex::from_document(document, catalog);
+    let net_index = CanvasNetIndex::from_document(document, catalog, macro_blocks);
     let voltage_constraints = gui_net_voltage_constraint_map(candidates)?;
     let global_parameters = gui_build_parameter_map(
         &candidates.global_build_parameters,
@@ -4484,7 +4732,11 @@ struct CanvasNet {
 }
 
 impl CanvasNetIndex {
-    fn from_document(document: &GuiCircuitDocument, catalog: &PrimitiveCatalog) -> Self {
+    fn from_document(
+        document: &GuiCircuitDocument,
+        catalog: &PrimitiveCatalog,
+        macro_blocks: &[GuiDutMacroView],
+    ) -> Self {
         let mut nets = Vec::new();
         let mut endpoint_to_net = HashMap::new();
         let mut seen_endpoints = HashMap::new();
@@ -4502,7 +4754,7 @@ impl CanvasNetIndex {
             nets.push(CanvasNet { name });
         }
 
-        for endpoint in document_canvas_endpoints(document, catalog) {
+        for endpoint in document_canvas_endpoints(document, catalog, macro_blocks) {
             if seen_endpoints.contains_key(&endpoint) {
                 continue;
             }
@@ -4531,15 +4783,30 @@ impl CanvasNetIndex {
 fn document_canvas_endpoints(
     document: &GuiCircuitDocument,
     catalog: &PrimitiveCatalog,
+    macro_blocks: &[GuiDutMacroView],
 ) -> Vec<CanvasEndpoint> {
     let mut endpoints = Vec::new();
     for instance in &document.canvas_instances {
-        if let Some(primitive) = catalog.get(&instance.primitive_name) {
-            for pin in &primitive.pins {
-                endpoints.push(CanvasEndpoint::PrimitivePin {
-                    instance_id: instance.id,
-                    pin_name: pin.name.clone(),
-                });
+        if let Some(primitive_name) = instance.block.primitive_name() {
+            if let Some(primitive) = catalog.get(primitive_name) {
+                for pin in &primitive.pins {
+                    endpoints.push(CanvasEndpoint::PrimitivePin {
+                        instance_id: instance.id,
+                        pin_name: pin.name.clone(),
+                    });
+                }
+            }
+        } else if let Some(macro_name) = instance.block.macro_name() {
+            if let Some(macro_block) = macro_blocks
+                .iter()
+                .find(|macro_block| macro_block.name == macro_name)
+            {
+                for port in &macro_block.ports {
+                    endpoints.push(CanvasEndpoint::PrimitivePin {
+                        instance_id: instance.id,
+                        pin_name: port.name.clone(),
+                    });
+                }
             }
         }
     }
@@ -4943,12 +5210,20 @@ fn testbench_endpoint_node_text<'a>(
                 .find(|element| element.id == *element_id)?;
             let value = testbench_element_pin_text(element, *pin).trim();
 
-            if value.is_empty() { None } else { Some(value) }
+            if value.is_empty() {
+                None
+            } else {
+                Some(value)
+            }
         }
         TestbenchEndpoint::DutPort { port_name } => {
             let value = port_name.trim();
 
-            if value.is_empty() { None } else { Some(value) }
+            if value.is_empty() {
+                None
+            } else {
+                Some(value)
+            }
         }
     }
 }
@@ -5056,6 +5331,47 @@ fn draw_primitive_preview(ui: &mut egui::Ui, primitive: &PrimitiveManifest) {
         GuiOrientation::R0,
         None,
     );
+}
+
+fn show_macro_block_details(ui: &mut egui::Ui, macro_block: &GuiDutMacroView) {
+    ui.label(&macro_block.name);
+    ui.label(format!("Ports: {}", macro_block.ports.len()));
+
+    ui.collapsing("Ports", |ui| {
+        for port in &macro_block.ports {
+            ui.horizontal(|ui| {
+                ui.label(&port.name);
+                ui.label(port.role.label());
+            });
+        }
+    });
+}
+
+fn draw_macro_block_preview(ui: &mut egui::Ui, macro_block: &GuiDutMacroView) {
+    let preview_size = egui::vec2(200.0, 96.0);
+    let (rect, _) = ui.allocate_exact_size(preview_size, egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+
+    painter.rect_filled(rect, 4.0, egui::Color32::from_gray(28));
+
+    let symbol_rect = egui::Rect::from_center_size(rect.center(), egui::vec2(150.0, 58.0));
+    painter.rect_filled(symbol_rect, 4.0, egui::Color32::from_rgb(45, 49, 56));
+    painter.rect_stroke(
+        symbol_rect,
+        4.0,
+        egui::Stroke::new(1.0, egui::Color32::from_rgb(130, 150, 170)),
+        egui::StrokeKind::Inside,
+    );
+    painter.text(
+        symbol_rect.center_top() + egui::vec2(0.0, 16.0),
+        egui::Align2::CENTER_TOP,
+        &macro_block.name,
+        egui::FontId::proportional(13.0),
+        egui::Color32::WHITE,
+    );
+
+    let pin_views = macro_pin_views(symbol_rect, macro_block, GuiOrientation::R0);
+    draw_instance_pin_views(&painter, 0, &pin_views, None);
 }
 
 fn draw_testbench_canvas(
@@ -5746,7 +6062,11 @@ fn show_instance_details(
 ) {
     ui.heading(&instance.instance_name);
     ui.label(format!("Canvas ID: {}", instance.id));
-    ui.label(format!("Primitive: {}", instance.primitive_name));
+    ui.label(format!(
+        "{}: {}",
+        instance.block.kind_label(),
+        instance.block.name()
+    ));
     ui.horizontal(|ui| {
         ui.label("Instance name:");
         ui.text_edit_singleline(&mut instance.instance_name);
@@ -5886,6 +6206,7 @@ fn draw_canvas_connections(
     label_pins: &[CanvasLabelPin],
     macro_ports: &[CanvasMacroPort],
     catalog: Option<&PrimitiveCatalog>,
+    macro_blocks: &[GuiDutMacroView],
     connections: &[CanvasConnection],
 ) {
     for connection in connections {
@@ -5895,6 +6216,7 @@ fn draw_canvas_connections(
             label_pins,
             macro_ports,
             catalog,
+            macro_blocks,
             &connection.from,
         ) else {
             continue;
@@ -5905,6 +6227,7 @@ fn draw_canvas_connections(
             label_pins,
             macro_ports,
             catalog,
+            macro_blocks,
             &connection.to,
         ) else {
             continue;
@@ -5920,6 +6243,7 @@ fn endpoint_view(
     label_pins: &[CanvasLabelPin],
     macro_ports: &[CanvasMacroPort],
     catalog: Option<&PrimitiveCatalog>,
+    macro_blocks: &[GuiDutMacroView],
     endpoint: &CanvasEndpoint,
 ) -> Option<EndpointView> {
     match endpoint {
@@ -5931,10 +6255,9 @@ fn endpoint_view(
             let instance = instances
                 .iter()
                 .find(|instance| instance.id == *instance_id)?;
-            let primitive = catalog.get(&instance.primitive_name)?;
             let rect = canvas.instance_rect(instance);
 
-            pin_views(rect, primitive, instance.orientation)
+            block_pin_views(rect, instance, Some(catalog), macro_blocks)?
                 .into_iter()
                 .find(|pin| pin.name == *pin_name)
                 .map(EndpointView::from_pin_view)
@@ -6098,6 +6421,41 @@ fn macro_port_role(role: GuiMacroPortRole) -> MacroPortRole {
     }
 }
 
+fn gui_macro_port_role(role: MacroPortRole) -> GuiMacroPortRole {
+    match role {
+        MacroPortRole::Input => GuiMacroPortRole::Input,
+        MacroPortRole::Output => GuiMacroPortRole::Output,
+        MacroPortRole::Inout => GuiMacroPortRole::Inout,
+        MacroPortRole::Bias => GuiMacroPortRole::Bias,
+        MacroPortRole::Supply => GuiMacroPortRole::Supply,
+        MacroPortRole::Ground => GuiMacroPortRole::Ground,
+    }
+}
+
+fn pin_role_from_macro_port_role(role: GuiMacroPortRole) -> PinRole {
+    match role {
+        GuiMacroPortRole::Input => PinRole::Input,
+        GuiMacroPortRole::Output => PinRole::Output,
+        GuiMacroPortRole::Inout => PinRole::Internal,
+        GuiMacroPortRole::Bias => PinRole::Bias,
+        GuiMacroPortRole::Supply | GuiMacroPortRole::Ground => PinRole::Supply,
+    }
+}
+
+fn default_symbol_side_for_index(index: usize) -> SymbolPinSide {
+    match index % 4 {
+        0 => SymbolPinSide::Left,
+        1 => SymbolPinSide::Right,
+        2 => SymbolPinSide::Top,
+        _ => SymbolPinSide::Bottom,
+    }
+}
+
+fn default_symbol_offset_for_index(index: usize) -> f32 {
+    let slot = (index / 4) + 1;
+    (slot as f32 / (slot + 1) as f32).clamp(0.0, 1.0)
+}
+
 fn macro_small_signal_mode(mode: GuiSmallSignalMode) -> MacroSmallSignalMode {
     match mode {
         GuiSmallSignalMode::CompactWhenAvailable => MacroSmallSignalMode::CompactWhenAvailable,
@@ -6217,7 +6575,9 @@ mod tests {
         let instance = CanvasInstance {
             id: 1,
             instance_name: "xcs".to_string(),
-            primitive_name: primitive.name.clone(),
+            block: GuiBlockRef::Primitive {
+                name: primitive.name.clone(),
+            },
             position: egui::pos2(0.0, 0.0),
             orientation: GuiOrientation::R0,
         };
@@ -6244,7 +6604,7 @@ mod tests {
             next_macro_port_id: 1,
         };
         let catalog = catalog_with_primitive(primitive.clone());
-        let net_index = CanvasNetIndex::from_document(&document, &catalog);
+        let net_index = CanvasNetIndex::from_document(&document, &catalog, &[]);
         let voltage_constraints = HashMap::from([(
             "VIN".to_string(),
             PrimitiveBuildValue::Vector(vec![0.4, 0.6]),
@@ -6278,7 +6638,9 @@ mod tests {
         let instance = CanvasInstance {
             id: 7,
             instance_name: "x7".to_string(),
-            primitive_name: primitive.name.clone(),
+            block: GuiBlockRef::Primitive {
+                name: primitive.name.clone(),
+            },
             position: egui::pos2(0.0, 0.0),
             orientation: GuiOrientation::R0,
         };
@@ -6295,7 +6657,7 @@ mod tests {
             next_macro_port_id: 1,
         };
         let catalog = catalog_with_primitive(primitive.clone());
-        let net_index = CanvasNetIndex::from_document(&document, &catalog);
+        let net_index = CanvasNetIndex::from_document(&document, &catalog, &[]);
         let voltage_constraints =
             HashMap::from([("x7.VIN".to_string(), PrimitiveBuildValue::Vector(vec![0.5]))]);
         let global_parameters =
@@ -6324,6 +6686,57 @@ mod tests {
         assert_eq!(
             input.values.get("current"),
             Some(&PrimitiveBuildValue::Scalar(250e-6))
+        );
+    }
+
+    #[test]
+    fn project_macro_instance_roundtrips_block_ref() {
+        let document = macro_instance_document();
+
+        let project = GuiProjectCircuit::from_circuit_document(&document);
+        let loaded = project.into_circuit_document();
+
+        assert_eq!(loaded.canvas_instances.len(), 1);
+        assert_eq!(
+            loaded.canvas_instances[0].block.macro_name(),
+            Some("current_source")
+        );
+    }
+
+    #[test]
+    fn macro_instance_exports_as_macro_block() {
+        let app = SstadexApp::default();
+        let document = macro_instance_document();
+
+        let circuit = app.build_circuit_from_document(&document);
+
+        assert_eq!(circuit.instances.len(), 1);
+        assert_eq!(circuit.instances[0].macro_name(), Some("current_source"));
+        assert_eq!(circuit.instances[0].primitive_name(), None);
+    }
+
+    #[test]
+    fn canvas_net_index_includes_macro_instance_ports() {
+        let primitive_catalog = PrimitiveCatalog::new();
+        let document = macro_instance_document();
+        let macro_blocks = vec![GuiDutMacroView {
+            name: "current_source".to_string(),
+            ports: vec![GuiMacroPort {
+                name: "VOUT".to_string(),
+                role: GuiMacroPortRole::Output,
+                symbol_side: SymbolPinSide::Right,
+                symbol_offset: 0.5,
+            }],
+        }];
+
+        let net_index = CanvasNetIndex::from_document(&document, &primitive_catalog, &macro_blocks);
+
+        assert_eq!(
+            net_index.net_for_endpoint(&CanvasEndpoint::PrimitivePin {
+                instance_id: 1,
+                pin_name: "VOUT".to_string()
+            }),
+            Some("xcs_macro.VOUT")
         );
     }
 
@@ -6430,6 +6843,29 @@ mod tests {
         let mut catalog = PrimitiveCatalog::new();
         catalog.register(primitive);
         catalog
+    }
+
+    fn macro_instance_document() -> GuiCircuitDocument {
+        GuiCircuitDocument {
+            name: "parent".to_string(),
+            subckt_name: "parent".to_string(),
+            ports: Vec::new(),
+            canvas_instances: vec![CanvasInstance {
+                id: 1,
+                instance_name: "xcs_macro".to_string(),
+                block: GuiBlockRef::Macro {
+                    name: "current_source".to_string(),
+                },
+                position: egui::pos2(0.0, 0.0),
+                orientation: GuiOrientation::R0,
+            }],
+            label_pins: Vec::new(),
+            macro_ports: Vec::new(),
+            connections: Vec::new(),
+            next_instance_id: 2,
+            next_label_pin_id: 1,
+            next_macro_port_id: 1,
+        }
     }
 
     fn primitive_manifest_with_build() -> PrimitiveManifest {
@@ -6949,8 +7385,7 @@ fn draw_canvas_instance(
     painter: &egui::Painter,
     rect: egui::Rect,
     instance: &CanvasInstance,
-    primitive: Option<&PrimitiveManifest>,
-    selected_endpoint: Option<&CanvasEndpoint>,
+    _selected_endpoint: Option<&CanvasEndpoint>,
     selected: bool,
 ) {
     let stroke_color = if selected {
@@ -6979,21 +7414,10 @@ fn draw_canvas_instance(
     painter.text(
         rect.center_bottom() - egui::vec2(0.0, 22.0),
         egui::Align2::CENTER_BOTTOM,
-        &instance.primitive_name,
+        instance.block.name(),
         egui::FontId::proportional(12.0),
         egui::Color32::from_gray(180),
     );
-
-    if let Some(primitive) = primitive {
-        draw_instance_pins(
-            painter,
-            rect,
-            instance.id,
-            primitive,
-            instance.orientation,
-            selected_endpoint,
-        );
-    }
 }
 
 fn draw_label_pin(
@@ -7065,7 +7489,17 @@ fn draw_instance_pins(
     orientation: GuiOrientation,
     selected_endpoint: Option<&CanvasEndpoint>,
 ) {
-    for pin_view in pin_views(rect, primitive, orientation) {
+    let pin_views = pin_views(rect, primitive, orientation);
+    draw_instance_pin_views(painter, instance_id, &pin_views, selected_endpoint);
+}
+
+fn draw_instance_pin_views(
+    painter: &egui::Painter,
+    instance_id: usize,
+    pin_views: &[PinView],
+    selected_endpoint: Option<&CanvasEndpoint>,
+) {
+    for pin_view in pin_views {
         let selected = selected_endpoint.is_some_and(|endpoint| {
             *endpoint
                 == CanvasEndpoint::PrimitivePin {
@@ -7093,6 +7527,26 @@ fn draw_instance_pins(
             egui::FontId::proportional(10.0),
             egui::Color32::from_gray(210),
         );
+    }
+}
+
+fn block_pin_views(
+    rect: egui::Rect,
+    instance: &CanvasInstance,
+    catalog: Option<&PrimitiveCatalog>,
+    macro_blocks: &[GuiDutMacroView],
+) -> Option<Vec<PinView>> {
+    match &instance.block {
+        GuiBlockRef::Primitive { name } => {
+            let primitive = catalog?.get(name)?;
+            Some(pin_views(rect, primitive, instance.orientation))
+        }
+        GuiBlockRef::Macro { name } => {
+            let macro_block = macro_blocks
+                .iter()
+                .find(|macro_block| &macro_block.name == name)?;
+            Some(macro_pin_views(rect, macro_block, instance.orientation))
+        }
     }
 }
 
@@ -7180,6 +7634,31 @@ fn pin_views(
     views
         .into_iter()
         .map(|view| rotate_pin_view(view, rect, orientation))
+        .collect()
+}
+
+fn macro_pin_views(
+    rect: egui::Rect,
+    macro_block: &GuiDutMacroView,
+    orientation: GuiOrientation,
+) -> Vec<PinView> {
+    macro_block
+        .ports
+        .iter()
+        .map(|port| {
+            let side = symbol_pin_side_to_pin_side(port.symbol_side);
+            rotate_pin_view(
+                pin_view_at(
+                    rect,
+                    side,
+                    port.symbol_offset.clamp(0.0, 1.0),
+                    &port.name,
+                    &pin_role_from_macro_port_role(port.role),
+                ),
+                rect,
+                orientation,
+            )
+        })
         .collect()
 }
 

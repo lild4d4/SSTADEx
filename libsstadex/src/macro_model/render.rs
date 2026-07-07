@@ -707,7 +707,8 @@ mod tests {
             "{compact_current_source}"
         );
         assert!(
-            compact_current_source.contains("I_isource__current_source VOUT VSS isource__current_source")
+            compact_current_source
+                .contains("I_isource__current_source VOUT VSS isource__current_source")
         );
 
         let expanded_ota = render_macro_small_signal_netlist_with_mode(
