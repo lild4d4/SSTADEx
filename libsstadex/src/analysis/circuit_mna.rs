@@ -5,12 +5,12 @@ use crate::catalog::PrimitiveCatalog;
 use crate::circuit::Circuit;
 use crate::exploration::TestbenchSpec;
 use crate::macro_model::{
-    MacroCatalog, MacroModel, MacroRenderError, MacroSmallSignalMode,
     render_macro_small_signal_netlist_with_mode,
-    render_macro_testbench_small_signal_netlist_with_mode,
+    render_macro_testbench_small_signal_netlist_with_mode, MacroCatalog, MacroModel,
+    MacroRenderError, MacroSmallSignalMode,
 };
-use crate::mna::mna::{MnaError, MnaResult, MnaSolveResult, mna, mna_solve};
-use crate::netlist::{SmallSignalRenderError, render_small_signal_netlist};
+use crate::mna::mna::{mna, mna_solve, MnaError, MnaResult, MnaSolveResult};
+use crate::netlist::{render_small_signal_netlist, SmallSignalRenderError};
 
 #[derive(Debug)]
 pub struct CircuitMnaAnalysis {
@@ -186,12 +186,31 @@ pub fn transfer_function_expression(
     Ok(format!("({output_expression})/({input_expression})"))
 }
 
+pub fn node_voltage_expression(
+    mna: &MnaResult,
+    solution: &MnaSolveResult,
+    node: &str,
+) -> Result<String, TransferFunctionError> {
+    let variable = mna.variable_for_node_name(node).ok_or_else(|| {
+        TransferFunctionError::MissingOutputNode {
+            node: node.to_string(),
+        }
+    })?;
+    let expression = solution.solutions.get(&variable).ok_or_else(|| {
+        TransferFunctionError::MissingOutputSolution {
+            variable: variable.clone(),
+        }
+    })?;
+
+    Ok(expression.clone())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::analysis::CircuitMnaOutput;
     use crate::catalog::load_primitive_catalog;
-    use crate::circuit::{Connection, Instance, PinRef, load_circuit};
+    use crate::circuit::{load_circuit, Connection, Instance, PinRef};
     use crate::exploration::TestbenchElement;
     use crate::macro_model::load_macro_catalog;
     use crate::mna::spice_parser::NodeMap;
@@ -215,19 +234,15 @@ mod tests {
         assert!(analysis.spice_path.exists());
         assert!(analysis.cir_path.exists());
         assert!(analysis.solution.is_none());
-        assert!(
-            analysis
-                .small_signal_netlist
-                .contains("G_gm__xdp__m1 VOUT IBIAS VINP IBIAS gm__xdp__m1")
-        );
-        assert!(
-            analysis
-                .mna
-                .a
-                .iter()
-                .flatten()
-                .any(|expr| expr.to_string().contains("gm__xdp__m1"))
-        );
+        assert!(analysis
+            .small_signal_netlist
+            .contains("G_gm__xdp__m1 VOUT IBIAS VINP IBIAS gm__xdp__m1"));
+        assert!(analysis
+            .mna
+            .a
+            .iter()
+            .flatten()
+            .any(|expr| expr.to_string().contains("gm__xdp__m1")));
         assert_eq!(
             analysis.mna.variable_for_node_name("VOUT").as_deref(),
             Some("v1")
@@ -260,12 +275,10 @@ mod tests {
         assert_eq!(output.variables[0].variable, "v1");
         assert_eq!(output.variables[0].node_name, "VOUT");
         assert_eq!(output.solution, None);
-        assert!(
-            output
-                .equations
-                .iter()
-                .any(|equation| equation.text.contains("gm__xdp__m1"))
-        );
+        assert!(output
+            .equations
+            .iter()
+            .any(|equation| equation.text.contains("gm__xdp__m1")));
 
         fs::remove_dir_all(output_dir).unwrap();
     }
@@ -289,18 +302,14 @@ mod tests {
         assert!(analysis.spice_path.exists());
         assert!(analysis.cir_path.exists());
         assert!(analysis.solution.is_none());
-        assert!(
-            analysis
-                .small_signal_netlist
-                .contains("I_isource__xcs_macro IBIAS VSS isource__xcs_macro")
-        );
-        assert!(
-            analysis
-                .mna
-                .z
-                .iter()
-                .any(|expr| expr.to_string().contains("isource__xcs_macro"))
-        );
+        assert!(analysis
+            .small_signal_netlist
+            .contains("I_isource__xcs_macro IBIAS VSS isource__xcs_macro"));
+        assert!(analysis
+            .mna
+            .z
+            .iter()
+            .any(|expr| expr.to_string().contains("isource__xcs_macro")));
 
         let expanded_output_dir = std::env::temp_dir().join(format!(
             "sstadex-macro-mna-expand-test-{}",
@@ -315,11 +324,9 @@ mod tests {
             MacroSmallSignalMode::Expand,
         )
         .unwrap();
-        assert!(
-            expanded_analysis
-                .small_signal_netlist
-                .contains("G_gm__xcs_macro__xcs__m1 IBIAS VSS VBIAS VSS gm__xcs_macro__xcs__m1")
-        );
+        assert!(expanded_analysis
+            .small_signal_netlist
+            .contains("G_gm__xcs_macro__xcs__m1 IBIAS VSS VBIAS VSS gm__xcs_macro__xcs__m1"));
 
         fs::remove_dir_all(output_dir).unwrap();
         fs::remove_dir_all(expanded_output_dir).unwrap();
@@ -365,19 +372,15 @@ mod tests {
         assert!(analysis.spice_path.exists());
         assert!(analysis.cir_path.exists());
         assert!(analysis.solution.is_none());
-        assert!(
-            analysis
-                .small_signal_netlist
-                .contains("* testbench ota_gain")
-        );
+        assert!(analysis
+            .small_signal_netlist
+            .contains("* testbench ota_gain"));
         assert!(analysis.small_signal_netlist.contains("Vin VINP VSS 1"));
-        assert!(
-            analysis
-                .mna
-                .z
-                .iter()
-                .any(|expr| expr.to_string().contains("isource__xcs_macro"))
-        );
+        assert!(analysis
+            .mna
+            .z
+            .iter()
+            .any(|expr| expr.to_string().contains("isource__xcs_macro")));
 
         let expanded_output_dir = std::env::temp_dir().join(format!(
             "sstadex-macro-testbench-mna-expand-test-{}",
@@ -392,11 +395,9 @@ mod tests {
             MacroSmallSignalMode::Expand,
         )
         .unwrap();
-        assert!(
-            expanded_analysis
-                .small_signal_netlist
-                .contains("G_gm__xcs_macro__xcs__m1 IBIAS VSS VBIAS VSS gm__xcs_macro__xcs__m1")
-        );
+        assert!(expanded_analysis
+            .small_signal_netlist
+            .contains("G_gm__xcs_macro__xcs__m1 IBIAS VSS VBIAS VSS gm__xcs_macro__xcs__m1"));
 
         fs::remove_dir_all(output_dir).unwrap();
         fs::remove_dir_all(expanded_output_dir).unwrap();
@@ -431,14 +432,12 @@ mod tests {
             analysis.mna.variable_for_node_name("VOUT").as_deref(),
             Some("v2")
         );
-        assert!(
-            analysis
-                .mna
-                .a
-                .iter()
-                .flatten()
-                .any(|expr| expr.to_string().contains("gm"))
-        );
+        assert!(analysis
+            .mna
+            .a
+            .iter()
+            .flatten()
+            .any(|expr| expr.to_string().contains("gm")));
 
         fs::remove_dir_all(output_dir).unwrap();
     }
@@ -480,6 +479,22 @@ mod tests {
         assert_eq!(
             transfer_function_expression(&mna, &solution, "VIN", "VOUT").unwrap(),
             "(gm*ro*vin)/(vin)"
+        );
+    }
+
+    #[test]
+    fn extracts_node_voltage_expression_from_mna_solution() {
+        let mna = synthetic_mna_result();
+        let solution = MnaSolveResult {
+            solutions: HashMap::from([
+                ("v1".to_string(), "gm*ro*vin".to_string()),
+                ("v2".to_string(), "vin".to_string()),
+            ]),
+        };
+
+        assert_eq!(
+            node_voltage_expression(&mna, &solution, "VOUT").unwrap(),
+            "gm*ro*vin"
         );
     }
 

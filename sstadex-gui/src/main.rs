@@ -293,12 +293,33 @@ struct GuiTestbenchConnection {
 #[derive(Clone)]
 struct GuiSpecDocument {
     name: String,
+    source_kind: GuiSpecSourceKind,
     testbench: String,
     input: String,
     output: String,
+    node: String,
     min: String,
     max: String,
     parameter_map: Vec<GuiSpecParameter>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GuiSpecSourceKind {
+    TransferFunction,
+    NodeVoltage,
+}
+
+impl GuiSpecSourceKind {
+    fn all() -> [Self; 2] {
+        [Self::TransferFunction, Self::NodeVoltage]
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::TransferFunction => "transfer function",
+            Self::NodeVoltage => "node voltage",
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -429,12 +450,26 @@ struct GuiProjectMacroWorkspace {
 #[derive(Serialize, Deserialize)]
 struct GuiProjectSpec {
     name: String,
+    #[serde(default)]
+    source_kind: GuiProjectSpecSourceKind,
     testbench: String,
+    #[serde(default)]
     input: String,
+    #[serde(default)]
     output: String,
+    #[serde(default)]
+    node: String,
     min: String,
     max: String,
     parameter_map: Vec<GuiProjectSpecParameter>,
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+enum GuiProjectSpecSourceKind {
+    #[default]
+    TransferFunction,
+    NodeVoltage,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1285,6 +1320,16 @@ impl SstadexApp {
             ui.text_edit_singleline(&mut spec.name);
         });
         ui.horizontal(|ui| {
+            ui.label("Type:");
+            egui::ComboBox::from_id_salt("spec_source_kind")
+                .selected_text(spec.source_kind.label())
+                .show_ui(ui, |ui| {
+                    for kind in GuiSpecSourceKind::all() {
+                        ui.selectable_value(&mut spec.source_kind, kind, kind.label());
+                    }
+                });
+        });
+        ui.horizontal(|ui| {
             ui.label("Testbench:");
             egui::ComboBox::from_id_salt("spec_testbench")
                 .selected_text(display_optional_name(&spec.testbench))
@@ -1298,12 +1343,22 @@ impl SstadexApp {
                     }
                 });
         });
-        ui.horizontal(|ui| {
-            ui.label("Input:");
-            ui.text_edit_singleline(&mut spec.input);
-            ui.label("Output:");
-            ui.text_edit_singleline(&mut spec.output);
-        });
+        match spec.source_kind {
+            GuiSpecSourceKind::TransferFunction => {
+                ui.horizontal(|ui| {
+                    ui.label("Input:");
+                    ui.text_edit_singleline(&mut spec.input);
+                    ui.label("Output:");
+                    ui.text_edit_singleline(&mut spec.output);
+                });
+            }
+            GuiSpecSourceKind::NodeVoltage => {
+                ui.horizontal(|ui| {
+                    ui.label("Node:");
+                    ui.text_edit_singleline(&mut spec.node);
+                });
+            }
+        }
         ui.horizontal(|ui| {
             ui.label("Min:");
             ui.text_edit_singleline(&mut spec.min);
@@ -2399,9 +2454,11 @@ impl SstadexApp {
 
         self.specs.push(GuiSpecDocument {
             name: format!("spec_{index}"),
+            source_kind: GuiSpecSourceKind::TransferFunction,
             testbench,
             input: String::new(),
             output: String::new(),
+            node: String::new(),
             min: String::new(),
             max: String::new(),
             parameter_map: Vec::new(),
@@ -4708,9 +4765,11 @@ impl GuiProjectSpec {
     fn from_spec_document(spec: &GuiSpecDocument) -> Self {
         Self {
             name: spec.name.clone(),
+            source_kind: GuiProjectSpecSourceKind::from_gui_source_kind(spec.source_kind),
             testbench: spec.testbench.clone(),
             input: spec.input.clone(),
             output: spec.output.clone(),
+            node: spec.node.clone(),
             min: spec.min.clone(),
             max: spec.max.clone(),
             parameter_map: spec
@@ -4724,9 +4783,11 @@ impl GuiProjectSpec {
     fn into_spec_document(self) -> GuiSpecDocument {
         GuiSpecDocument {
             name: self.name,
+            source_kind: self.source_kind.into_gui_source_kind(),
             testbench: self.testbench,
             input: self.input,
             output: self.output,
+            node: self.node,
             min: self.min,
             max: self.max,
             parameter_map: self
@@ -4734,6 +4795,22 @@ impl GuiProjectSpec {
                 .into_iter()
                 .map(GuiProjectSpecParameter::into_spec_parameter)
                 .collect(),
+        }
+    }
+}
+
+impl GuiProjectSpecSourceKind {
+    fn from_gui_source_kind(kind: GuiSpecSourceKind) -> Self {
+        match kind {
+            GuiSpecSourceKind::TransferFunction => Self::TransferFunction,
+            GuiSpecSourceKind::NodeVoltage => Self::NodeVoltage,
+        }
+    }
+
+    fn into_gui_source_kind(self) -> GuiSpecSourceKind {
+        match self {
+            Self::TransferFunction => GuiSpecSourceKind::TransferFunction,
+            Self::NodeVoltage => GuiSpecSourceKind::NodeVoltage,
         }
     }
 }
@@ -5862,8 +5939,6 @@ fn gui_spec_to_exploration_spec(
     let context = format!("spec {spec_index}");
     let name = required_text(&spec.name, &context, "name")?;
     let testbench_name = required_text(&spec.testbench, &context, "testbench")?;
-    let input = required_text(&spec.input, &context, "input")?;
-    let output = required_text(&spec.output, &context, "output")?;
     let testbench = testbenches
         .iter()
         .find(|testbench| testbench.name == testbench_name)
@@ -5871,17 +5946,30 @@ fn gui_spec_to_exploration_spec(
         .ok_or_else(|| {
             format!("spec {spec_index} references unknown testbench '{testbench_name}'")
         })?;
+    let source = match spec.source_kind {
+        GuiSpecSourceKind::TransferFunction => {
+            let input = required_text(&spec.input, &context, "input")?;
+            let output = required_text(&spec.output, &context, "output")?;
+
+            SpecSource::TransferFunction {
+                testbench,
+                input,
+                output,
+            }
+        }
+        GuiSpecSourceKind::NodeVoltage => {
+            let node = required_text(&spec.node, &context, "node")?;
+
+            SpecSource::NodeVoltage { testbench, node }
+        }
+    };
     let mut exploration_spec = ExplorationSpec::new(
         name,
         RangeCondition::new(
             optional_f64(&spec.min, &context, "min")?,
             optional_f64(&spec.max, &context, "max")?,
         ),
-        SpecSource::TransferFunction {
-            testbench,
-            input,
-            output,
-        },
+        source,
         SpecOutput::Eval,
     );
 
@@ -7705,6 +7793,50 @@ mod tests {
         assert_eq!(loaded.compact_outputs.len(), 1);
         assert_eq!(loaded.compact_outputs[0].source_column, "bias_current");
         assert_eq!(loaded.compact_outputs[0].compact_parameter, "isource");
+    }
+
+    #[test]
+    fn project_spec_roundtrips_node_voltage_source() {
+        let spec = GuiSpecDocument {
+            name: "vout".to_string(),
+            source_kind: GuiSpecSourceKind::NodeVoltage,
+            testbench: "tb".to_string(),
+            input: String::new(),
+            output: String::new(),
+            node: "VOUT".to_string(),
+            min: "0".to_string(),
+            max: String::new(),
+            parameter_map: Vec::new(),
+        };
+
+        let project = GuiProjectSpec::from_spec_document(&spec);
+        let loaded = project.into_spec_document();
+
+        assert_eq!(loaded.source_kind, GuiSpecSourceKind::NodeVoltage);
+        assert_eq!(loaded.node, "VOUT");
+    }
+
+    #[test]
+    fn gui_spec_converts_to_node_voltage_source() {
+        let spec = GuiSpecDocument {
+            name: "vout".to_string(),
+            source_kind: GuiSpecSourceKind::NodeVoltage,
+            testbench: "tb".to_string(),
+            input: String::new(),
+            output: String::new(),
+            node: "VOUT".to_string(),
+            min: "0".to_string(),
+            max: String::new(),
+            parameter_map: Vec::new(),
+        };
+
+        let converted =
+            gui_spec_to_exploration_spec(&spec, &[TestbenchSpec::new("tb")], 1).unwrap();
+
+        assert!(matches!(
+            converted.source,
+            SpecSource::NodeVoltage { node, .. } if node == "VOUT"
+        ));
     }
 
     #[test]

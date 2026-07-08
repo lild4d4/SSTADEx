@@ -38,6 +38,10 @@ pub enum SpecSource {
         input: String,
         output: String,
     },
+    NodeVoltage {
+        testbench: TestbenchSpec,
+        node: String,
+    },
     Composed,
 }
 

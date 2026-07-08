@@ -3,7 +3,7 @@ use std::path::Path;
 
 use crate::analysis::{
     analyze_macro_testbench_mna_with_mode, analyze_small_signal_netlist_mna,
-    transfer_function_expression, TransferFunctionError,
+    node_voltage_expression, transfer_function_expression, TransferFunctionError,
 };
 use crate::catalog::PrimitiveCatalog;
 use crate::circuit::Circuit;
@@ -82,6 +82,9 @@ pub fn prepare_candidate_expression_spec(
         SpecSource::TransferFunction { .. } => Err(SpecPrepareError::UnsupportedSource {
             source: "transfer_function",
         }),
+        SpecSource::NodeVoltage { .. } => Err(SpecPrepareError::UnsupportedSource {
+            source: "node_voltage",
+        }),
         SpecSource::Composed => Err(SpecPrepareError::UnsupportedSource { source: "composed" }),
     }
 }
@@ -121,7 +124,7 @@ pub fn prepare_macro_testbench_specs_with_mode(
         .iter()
         .map(|spec| match &spec.source {
             SpecSource::CandidateExpression { .. } => prepare_candidate_expression_spec(spec),
-            SpecSource::TransferFunction { .. } => {
+            SpecSource::TransferFunction { .. } | SpecSource::NodeVoltage { .. } => {
                 prepare_transfer_function_spec_for_macro_testbench_with_mode(
                     spec,
                     primitive_catalog,
@@ -150,6 +153,15 @@ pub fn prepare_transfer_function_spec_from_analysis(
             },
         )
         .with_parameter_map(spec.parameter_map.clone())),
+        SpecSource::NodeVoltage { node, .. } => Ok(PreparedSpec::new(
+            spec.name.clone(),
+            spec.condition,
+            spec.output.clone(),
+            PreparedSpecSource::TransferFunction {
+                expression: node_voltage_expression(mna, solution, node)?,
+            },
+        )
+        .with_parameter_map(spec.parameter_map.clone())),
         SpecSource::CandidateExpression { .. } => Err(SpecPrepareError::UnsupportedSource {
             source: "candidate_expression",
         }),
@@ -164,7 +176,8 @@ pub fn prepare_transfer_function_spec(
     output_dir: &Path,
 ) -> Result<PreparedSpec, SpecPrepareError> {
     let testbench = match &spec.source {
-        SpecSource::TransferFunction { testbench, .. } => testbench,
+        SpecSource::TransferFunction { testbench, .. }
+        | SpecSource::NodeVoltage { testbench, .. } => testbench,
         SpecSource::CandidateExpression { .. } => {
             return Err(SpecPrepareError::UnsupportedSource {
                 source: "candidate_expression",
@@ -211,7 +224,8 @@ pub fn prepare_transfer_function_spec_for_macro_testbench_with_mode(
     mode: MacroSmallSignalMode,
 ) -> Result<PreparedSpec, SpecPrepareError> {
     let testbench = match &spec.source {
-        SpecSource::TransferFunction { testbench, .. } => testbench,
+        SpecSource::TransferFunction { testbench, .. }
+        | SpecSource::NodeVoltage { testbench, .. } => testbench,
         SpecSource::CandidateExpression { .. } => {
             return Err(SpecPrepareError::UnsupportedSource {
                 source: "candidate_expression",
@@ -381,7 +395,7 @@ mod tests {
         assert_eq!(
             prepare_candidate_expression_specs(&specs),
             Err(SpecPrepareError::UnsupportedSource {
-                source: "transfer_function",
+                source: "transfer_function"
             })
         );
     }
@@ -414,6 +428,38 @@ mod tests {
                 SpecOutput::Eval,
                 PreparedSpecSource::TransferFunction {
                     expression: "(gm*ro*vin)/(vin)".to_string(),
+                },
+            )
+        );
+    }
+
+    #[test]
+    fn prepares_node_voltage_spec_from_analysis() {
+        let spec = ExplorationSpec::new(
+            "vout",
+            RangeCondition::min(0.0),
+            SpecSource::NodeVoltage {
+                testbench: TestbenchSpec::new("vout"),
+                node: "VOUT".to_string(),
+            },
+            SpecOutput::Eval,
+        );
+        let mna = synthetic_mna_result();
+        let solution = MnaSolveResult {
+            solutions: HashMap::from([
+                ("v1".to_string(), "gm*ro*vin".to_string()),
+                ("v2".to_string(), "vin".to_string()),
+            ]),
+        };
+
+        assert_eq!(
+            prepare_transfer_function_spec_from_analysis(&spec, &mna, &solution).unwrap(),
+            PreparedSpec::new(
+                "vout",
+                RangeCondition::min(0.0),
+                SpecOutput::Eval,
+                PreparedSpecSource::TransferFunction {
+                    expression: "gm*ro*vin".to_string(),
                 },
             )
         );

@@ -699,6 +699,10 @@ enum RawSpecSource {
         input: String,
         output: String,
     },
+    NodeVoltage {
+        testbench: String,
+        node: String,
+    },
     Composed,
 }
 
@@ -727,6 +731,17 @@ impl RawSpecSource {
                     output,
                 })
             }
+            Self::NodeVoltage { testbench, node } => {
+                let testbench_spec = testbench_by_name
+                    .get(&testbench)
+                    .cloned()
+                    .ok_or(ExplorationIoError::MissingTestbench { name: testbench })?;
+
+                Ok(SpecSource::NodeVoltage {
+                    testbench: testbench_spec,
+                    node,
+                })
+            }
             Self::Composed => Ok(SpecSource::Composed),
         }
     }
@@ -744,6 +759,10 @@ impl RawSpecSource {
                 testbench: testbench.name.clone(),
                 input: input.clone(),
                 output: output.clone(),
+            },
+            SpecSource::NodeVoltage { testbench, node } => Self::NodeVoltage {
+                testbench: testbench.name.clone(),
+                node: node.clone(),
             },
             SpecSource::Composed => Self::Composed,
         }
@@ -1002,6 +1021,42 @@ mod tests {
                 testbench,
                 input: "VINP".to_string(),
                 output: "VOUT".to_string(),
+            }
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn loads_node_voltage_spec_with_testbench_reference() {
+        let dir = make_temp_dir("load_node_voltage_spec");
+        let path = dir.join("specs.json");
+        write_file(
+            &path,
+            r#"{
+              "specs": [
+                {
+                  "name": "vout",
+                  "condition": { "min": 0.0 },
+                  "source": {
+                    "type": "node_voltage",
+                    "testbench": "ota_gain",
+                    "node": "VOUT"
+                  },
+                  "output": { "type": "eval" }
+                }
+              ]
+            }"#,
+        );
+        let testbench = TestbenchSpec::new("ota_gain");
+
+        let specs = load_exploration_specs(&path, &[testbench.clone()]).unwrap();
+
+        assert_eq!(
+            specs[0].source,
+            SpecSource::NodeVoltage {
+                testbench,
+                node: "VOUT".to_string(),
             }
         );
 
