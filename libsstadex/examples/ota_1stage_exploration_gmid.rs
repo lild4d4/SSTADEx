@@ -1,11 +1,22 @@
 use std::{collections::HashMap, path::Path};
 
-use libsstadex::{catalog::load_primitive_catalog, circuit::load_circuit, exploration::{ExplorationSpec, PreparedSpec, PreparedSpecSource, RangeCondition, SpecOutput, SpecParameter, SpecSource, TestbenchElement, TestbenchSpec, prepare_transfer_function_spec, run_prepared_expression_flow, shared_node_filter, build_filtered_candidates, CandidatePoint}, primitive::build::{PrimitiveBuildEngine, PrimitiveBuildInput, PrimitiveBuildValue, PythonGmidLutBackend}};
+use libsstadex::{
+    catalog::load_primitive_catalog,
+    circuit::load_circuit,
+    exploration::{
+        CandidatePoint, ExplorationSpec, PreparedSpec, PreparedSpecSource, RangeCondition,
+        SpecOutput, SpecParameter, SpecSource, TestbenchElement, TestbenchSpec,
+        build_filtered_candidates, prepare_transfer_function_spec, run_prepared_expression_flow,
+        shared_node_filter,
+    },
+    primitive::build::{
+        PrimitiveBuildEngine, PrimitiveBuildInput, PrimitiveBuildValue, PythonGmidLutBackend,
+    },
+};
 
 const VDD: f64 = 1.2;
 const VIN: f64 = 0.9;
 const VOUT: f64 = 1.0;
-
 
 const CURRENT: f64 = 20.0e-6;
 const VINP_START: f64 = 0.55;
@@ -13,7 +24,7 @@ const VINP_STOP: f64 = 0.75;
 const VOUTP_START: f64 = 0.75;
 const VOUTP_STOP: f64 = 0.95;
 const POINTS: usize = 5;
-const VTAIL: f64 = 0.10;
+const VTAIL: f64 = 0.60;
 
 fn main() -> Result<(), String> {
     let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -21,24 +32,43 @@ fn main() -> Result<(), String> {
         .expect("libsstadex should be inside the workspace");
     let primitives_dir = workspace_root.join("analoglib/primitives");
     let lut_files = HashMap::from([
-        ("nmos".to_string(), workspace_root.join("LUTs/ihp-sg13g2/lv_5w_nmos.npz")),
-        ("pmos".to_string(), workspace_root.join("LUTs/ihp-sg13g2/lv_5w_pmos.npz")),
+        (
+            "nmos".to_string(),
+            workspace_root.join("LUTs/ihp-sg13g2/lv_5w_nmos.npz"),
+        ),
+        (
+            "pmos".to_string(),
+            workspace_root.join("LUTs/ihp-sg13g2/lv_5w_pmos.npz"),
+        ),
     ]);
     let python = workspace_root.join(".venv-sstadex/bin/python");
     let circuit_path = workspace_root.join("libsstadex/examples/circuits/ota_primitives.json");
-    let output_dir = std::env::temp_dir().join(format!("libsstadex_ota_1stage_exploration_gmid_{}", std::process::id()));
+    let output_dir = std::env::temp_dir().join(format!(
+        "libsstadex_ota_1stage_exploration_gmid_{}",
+        std::process::id()
+    ));
 
     let catalog = load_primitive_catalog(&primitives_dir).map_err(|error| format!("{error:?}"))?;
-    let simplediffpair = catalog.get("simplediffpair").ok_or_else(|| "missing simplediffpair primitive".to_string())?;
-    let simplecurrentmirror = catalog.get("simplecurrentmirror").ok_or_else(|| "missing simplediffpair primitive".to_string())?;
+    let simplediffpair = catalog
+        .get("simplediffpair")
+        .ok_or_else(|| "missing simplediffpair primitive".to_string())?;
+    let simplecurrentmirror = catalog
+        .get("simplecurrentmirror")
+        .ok_or_else(|| "missing simplediffpair primitive".to_string())?;
 
     let simplediffpair_input = PrimitiveBuildInput::new(HashMap::from([
         ("current".to_string(), PrimitiveBuildValue::Scalar(CURRENT)),
-        ("VINP".to_string(), PrimitiveBuildValue::Vector(linspace(VINP_START, VINP_STOP, POINTS))),
+        (
+            "VINP".to_string(),
+            PrimitiveBuildValue::Scalar(VIN),
+        ),
         ("VOUTP".to_string(), PrimitiveBuildValue::Scalar(VOUT)),
-        ("VTAIL".to_string(), PrimitiveBuildValue::Vector(vec![VTAIL])),
-    ]));    
-    
+        (
+            "VTAIL".to_string(),
+            PrimitiveBuildValue::Vector(vec![VTAIL]),
+        ),
+    ]));
+
     let simplecurrentmirror_input = PrimitiveBuildInput::new(HashMap::from([
         ("current".to_string(), PrimitiveBuildValue::Scalar(CURRENT)),
         ("VINP".to_string(), PrimitiveBuildValue::Scalar(VOUT)),
@@ -46,21 +76,36 @@ fn main() -> Result<(), String> {
         ("VDD".to_string(), PrimitiveBuildValue::Scalar(VDD)),
     ]));
 
-    let engine = PrimitiveBuildEngine::new(PythonGmidLutBackend::with_default_helper(python, lut_files));
-    
-    let simplediffpair_candidate_set = engine.build_candidate_set_for_primitive(simplediffpair, "xdp", &simplediffpair_input).map_err(|error| format!("{error:?}"))?;
-    let simplecurrentmirror_candidate_set = engine.build_candidate_set_for_primitive(simplecurrentmirror, "xcm", &simplecurrentmirror_input).map_err(|error| format!("{error:?}"))?;
+    let engine =
+        PrimitiveBuildEngine::new(PythonGmidLutBackend::with_default_helper(python, lut_files));
+
+    let simplediffpair_candidate_set = engine
+        .build_candidate_set_for_primitive(simplediffpair, "xdp", &simplediffpair_input)
+        .map_err(|error| format!("{error:?}"))?;
+    let simplecurrentmirror_candidate_set = engine
+        .build_candidate_set_for_primitive(simplecurrentmirror, "xcm", &simplecurrentmirror_input)
+        .map_err(|error| format!("{error:?}"))?;
 
     let circuit = load_circuit(&circuit_path).map_err(|error| format!("{error:?}"))?;
     let gain_spec = gain_spec();
-    let prepared_gain = prepare_transfer_function_spec(&gain_spec, &circuit, &catalog, &output_dir).map_err(|error| format!("{error:?}"))?;
-    
+    let prepared_gain = prepare_transfer_function_spec(&gain_spec, &circuit, &catalog, &output_dir)
+        .map_err(|error| format!("{error:?}"))?;
+
     //let filters = vec![
     //    shared_node_filter(vec!["xdp.voutp", "xcm.voutp"]),
     //    shared_node_filter(vec!["xdp.voutp", "xcm.vinp"]),
     //];
 
-    let table = run_prepared_expression_flow(&[], &[simplediffpair_candidate_set, simplecurrentmirror_candidate_set], &[], &[prepared_gain.clone()]).map_err(|error| format!("{error:?}"))?;
+    let table = run_prepared_expression_flow(
+        &[],
+        &[
+            simplediffpair_candidate_set,
+            simplecurrentmirror_candidate_set,
+        ],
+        &[],
+        &[prepared_gain.clone()],
+    )
+    .map_err(|error| format!("{error:?}"))?;
 
     println!("Prepared gain TF:");
     println!("{}", prepared_expression(&prepared_gain));
@@ -82,8 +127,7 @@ fn main() -> Result<(), String> {
     }
 
     Ok(())
-
-    }
+}
 
 fn linspace(start: f64, stop: f64, points: usize) -> Vec<f64> {
     match points {
@@ -95,7 +139,6 @@ fn linspace(start: f64, stop: f64, points: usize) -> Vec<f64> {
         }
     }
 }
-
 
 fn gain_spec() -> ExplorationSpec {
     let mut spec = ExplorationSpec::new(

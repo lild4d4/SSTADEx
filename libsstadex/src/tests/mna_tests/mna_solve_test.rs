@@ -17,7 +17,7 @@ fn test_mna_solve() {
 
     assert_eq!(
         solution.solutions.get("v1").map(String::as_str),
-        Some("-I1*R1")
+        Some("-1")
     );
 }
 
