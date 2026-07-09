@@ -9,12 +9,12 @@ use libsstadex::analysis::{
 use libsstadex::catalog::{PrimitiveCatalog, load_primitive_catalog};
 use libsstadex::circuit::{Circuit, Connection, Instance, PinRef, save_circuit};
 use libsstadex::exploration::{
-    CandidateAxis, CandidatePoint, CandidateSet, CompactOutputBinding, ExplorationCandidateInput,
-    ExplorationSpec, ExplorationTable, PreparedSpec, PreparedSpecSource, RangeCondition,
-    SpecOutput, SpecParameter, SpecSource, TestbenchElement, TestbenchSpec,
+    CandidateAxis, CandidatePoint, CandidateSet, CompactOutputBinding, DerivedColumnSpec,
+    ExplorationCandidateInput, ExplorationSpec, ExplorationTable, PreparedSpec, PreparedSpecSource,
+    RangeCondition, SpecOutput, SpecParameter, SpecSource, TestbenchElement, TestbenchSpec,
     add_automatic_area_column, build_filtered_candidates, prepare_macro_testbench_specs_with_mode,
-    run_prepared_expression_flow, save_exploration_candidates, save_exploration_specs,
-    save_testbenches, submacro_results_to_compact_candidate_set,
+    run_prepared_expression_flow_with_derived_columns, save_exploration_candidates,
+    save_exploration_specs, save_testbenches, submacro_results_to_compact_candidate_set,
 };
 use libsstadex::macro_model::{
     MacroCatalog, MacroMetadata, MacroModel, MacroPort, MacroPortRole, MacroSmallSignalMode,
@@ -63,6 +63,7 @@ struct SstadexApp {
     specs: Vec<GuiSpecDocument>,
     selected_spec: Option<usize>,
     renaming_spec: Option<usize>,
+    derived_columns: Vec<GuiDerivedColumnDocument>,
     candidates: GuiCandidateDocument,
     project_path: String,
     output_log: String,
@@ -84,6 +85,7 @@ struct GuiMacroWorkspace {
     selected_testbench: Option<usize>,
     specs: Vec<GuiSpecDocument>,
     selected_spec: Option<usize>,
+    derived_columns: Vec<GuiDerivedColumnDocument>,
     candidates: GuiCandidateDocument,
     output_prepared_specs: String,
     output_candidates: String,
@@ -329,6 +331,12 @@ struct GuiSpecParameter {
 }
 
 #[derive(Clone)]
+struct GuiDerivedColumnDocument {
+    name: String,
+    expression: String,
+}
+
+#[derive(Clone)]
 struct GuiCandidateDocument {
     axes: Vec<GuiCandidateAxis>,
     net_voltage_constraints: Vec<GuiNetVoltageConstraint>,
@@ -430,6 +438,8 @@ struct GuiProject {
     #[serde(default)]
     specs: Vec<GuiProjectSpec>,
     #[serde(default)]
+    derived_columns: Vec<GuiProjectDerivedColumn>,
+    #[serde(default)]
     candidates: GuiProjectCandidateDocument,
 }
 
@@ -443,6 +453,8 @@ struct GuiProjectMacroWorkspace {
     selected_spec: Option<usize>,
     #[serde(default)]
     specs: Vec<GuiProjectSpec>,
+    #[serde(default)]
+    derived_columns: Vec<GuiProjectDerivedColumn>,
     #[serde(default)]
     candidates: GuiProjectCandidateDocument,
 }
@@ -476,6 +488,12 @@ enum GuiProjectSpecSourceKind {
 struct GuiProjectSpecParameter {
     name: String,
     value: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct GuiProjectDerivedColumn {
+    name: String,
+    expression: String,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -758,6 +776,7 @@ impl Default for SstadexApp {
             specs: Vec::new(),
             selected_spec: None,
             renaming_spec: None,
+            derived_columns: Vec::new(),
             candidates: GuiCandidateDocument::default(),
             project_path: default_project_path().display().to_string(),
             output_log: "Logs, netlists, and MNA results will appear here".to_string(),
@@ -782,6 +801,7 @@ impl Default for GuiMacroWorkspace {
             selected_testbench: None,
             specs: Vec::new(),
             selected_spec: None,
+            derived_columns: Vec::new(),
             candidates: GuiCandidateDocument::default(),
             output_prepared_specs: "Prepared exploration specs will appear here".to_string(),
             output_candidates: "Generated candidates will appear here".to_string(),
@@ -1448,6 +1468,12 @@ impl SstadexApp {
                         values: String::new(),
                     });
             }
+            if ui.button("+ derived").clicked() {
+                self.derived_columns.push(GuiDerivedColumnDocument {
+                    name: String::new(),
+                    expression: String::new(),
+                });
+            }
             if ui.button("Generate candidates").clicked() {
                 self.output_log = self.generate_gui_candidates();
                 self.bottom_view = BottomView::Candidates;
@@ -1503,6 +1529,31 @@ impl SstadexApp {
 
         if let Some(index) = remove_axis {
             self.candidates.axes.remove(index);
+        }
+
+        ui.separator();
+        ui.label("Derived columns");
+        let mut remove_derived = None;
+        for (index, column) in self.derived_columns.iter_mut().enumerate() {
+            ui.horizontal(|ui| {
+                ui.label(format!("Column {}", index + 1));
+                ui.add_sized(
+                    egui::vec2(140.0, 20.0),
+                    egui::TextEdit::singleline(&mut column.name).hint_text("gain_db"),
+                );
+                ui.label("=");
+                ui.add_sized(
+                    egui::vec2(320.0, 20.0),
+                    egui::TextEdit::singleline(&mut column.expression)
+                        .hint_text("20 * log10(abs(gain))"),
+                );
+                if ui.button("Delete").clicked() {
+                    remove_derived = Some(index);
+                }
+            });
+        }
+        if let Some(index) = remove_derived {
+            self.derived_columns.remove(index);
         }
 
         ui.separator();
@@ -2065,6 +2116,7 @@ impl SstadexApp {
         workspace.selected_testbench = self.selected_testbench;
         workspace.specs = self.specs.clone();
         workspace.selected_spec = self.selected_spec;
+        workspace.derived_columns = self.derived_columns.clone();
         workspace.candidates = self.candidates.clone();
         workspace.output_prepared_specs = self.output_prepared_specs.clone();
         workspace.output_candidates = self.output_candidates.clone();
@@ -2086,6 +2138,7 @@ impl SstadexApp {
         self.selected_spec = workspace
             .selected_spec
             .filter(|index| *index < self.specs.len());
+        self.derived_columns = workspace.derived_columns;
         self.candidates = workspace.candidates;
         self.output_prepared_specs = workspace.output_prepared_specs;
         self.output_candidates = workspace.output_candidates;
@@ -3011,7 +3064,7 @@ impl SstadexApp {
 
     fn gui_project(&self) -> GuiProject {
         GuiProject {
-            version: 9,
+            version: 10,
             active_circuit: self.active_circuit,
             circuits: self
                 .circuits
@@ -3034,6 +3087,11 @@ impl SstadexApp {
                 .specs
                 .iter()
                 .map(GuiProjectSpec::from_spec_document)
+                .collect(),
+            derived_columns: self
+                .derived_columns
+                .iter()
+                .map(GuiProjectDerivedColumn::from_derived_column_document)
                 .collect(),
             candidates: GuiProjectCandidateDocument::from_candidate_document(&self.candidates),
         }
@@ -3074,6 +3132,11 @@ impl SstadexApp {
                 workspace.selected_spec = project
                     .selected_spec
                     .filter(|index| *index < workspace.specs.len());
+                workspace.derived_columns = project
+                    .derived_columns
+                    .into_iter()
+                    .map(GuiProjectDerivedColumn::into_derived_column_document)
+                    .collect();
                 workspace.candidates = project.candidates.into_candidate_document();
             }
             workspaces
@@ -3524,11 +3587,19 @@ impl SstadexApp {
 
         self.output_prepared_specs = format_prepared_specs_output(&prepared_specs);
 
-        match run_prepared_expression_flow(
+        let derived_columns = match gui_derived_columns_to_specs(&self.derived_columns) {
+            Ok(derived_columns) => derived_columns,
+            Err(error) => {
+                return format!("Evaluate specs failed while reading derived columns\n\n{error}");
+            }
+        };
+
+        match run_prepared_expression_flow_with_derived_columns(
             &candidate_input.axes,
             &candidate_input.sets,
             &candidate_input.filters,
             &prepared_specs,
+            &derived_columns,
         ) {
             Ok(mut table) => {
                 if let Err(error) = add_automatic_area_column(&mut table) {
@@ -3691,6 +3762,7 @@ impl SstadexApp {
 
         let testbenches = gui_testbenches_to_specs(&workspace.testbenches, &self.circuits)?;
         let specs = gui_specs_to_exploration_specs(&workspace.specs, &testbenches)?;
+        let derived_columns = gui_derived_columns_to_specs(&workspace.derived_columns)?;
         let mut candidate_input =
             gui_candidate_input(&workspace.candidates, document, catalog, macro_blocks)?;
         candidate_input.sets.extend(extra_candidate_sets);
@@ -3704,11 +3776,12 @@ impl SstadexApp {
             mode,
         )
         .map_err(|error| format!("failed to prepare specs\n\n{error:?}"))?;
-        let mut table = run_prepared_expression_flow(
+        let mut table = run_prepared_expression_flow_with_derived_columns(
             &candidate_input.axes,
             &candidate_input.sets,
             &candidate_input.filters,
             &prepared_specs,
+            &derived_columns,
         )
         .map_err(|error| format!("failed to evaluate specs\n\n{error:?}"))?;
 
@@ -4648,6 +4721,11 @@ impl GuiProjectMacroWorkspace {
                 .iter()
                 .map(GuiProjectSpec::from_spec_document)
                 .collect(),
+            derived_columns: workspace
+                .derived_columns
+                .iter()
+                .map(GuiProjectDerivedColumn::from_derived_column_document)
+                .collect(),
             candidates: GuiProjectCandidateDocument::from_candidate_document(&workspace.candidates),
         }
     }
@@ -4663,6 +4741,11 @@ impl GuiProjectMacroWorkspace {
             .into_iter()
             .map(GuiProjectSpec::into_spec_document)
             .collect::<Vec<_>>();
+        let derived_columns = self
+            .derived_columns
+            .into_iter()
+            .map(GuiProjectDerivedColumn::into_derived_column_document)
+            .collect::<Vec<_>>();
 
         GuiMacroWorkspace {
             selected_testbench: self
@@ -4671,6 +4754,7 @@ impl GuiProjectMacroWorkspace {
             testbenches,
             selected_spec: self.selected_spec.filter(|index| *index < specs.len()),
             specs,
+            derived_columns,
             candidates: self.candidates.into_candidate_document(),
             ..GuiMacroWorkspace::default()
         }
@@ -4795,6 +4879,22 @@ impl GuiProjectSpec {
                 .into_iter()
                 .map(GuiProjectSpecParameter::into_spec_parameter)
                 .collect(),
+        }
+    }
+}
+
+impl GuiProjectDerivedColumn {
+    fn from_derived_column_document(column: &GuiDerivedColumnDocument) -> Self {
+        Self {
+            name: column.name.clone(),
+            expression: column.expression.clone(),
+        }
+    }
+
+    fn into_derived_column_document(self) -> GuiDerivedColumnDocument {
+        GuiDerivedColumnDocument {
+            name: self.name,
+            expression: self.expression,
         }
     }
 }
@@ -5381,6 +5481,22 @@ fn gui_specs_to_exploration_specs(
         .iter()
         .enumerate()
         .map(|(index, spec)| gui_spec_to_exploration_spec(spec, testbenches, index + 1))
+        .collect()
+}
+
+fn gui_derived_columns_to_specs(
+    columns: &[GuiDerivedColumnDocument],
+) -> Result<Vec<DerivedColumnSpec>, String> {
+    columns
+        .iter()
+        .enumerate()
+        .map(|(index, column)| {
+            let context = format!("derived column {}", index + 1);
+            Ok(DerivedColumnSpec::new(
+                required_text(&column.name, &context, "name")?,
+                required_text(&column.expression, &context, "expression")?,
+            ))
+        })
         .collect()
 }
 
@@ -7809,6 +7925,34 @@ mod tests {
 
         assert_eq!(loaded.source_kind, GuiSpecSourceKind::NodeVoltage);
         assert_eq!(loaded.node, "VOUT");
+    }
+
+    #[test]
+    fn project_derived_column_roundtrips() {
+        let column = GuiDerivedColumnDocument {
+            name: "gain_db".to_string(),
+            expression: "20 * log10(abs(gain))".to_string(),
+        };
+
+        let project = GuiProjectDerivedColumn::from_derived_column_document(&column);
+        let loaded = project.into_derived_column_document();
+
+        assert_eq!(loaded.name, "gain_db");
+        assert_eq!(loaded.expression, "20 * log10(abs(gain))");
+    }
+
+    #[test]
+    fn gui_derived_columns_convert_to_library_specs() {
+        let columns = vec![GuiDerivedColumnDocument {
+            name: "gain_db".to_string(),
+            expression: "20 * log10(abs(gain))".to_string(),
+        }];
+
+        let converted = gui_derived_columns_to_specs(&columns).unwrap();
+
+        assert_eq!(converted.len(), 1);
+        assert_eq!(converted[0].name, "gain_db");
+        assert_eq!(converted[0].expression, "20 * log10(abs(gain))");
     }
 
     #[test]

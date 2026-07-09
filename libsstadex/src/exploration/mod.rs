@@ -1,5 +1,6 @@
 pub mod candidate;
 pub mod conditions;
+pub mod derived;
 pub mod evaluation;
 pub mod flow;
 pub mod hierarchy;
@@ -20,13 +21,17 @@ pub use conditions::{
     RangeCondition, SpecificationResult, filter_conditions, filter_equal_columns,
     filter_known_columns, shared_node_filter,
 };
+pub use derived::{DerivedColumnError, DerivedColumnSpec, apply_derived_columns};
 pub use evaluation::{
     CandidateEvaluation, CandidateEvaluationError, evaluate_candidate_expression,
     evaluate_candidates, evaluate_prepared_candidate_spec, evaluate_prepared_candidate_specs,
     evaluate_prepared_expression_spec, evaluate_prepared_expression_specs,
     required_candidate_value,
 };
-pub use flow::{ExplorationFlowError, run_candidate_expression_flow, run_prepared_expression_flow};
+pub use flow::{
+    ExplorationFlowError, run_candidate_expression_flow, run_prepared_expression_flow,
+    run_prepared_expression_flow_with_derived_columns,
+};
 pub use hierarchy::{
     ExplorationOutput, HierarchicalCandidateInput, HierarchicalExplorationProject,
     InterfaceVariable, MacroExplorationWorkspace, SubmacroCandidateError, SubmacroConditionRule,

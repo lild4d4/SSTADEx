@@ -317,6 +317,16 @@ impl<'a> ExpressionParser<'a> {
         }
 
         let symbol = &self.expression[start..self.pos];
+        self.skip_whitespace();
+        if self.consume(b'(') {
+            let value = self.parse_expression()?;
+            self.skip_whitespace();
+            if !self.consume(b')') {
+                return Err("missing closing ')'".to_string());
+            }
+            return apply_unary_function(symbol, value);
+        }
+
         self.resolve_symbol(symbol)
     }
 
@@ -383,6 +393,16 @@ fn is_identifier_start(byte: u8) -> bool {
 
 fn is_identifier_body(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.')
+}
+
+fn apply_unary_function(name: &str, value: f64) -> Result<f64, String> {
+    match name {
+        "abs" => Ok(value.abs()),
+        "log10" => Ok(value.log10()),
+        "ln" => Ok(value.ln()),
+        "sqrt" => Ok(value.sqrt()),
+        _ => Err(format!("unknown function '{name}'")),
+    }
 }
 
 #[cfg(test)]

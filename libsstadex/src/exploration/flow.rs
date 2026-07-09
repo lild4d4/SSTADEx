@@ -4,6 +4,7 @@ use super::candidate::{
 use super::conditions::{
     ExplorationFilter, FilterConditionsError, SpecificationResult, filter_conditions,
 };
+use super::derived::{DerivedColumnError, DerivedColumnSpec, apply_derived_columns};
 use super::evaluation::{
     CandidateEvaluationError, evaluate_prepared_candidate_specs, evaluate_prepared_expression_specs,
 };
@@ -19,6 +20,7 @@ pub enum ExplorationFlowError {
     SpecPrepare(SpecPrepareError),
     Evaluation(CandidateEvaluationError),
     FilterConditions(FilterConditionsError),
+    DerivedColumn(DerivedColumnError),
     Table(ExplorationTableError),
 }
 
@@ -49,6 +51,12 @@ impl From<FilterConditionsError> for ExplorationFlowError {
 impl From<ExplorationTableError> for ExplorationFlowError {
     fn from(error: ExplorationTableError) -> Self {
         Self::Table(error)
+    }
+}
+
+impl From<DerivedColumnError> for ExplorationFlowError {
+    fn from(error: DerivedColumnError) -> Self {
+        Self::DerivedColumn(error)
     }
 }
 
@@ -84,18 +92,27 @@ pub fn run_prepared_expression_flow(
     filters: &[ExplorationFilter],
     prepared_specs: &[PreparedSpec],
 ) -> Result<ExplorationTable, ExplorationFlowError> {
+    run_prepared_expression_flow_with_derived_columns(axes, sets, filters, prepared_specs, &[])
+}
+
+pub fn run_prepared_expression_flow_with_derived_columns(
+    axes: &[CandidateAxis],
+    sets: &[CandidateSet],
+    filters: &[ExplorationFilter],
+    prepared_specs: &[PreparedSpec],
+    derived_columns: &[DerivedColumnSpec],
+) -> Result<ExplorationTable, ExplorationFlowError> {
     let candidates = build_filtered_candidates(axes, sets, filters)?;
     let specification_results = evaluate_prepared_expression_specs(&candidates, prepared_specs)?;
     let mask = filter_conditions(&specification_results)?;
     let candidate_columns = CandidatePoint::to_columns(&candidates);
     let specification_columns = specification_results_to_columns(specification_results);
 
-    Ok(assemble_filtered_table(
-        &candidate_columns,
-        &specification_columns,
-        &[],
-        &mask,
-    )?)
+    let mut table =
+        assemble_filtered_table(&candidate_columns, &specification_columns, &[], &mask)?;
+    apply_derived_columns(&mut table, derived_columns)?;
+
+    Ok(table)
 }
 
 fn specification_results_to_columns(
@@ -111,8 +128,8 @@ fn specification_results_to_columns(
 mod tests {
     use super::*;
     use crate::exploration::{
-        CandidateAxis, CandidatePoint, CandidateSet, RangeCondition, SpecOutput, SpecPrepareError,
-        SpecSource, TestbenchSpec, required_candidate_value, shared_node_filter,
+        CandidateAxis, CandidatePoint, CandidateSet, DerivedColumnSpec, RangeCondition, SpecOutput,
+        SpecPrepareError, SpecSource, TestbenchSpec, required_candidate_value, shared_node_filter,
     };
 
     #[test]
@@ -272,5 +289,42 @@ mod tests {
             vec![20.0, 20.0],
         );
         assert_eq!(table.column("gain").unwrap().values, vec![2000.0, 2000.0]);
+    }
+
+    #[test]
+    fn runs_prepared_expression_flow_with_derived_columns() {
+        let primitive = CandidateSet::new(
+            "xdp",
+            vec![
+                CandidatePoint::new(vec![("gain".to_string(), -10.0)]),
+                CandidatePoint::new(vec![("gain".to_string(), 100.0)]),
+            ],
+        );
+        let prepared = vec![PreparedSpec::new(
+            "gain_eval",
+            RangeCondition::new(None, None),
+            SpecOutput::Eval,
+            crate::exploration::PreparedSpecSource::CandidateExpression {
+                expression: "gain".to_string(),
+            },
+        )];
+
+        let table = run_prepared_expression_flow_with_derived_columns(
+            &[],
+            &[primitive],
+            &[],
+            &prepared,
+            &[DerivedColumnSpec::new(
+                "gain_db",
+                "20 * log10(abs(gain_eval))",
+            )],
+        )
+        .unwrap();
+
+        assert_eq!(
+            table.column("gain_eval").unwrap().values,
+            vec![-10.0, 100.0]
+        );
+        assert_eq!(table.column("gain_db").unwrap().values, vec![20.0, 40.0]);
     }
 }
