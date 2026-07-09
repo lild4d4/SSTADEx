@@ -4,21 +4,21 @@ use std::path::{Path, PathBuf};
 
 use eframe::egui;
 use libsstadex::analysis::{
-    analyze_circuit_mna, analyze_macro_testbench_mna_with_mode, CircuitMnaOutput,
+    CircuitMnaOutput, analyze_circuit_mna, analyze_macro_testbench_mna_with_mode,
 };
-use libsstadex::catalog::{load_primitive_catalog, PrimitiveCatalog};
-use libsstadex::circuit::{save_circuit, Circuit, Connection, Instance, PinRef};
+use libsstadex::catalog::{PrimitiveCatalog, load_primitive_catalog};
+use libsstadex::circuit::{Circuit, Connection, Instance, PinRef, save_circuit};
 use libsstadex::exploration::{
-    build_filtered_candidates, prepare_macro_testbench_specs_with_mode,
+    CandidateAxis, CandidatePoint, CandidateSet, CompactOutputBinding, ExplorationCandidateInput,
+    ExplorationSpec, ExplorationTable, PreparedSpec, PreparedSpecSource, RangeCondition,
+    SpecOutput, SpecParameter, SpecSource, TestbenchElement, TestbenchSpec,
+    add_automatic_area_column, build_filtered_candidates, prepare_macro_testbench_specs_with_mode,
     run_prepared_expression_flow, save_exploration_candidates, save_exploration_specs,
-    save_testbenches, submacro_results_to_compact_candidate_set, CandidateAxis, CandidatePoint,
-    CandidateSet, CompactOutputBinding, ExplorationCandidateInput, ExplorationSpec,
-    ExplorationTable, PreparedSpec, PreparedSpecSource, RangeCondition, SpecOutput, SpecParameter,
-    SpecSource, TestbenchElement, TestbenchSpec,
+    save_testbenches, submacro_results_to_compact_candidate_set,
 };
 use libsstadex::macro_model::{
-    load_macro_catalog, save_macro_model, MacroCatalog, MacroMetadata, MacroModel, MacroPort,
-    MacroPortRole, MacroSmallSignalMode, MacroSmallSignalModel, MacroSymbol, MacroSymbolPin,
+    MacroCatalog, MacroMetadata, MacroModel, MacroPort, MacroPortRole, MacroSmallSignalMode,
+    MacroSmallSignalModel, MacroSymbol, MacroSymbolPin, load_macro_catalog, save_macro_model,
 };
 use libsstadex::primitive::build::{
     PrimitiveBuildEngine, PrimitiveBuildInput, PrimitiveBuildInputKind, PrimitiveBuildValue,
@@ -3613,7 +3613,7 @@ impl SstadexApp {
                 match self.compact_candidate_sets_for_children(macro_index, &results_by_macro) {
                     Ok(child_sets) => child_sets,
                     Err(error) => {
-                        return format!("Evaluate hierarchy failed for '{macro_name}': {error}")
+                        return format!("Evaluate hierarchy failed for '{macro_name}': {error}");
                     }
                 };
             let prepared_dir = output_dir.join(&macro_name).join("prepared_specs");
@@ -3627,7 +3627,7 @@ impl SstadexApp {
             ) {
                 Ok(evaluation) => evaluation,
                 Err(error) => {
-                    return format!("Evaluate hierarchy failed for '{macro_name}': {error}")
+                    return format!("Evaluate hierarchy failed for '{macro_name}': {error}");
                 }
             };
 
@@ -6168,20 +6168,12 @@ fn testbench_endpoint_node_text<'a>(
                 .find(|element| element.id == *element_id)?;
             let value = testbench_element_pin_text(element, *pin).trim();
 
-            if value.is_empty() {
-                None
-            } else {
-                Some(value)
-            }
+            if value.is_empty() { None } else { Some(value) }
         }
         TestbenchEndpoint::DutPort { port_name } => {
             let value = port_name.trim();
 
-            if value.is_empty() {
-                None
-            } else {
-                Some(value)
-            }
+            if value.is_empty() { None } else { Some(value) }
         }
     }
 }
@@ -7591,10 +7583,11 @@ mod tests {
             name: "current_source".to_string(),
         });
 
-        assert!(app
-            .circuits
-            .iter()
-            .any(|circuit| circuit.name == "current_source"));
+        assert!(
+            app.circuits
+                .iter()
+                .any(|circuit| circuit.name == "current_source")
+        );
         assert_eq!(app.macro_workspaces.len(), app.circuits.len());
         assert!(matches!(
             app.canvas_instances[0].block,
@@ -7621,14 +7614,16 @@ mod tests {
             name: "ota_1stage".to_string(),
         });
 
-        assert!(app
-            .circuits
-            .iter()
-            .any(|circuit| circuit.name == "ota_1stage"));
-        assert!(app
-            .circuits
-            .iter()
-            .any(|circuit| circuit.name == "current_source"));
+        assert!(
+            app.circuits
+                .iter()
+                .any(|circuit| circuit.name == "ota_1stage")
+        );
+        assert!(
+            app.circuits
+                .iter()
+                .any(|circuit| circuit.name == "current_source")
+        );
         assert_eq!(app.macro_workspaces.len(), app.circuits.len());
     }
 
@@ -7868,7 +7863,12 @@ mod tests {
         results_by_macro.insert(
             "current_source".to_string(),
             ExplorationTable {
-                columns: vec![ExplorationColumn::new("bias_current", vec![1.0, 2.0])],
+                columns: vec![
+                    ExplorationColumn::new("bias_current", vec![1.0, 2.0]),
+                    ExplorationColumn::new("xcs.width_m1", vec![3.0, 4.0]),
+                    ExplorationColumn::new("xcs.length__m1", vec![0.15, 0.2]),
+                    ExplorationColumn::new("gain", vec![10.0, 20.0]),
+                ],
                 row_count: 2,
             },
         );
@@ -7881,6 +7881,9 @@ mod tests {
         assert_eq!(sets[0].name, "xcs_macro");
         assert_eq!(sets[0].points[0].get("isource__xcs_macro"), Some(1.0));
         assert_eq!(sets[0].points[1].get("isource__xcs_macro"), Some(2.0));
+        assert_eq!(sets[0].points[0].get("xcs_macro.xcs.width_m1"), Some(3.0));
+        assert_eq!(sets[0].points[1].get("xcs_macro.xcs.length__m1"), Some(0.2));
+        assert_eq!(sets[0].points[0].get("xcs_macro.gain"), None);
     }
 
     #[test]
@@ -8510,32 +8513,6 @@ fn exploration_table_to_csv(table: &ExplorationTable) -> String {
     }
 
     output
-}
-
-fn add_automatic_area_column(
-    table: &mut ExplorationTable,
-) -> Result<(), libsstadex::exploration::ExplorationTableError> {
-    if table.column("area").is_some() {
-        return Ok(());
-    }
-
-    let width_columns = table
-        .columns
-        .iter()
-        .filter(|column| is_area_width_column(&column.name))
-        .map(|column| column.name.clone())
-        .collect::<Vec<_>>();
-    if width_columns.is_empty() {
-        return Ok(());
-    }
-
-    let source_columns = width_columns.iter().map(String::as_str).collect::<Vec<_>>();
-    table.add_sum_column("area", &source_columns)
-}
-
-fn is_area_width_column(name: &str) -> bool {
-    let local_name = name.rsplit('.').next().unwrap_or(name);
-    local_name == "width" || local_name.starts_with("width_") || local_name.starts_with("width__")
 }
 
 fn csv_escape(value: &str) -> String {

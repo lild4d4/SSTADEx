@@ -58,10 +58,7 @@ fn main() -> Result<(), String> {
 
     let simplediffpair_input = PrimitiveBuildInput::new(HashMap::from([
         ("current".to_string(), PrimitiveBuildValue::Scalar(CURRENT)),
-        (
-            "VINP".to_string(),
-            PrimitiveBuildValue::Scalar(VIN),
-        ),
+        ("VINP".to_string(), PrimitiveBuildValue::Scalar(VIN)),
         ("VOUTP".to_string(), PrimitiveBuildValue::Scalar(VOUT)),
         (
             "VTAIL".to_string(),

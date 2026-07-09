@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use crate::catalog::PrimitiveCatalog;
 use crate::exploration::{DutRef, TestbenchSpec};
-use crate::macro_model::{validate_macro_model, MacroCatalog, MacroModel, MacroValidationError};
+use crate::macro_model::{MacroCatalog, MacroModel, MacroValidationError, validate_macro_model};
 use crate::netlist::{small_signal_element_name, small_signal_param_name};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -563,7 +563,7 @@ mod tests {
     use crate::circuit::{Circuit, Connection, Instance, PinRef};
     use crate::exploration::TestbenchElement;
     use crate::macro_model::{
-        load_macro_catalog, load_macro_model, MacroModel, MacroPort, MacroPortRole,
+        MacroModel, MacroPort, MacroPortRole, load_macro_catalog, load_macro_model,
     };
     use std::path::Path;
 
@@ -714,8 +714,10 @@ mod tests {
             compact_current_source.contains("* Compact small-signal macro: current_source"),
             "{compact_current_source}"
         );
-        assert!(compact_current_source
-            .contains("I_isource__current_source VOUT VSS isource__current_source"));
+        assert!(
+            compact_current_source
+                .contains("I_isource__current_source VOUT VSS isource__current_source")
+        );
 
         let expanded_ota = render_macro_small_signal_netlist_with_mode(
             ota,
@@ -735,10 +737,14 @@ mod tests {
             MacroSmallSignalMode::Expand,
         )
         .unwrap();
-        assert!(fully_expanded_ota
-            .contains("R_ro__xcs_macro__xcs__m1 IBIAS VSS ro__xcs_macro__xcs__m1"));
-        assert!(fully_expanded_ota
-            .contains("G_gm__xcs_macro__xcs__m1 IBIAS VSS VBIAS VSS gm__xcs_macro__xcs__m1"));
+        assert!(
+            fully_expanded_ota
+                .contains("R_ro__xcs_macro__xcs__m1 IBIAS VSS ro__xcs_macro__xcs__m1")
+        );
+        assert!(
+            fully_expanded_ota
+                .contains("G_gm__xcs_macro__xcs__m1 IBIAS VSS VBIAS VSS gm__xcs_macro__xcs__m1")
+        );
 
         let compact_error = render_macro_small_signal_netlist_with_mode(
             ota,
@@ -800,8 +806,10 @@ mod tests {
             MacroSmallSignalMode::Expand,
         )
         .unwrap();
-        assert!(expanded_netlist
-            .contains("G_gm__xcs_macro__xcs__m1 IBIAS VSS VBIAS VSS gm__xcs_macro__xcs__m1"));
+        assert!(
+            expanded_netlist
+                .contains("G_gm__xcs_macro__xcs__m1 IBIAS VSS VBIAS VSS gm__xcs_macro__xcs__m1")
+        );
 
         let current_source_testbench = TestbenchSpec::new("current_source_gain")
             .with_macro_dut("current_source")
@@ -836,8 +844,10 @@ mod tests {
             MacroSmallSignalMode::Compact,
         )
         .unwrap();
-        assert!(compact_current_source_netlist
-            .contains("I_isource__current_source VOUT VSS isource__current_source"));
+        assert!(
+            compact_current_source_netlist
+                .contains("I_isource__current_source VOUT VSS isource__current_source")
+        );
         assert!(!compact_current_source_netlist.contains("G_gm__xcs__m1"));
     }
 

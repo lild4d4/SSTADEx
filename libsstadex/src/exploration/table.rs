@@ -57,6 +57,32 @@ impl ExplorationTable {
     }
 }
 
+pub fn add_automatic_area_column(
+    table: &mut ExplorationTable,
+) -> Result<(), ExplorationTableError> {
+    if table.column("area").is_some() {
+        return Ok(());
+    }
+
+    let width_columns = table
+        .columns
+        .iter()
+        .filter(|column| is_area_width_column(&column.name))
+        .map(|column| column.name.clone())
+        .collect::<Vec<_>>();
+    if width_columns.is_empty() {
+        return Ok(());
+    }
+
+    let source_columns = width_columns.iter().map(String::as_str).collect::<Vec<_>>();
+    table.add_sum_column("area", &source_columns)
+}
+
+pub fn is_area_width_column(name: &str) -> bool {
+    let local_name = name.rsplit('.').next().unwrap_or(name);
+    local_name == "width" || local_name.starts_with("width_") || local_name.starts_with("width__")
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExplorationTableError {
     MissingColumn {
@@ -224,5 +250,46 @@ mod tests {
         table.add_sum_column("area", &[]).unwrap();
 
         assert_eq!(table.column("area").unwrap().values, vec![0.0, 0.0]);
+    }
+
+    #[test]
+    fn automatic_area_column_sums_local_and_hierarchical_width_columns() {
+        let mut table = ExplorationTable {
+            row_count: 2,
+            columns: vec![
+                ExplorationColumn::new("width__x1__m1", vec![1.0, 2.0]),
+                ExplorationColumn::new("x2.width_m1", vec![3.0, 4.0]),
+                ExplorationColumn::new("xcs_macro.xcs.width_m2", vec![5.0, 6.0]),
+                ExplorationColumn::new("xcs_macro.xcs.length__m2", vec![0.15, 0.2]),
+                ExplorationColumn::new("isource__xcs_macro", vec![7.0, 8.0]),
+            ],
+        };
+
+        add_automatic_area_column(&mut table).unwrap();
+
+        assert_eq!(table.column("area").unwrap().values, vec![9.0, 12.0]);
+    }
+
+    #[test]
+    fn automatic_area_column_preserves_existing_area() {
+        let mut table = ExplorationTable {
+            row_count: 1,
+            columns: vec![
+                ExplorationColumn::new("width__x1__m1", vec![1.0]),
+                ExplorationColumn::new("area", vec![9.0]),
+            ],
+        };
+
+        add_automatic_area_column(&mut table).unwrap();
+
+        assert_eq!(table.column("area").unwrap().values, vec![9.0]);
+        assert_eq!(
+            table
+                .columns
+                .iter()
+                .filter(|column| column.name == "area")
+                .count(),
+            1
+        );
     }
 }

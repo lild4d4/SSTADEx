@@ -2,8 +2,8 @@ use std::fmt::Debug;
 use std::path::Path;
 
 use crate::analysis::{
-    analyze_macro_testbench_mna_with_mode, analyze_small_signal_netlist_mna,
-    node_voltage_expression, transfer_function_expression, TransferFunctionError,
+    TransferFunctionError, analyze_macro_testbench_mna_with_mode, analyze_small_signal_netlist_mna,
+    node_voltage_expression, transfer_function_expression,
 };
 use crate::catalog::PrimitiveCatalog;
 use crate::circuit::Circuit;

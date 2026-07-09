@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 
 use super::{
-    candidate_set_from_columns, CandidateAxis, CandidateSet, CompactOutputBinding,
-    ExplorationColumn, ExplorationFilter, ExplorationSpec, ExplorationTable, TestbenchSpec,
+    CandidateAxis, CandidateSet, CompactOutputBinding, ExplorationColumn, ExplorationFilter,
+    ExplorationSpec, ExplorationTable, TestbenchSpec, candidate_column_name,
+    candidate_set_from_columns,
 };
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -159,7 +160,7 @@ pub fn submacro_results_to_compact_candidate_set(
     }
 
     let instance = instance.as_ref();
-    let mut columns = Vec::with_capacity(bindings.len());
+    let mut columns = Vec::with_capacity(bindings.len() + table.columns.len());
 
     for binding in bindings {
         let source = table.column(&binding.source_column).ok_or_else(|| {
@@ -173,7 +174,31 @@ pub fn submacro_results_to_compact_candidate_set(
         ));
     }
 
+    columns.extend(submacro_sizing_columns(instance, table));
+
     Ok(candidate_set_from_columns(instance, &columns)?)
+}
+
+fn submacro_sizing_columns(instance: &str, table: &ExplorationTable) -> Vec<ExplorationColumn> {
+    table
+        .columns
+        .iter()
+        .filter(|column| is_sizing_column(&column.name))
+        .map(|column| {
+            ExplorationColumn::new(
+                candidate_column_name(instance, &column.name),
+                column.values.clone(),
+            )
+        })
+        .collect()
+}
+
+fn is_sizing_column(name: &str) -> bool {
+    let local_name = name.rsplit('.').next().unwrap_or(name);
+    local_name.starts_with("width_")
+        || local_name.starts_with("width__")
+        || local_name.starts_with("length_")
+        || local_name.starts_with("length__")
 }
 
 #[cfg(test)]
@@ -222,6 +247,8 @@ mod tests {
         let table = ExplorationTable {
             columns: vec![
                 ExplorationColumn::new("bias_current", vec![1.0, 2.0]),
+                ExplorationColumn::new("xcs.width_m1", vec![3.0, 4.0]),
+                ExplorationColumn::new("xcs.length__m1", vec![0.15, 0.2]),
                 ExplorationColumn::new("gain", vec![10.0, 20.0]),
             ],
             row_count: 2,
@@ -234,6 +261,30 @@ mod tests {
         assert_eq!(candidate_set.name, "xcs_macro");
         assert_eq!(candidate_set.points[0].get("isource__xcs_macro"), Some(1.0));
         assert_eq!(candidate_set.points[1].get("isource__xcs_macro"), Some(2.0));
+        assert_eq!(
+            candidate_set.points[0].get("xcs_macro.xcs.width_m1"),
+            Some(3.0)
+        );
+        assert_eq!(
+            candidate_set.points[1].get("xcs_macro.xcs.length__m1"),
+            Some(0.2)
+        );
+        assert_eq!(candidate_set.points[0].get("xcs_macro.gain"), None);
+    }
+
+    #[test]
+    fn maps_submacro_results_without_sizing_columns() {
+        let table = ExplorationTable {
+            columns: vec![ExplorationColumn::new("bias_current", vec![1.0])],
+            row_count: 1,
+        };
+        let bindings = vec![CompactOutputBinding::new("bias_current", "isource")];
+
+        let candidate_set =
+            submacro_results_to_compact_candidate_set("xcs_macro", &bindings, &table).unwrap();
+
+        assert_eq!(candidate_set.points[0].values.len(), 1);
+        assert_eq!(candidate_set.points[0].get("isource__xcs_macro"), Some(1.0));
     }
 
     #[test]

@@ -1,16 +1,16 @@
 use super::candidate::{
-    build_filtered_candidates, CandidateAxis, CandidatePipelineError, CandidatePoint, CandidateSet,
+    CandidateAxis, CandidatePipelineError, CandidatePoint, CandidateSet, build_filtered_candidates,
 };
 use super::conditions::{
-    filter_conditions, ExplorationFilter, FilterConditionsError, SpecificationResult,
+    ExplorationFilter, FilterConditionsError, SpecificationResult, filter_conditions,
 };
 use super::evaluation::{
-    evaluate_prepared_candidate_specs, evaluate_prepared_expression_specs, CandidateEvaluationError,
+    CandidateEvaluationError, evaluate_prepared_candidate_specs, evaluate_prepared_expression_specs,
 };
-use super::prepare::{prepare_candidate_expression_specs, PreparedSpec, SpecPrepareError};
+use super::prepare::{PreparedSpec, SpecPrepareError, prepare_candidate_expression_specs};
 use super::spec::ExplorationSpec;
 use super::table::{
-    assemble_filtered_table, ExplorationColumn, ExplorationTable, ExplorationTableError,
+    ExplorationColumn, ExplorationTable, ExplorationTableError, assemble_filtered_table,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,8 +111,8 @@ fn specification_results_to_columns(
 mod tests {
     use super::*;
     use crate::exploration::{
-        required_candidate_value, shared_node_filter, CandidateAxis, CandidatePoint, CandidateSet,
-        RangeCondition, SpecOutput, SpecPrepareError, SpecSource, TestbenchSpec,
+        CandidateAxis, CandidatePoint, CandidateSet, RangeCondition, SpecOutput, SpecPrepareError,
+        SpecSource, TestbenchSpec, required_candidate_value, shared_node_filter,
     };
 
     #[test]
