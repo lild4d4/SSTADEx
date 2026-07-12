@@ -216,6 +216,10 @@ pub enum HierarchyDfsError {
     },
     Condition(SubmacroConditionError),
     Candidate(SubmacroCandidateError),
+    MissingCompactOutputs {
+        instance_name: String,
+        child_macro: String,
+    },
     Evaluation {
         macro_name: String,
         event: String,
@@ -441,6 +445,12 @@ where
             evaluate,
             state,
         )?;
+        if child_node.compact_outputs.is_empty() {
+            return Err(HierarchyDfsError::MissingCompactOutputs {
+                instance_name: child.instance_name.clone(),
+                child_macro: child.macro_name.clone(),
+            });
+        }
         let child_set = submacro_results_to_candidate_set(
             &child.instance_name,
             &child_node.compact_outputs,
@@ -1235,6 +1245,40 @@ mod tests {
             error,
             HierarchyDfsError::Cycle {
                 macro_name: "top".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn dfs_runner_allows_initial_parent_eval_without_child_compact_outputs() {
+        let mut top = HierarchyDfsNode::new("top", MacroExplorationWorkspace::new("top"));
+        top.children.push(HierarchyDfsChild::new("xchild", "child"));
+        let child = HierarchyDfsNode::new("child", MacroExplorationWorkspace::new("child"));
+        let project = HierarchyDfsProject::new("top", vec![top, child]);
+        let mut requests = Vec::new();
+
+        let error = run_hierarchical_dfs(&project, |request| {
+            requests.push((request.macro_name.clone(), request.event.clone()));
+            Ok(ExplorationTable {
+                columns: vec![ExplorationColumn::new("value", vec![1.0])],
+                row_count: 1,
+            })
+        })
+        .unwrap_err();
+
+        assert_eq!(
+            requests,
+            vec![
+                ("top".to_string(), "initial".to_string()),
+                ("child".to_string(), "initial".to_string()),
+                ("child".to_string(), "final".to_string()),
+            ]
+        );
+        assert_eq!(
+            error,
+            HierarchyDfsError::MissingCompactOutputs {
+                instance_name: "xchild".to_string(),
+                child_macro: "child".to_string(),
             }
         );
     }

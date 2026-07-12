@@ -4080,7 +4080,7 @@ impl SstadexApp {
                     HierarchyDfsChild::new(instance_name, macro_name)
                 })
                 .collect();
-            node.compact_outputs = compact_output_bindings_for_workspace(workspace)?;
+            node.compact_outputs = optional_compact_output_bindings_for_workspace(workspace)?;
             node.pre_build_columns =
                 self.pre_build_port_voltage_columns_for_macro(index, catalog, macro_blocks)?;
             nodes.push(node);
@@ -6598,7 +6598,20 @@ fn gui_specs_small_signal_mode(
     Ok(selected_mode.unwrap_or(GuiSmallSignalMode::CompactWhenAvailable))
 }
 
+#[cfg(test)]
 fn compact_output_bindings_for_workspace(
+    workspace: &GuiMacroWorkspace,
+) -> Result<Vec<CompactOutputBinding>, String> {
+    let bindings = optional_compact_output_bindings_for_workspace(workspace)?;
+
+    if bindings.is_empty() {
+        return Err("submacro workspace has no compact outputs configured".to_string());
+    }
+
+    Ok(bindings)
+}
+
+fn optional_compact_output_bindings_for_workspace(
     workspace: &GuiMacroWorkspace,
 ) -> Result<Vec<CompactOutputBinding>, String> {
     let mut bindings = Vec::new();
@@ -6625,10 +6638,6 @@ fn compact_output_bindings_for_workspace(
             )?;
             bindings.push(CompactOutputBinding::new(source_column, compact_parameter));
         }
-    }
-
-    if bindings.is_empty() {
-        return Err("submacro workspace has no compact outputs configured".to_string());
     }
 
     Ok(bindings)
@@ -6700,6 +6709,12 @@ fn format_hierarchy_dfs_error(error: &HierarchyDfsError) -> String {
         HierarchyDfsError::Candidate(error) => {
             format!("failed to map child results to parent candidate set\n\n{error:?}")
         }
+        HierarchyDfsError::MissingCompactOutputs {
+            instance_name,
+            child_macro,
+        } => format!(
+            "cannot propagate submacro '{child_macro}' into instance '{instance_name}': no compact outputs configured; add compact output bindings or keep this submacro unpropagated"
+        ),
         HierarchyDfsError::Evaluation {
             macro_name,
             event,
