@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 
 use super::{
-    CandidateAxis, CandidateSet, CompactOutputBinding, ExplorationColumn, ExplorationFilter,
-    ExplorationSpec, ExplorationTable, TestbenchSpec, candidate_column_name,
-    candidate_set_from_columns,
+    CandidateAxis, CandidatePoint, CandidateSet, CompactOutputBinding, ExplorationColumn,
+    ExplorationFilter, ExplorationSpec, ExplorationTable, FilterPhase, RangeCondition,
+    TestbenchSpec, candidate_column_name, candidate_set_from_columns,
+    evaluate_candidate_expression,
 };
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -133,6 +134,19 @@ pub enum SubmacroCandidateError {
     CandidateSetBuild(super::CandidateSetBuildError),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SubmacroConditionError {
+    MissingParentColumn { column: String },
+    InvalidNumber { value: String },
+    CandidateEvaluation(super::CandidateEvaluationError),
+}
+
+impl From<super::CandidateEvaluationError> for SubmacroConditionError {
+    fn from(error: super::CandidateEvaluationError) -> Self {
+        Self::CandidateEvaluation(error)
+    }
+}
+
 impl From<super::CandidateSetBuildError> for SubmacroCandidateError {
     fn from(error: super::CandidateSetBuildError) -> Self {
         Self::CandidateSetBuild(error)
@@ -199,6 +213,138 @@ fn is_sizing_column(name: &str) -> bool {
         || local_name.starts_with("width__")
         || local_name.starts_with("length_")
         || local_name.starts_with("length__")
+}
+
+pub fn derive_submacro_condition_filters(
+    instance: impl AsRef<str>,
+    rules: &[SubmacroConditionRule],
+    child_workspace: &MacroExplorationWorkspace,
+    parent_table: &ExplorationTable,
+) -> Result<Vec<ExplorationFilter>, SubmacroConditionError> {
+    let instance = instance.as_ref();
+    let mut filters = Vec::new();
+
+    for rule in rules.iter().filter(|rule| rule.instance == instance) {
+        let target_column = child_interface_source_column(child_workspace, &rule.target_column);
+
+        match &rule.source {
+            SubmacroConditionSource::AllowedValuesFromParent { column } => {
+                let source = required_parent_column(parent_table, column)?;
+                filters.push(ExplorationFilter::allowed_values(
+                    FilterPhase::CandidatePreEvaluation,
+                    target_column,
+                    unique_values(&source.values),
+                ));
+            }
+            SubmacroConditionSource::RangeFromParent { column } => {
+                let source = required_parent_column(parent_table, column)?;
+                filters.push(ExplorationFilter::new(
+                    FilterPhase::CandidatePreEvaluation,
+                    target_column,
+                    range_from_values(&source.values),
+                ));
+            }
+            SubmacroConditionSource::FixedRange { min, max } => {
+                filters.push(ExplorationFilter::new(
+                    FilterPhase::CandidatePreEvaluation,
+                    target_column,
+                    RangeCondition::new(parse_optional_f64(min)?, parse_optional_f64(max)?),
+                ));
+            }
+            SubmacroConditionSource::Expression { expression } => {
+                let values = evaluate_parent_expression(parent_table, expression)?;
+                filters.push(ExplorationFilter::allowed_values(
+                    FilterPhase::CandidatePreEvaluation,
+                    target_column,
+                    unique_values(&values),
+                ));
+            }
+        }
+    }
+
+    Ok(filters)
+}
+
+fn child_interface_source_column<'a>(
+    child_workspace: &'a MacroExplorationWorkspace,
+    target_column: &'a str,
+) -> &'a str {
+    child_workspace
+        .interface_variables
+        .iter()
+        .find(|variable| variable.name == target_column)
+        .map(|variable| variable.source_column.as_str())
+        .unwrap_or(target_column)
+}
+
+fn required_parent_column<'a>(
+    table: &'a ExplorationTable,
+    column: &str,
+) -> Result<&'a ExplorationColumn, SubmacroConditionError> {
+    table
+        .column(column)
+        .ok_or_else(|| SubmacroConditionError::MissingParentColumn {
+            column: column.to_string(),
+        })
+}
+
+fn unique_values(values: &[f64]) -> Vec<f64> {
+    let mut output = Vec::new();
+    for value in values {
+        if !output.contains(value) {
+            output.push(*value);
+        }
+    }
+    output
+}
+
+fn range_from_values(values: &[f64]) -> RangeCondition {
+    let mut min = None;
+    let mut max = None;
+
+    for value in values {
+        min = Some(min.map_or(*value, |current: f64| current.min(*value)));
+        max = Some(max.map_or(*value, |current: f64| current.max(*value)));
+    }
+
+    RangeCondition::new(min, max)
+}
+
+fn parse_optional_f64(value: &Option<String>) -> Result<Option<f64>, SubmacroConditionError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+
+    trimmed
+        .parse::<f64>()
+        .map(Some)
+        .map_err(|_| SubmacroConditionError::InvalidNumber {
+            value: value.clone(),
+        })
+}
+
+fn evaluate_parent_expression(
+    table: &ExplorationTable,
+    expression: &str,
+) -> Result<Vec<f64>, SubmacroConditionError> {
+    let mut values = Vec::with_capacity(table.row_count);
+
+    for row in 0..table.row_count {
+        let candidate = CandidatePoint::new(
+            table
+                .columns
+                .iter()
+                .map(|column| (column.name.clone(), column.values[row]))
+                .collect(),
+        );
+        values.push(evaluate_candidate_expression(&candidate, row, expression)?);
+    }
+
+    Ok(values)
 }
 
 #[cfg(test)]
@@ -303,6 +449,122 @@ mod tests {
             SubmacroCandidateError::MissingColumn {
                 column: "bias_current".to_string(),
             }
+        );
+    }
+
+    #[test]
+    fn derives_allowed_values_filter_for_submacro_interface_variable() {
+        let mut child = MacroExplorationWorkspace::new("current_source");
+        child
+            .interface_variables
+            .push(InterfaceVariable::new("vout", "xcs.voutp"));
+        let parent_table = ExplorationTable {
+            columns: vec![ExplorationColumn::new("parent_vout", vec![0.8, 0.9, 0.8])],
+            row_count: 3,
+        };
+        let rules = vec![SubmacroConditionRule::new(
+            "xcs_macro",
+            "vout",
+            SubmacroConditionSource::AllowedValuesFromParent {
+                column: "parent_vout".to_string(),
+            },
+        )];
+
+        let filters =
+            derive_submacro_condition_filters("xcs_macro", &rules, &child, &parent_table).unwrap();
+
+        assert_eq!(
+            filters,
+            vec![ExplorationFilter::allowed_values(
+                FilterPhase::CandidatePreEvaluation,
+                "xcs.voutp",
+                vec![0.8, 0.9],
+            )]
+        );
+    }
+
+    #[test]
+    fn derives_range_filter_from_parent_column() {
+        let child = MacroExplorationWorkspace::new("current_source");
+        let parent_table = ExplorationTable {
+            columns: vec![ExplorationColumn::new("vout_window", vec![0.7, 0.9])],
+            row_count: 2,
+        };
+        let rules = vec![SubmacroConditionRule::new(
+            "xcs_macro",
+            "xcs.voutp",
+            SubmacroConditionSource::RangeFromParent {
+                column: "vout_window".to_string(),
+            },
+        )];
+
+        let filters =
+            derive_submacro_condition_filters("xcs_macro", &rules, &child, &parent_table).unwrap();
+
+        assert_eq!(
+            filters,
+            vec![ExplorationFilter::new(
+                FilterPhase::CandidatePreEvaluation,
+                "xcs.voutp",
+                RangeCondition::new(Some(0.7), Some(0.9)),
+            )]
+        );
+    }
+
+    #[test]
+    fn derives_allowed_values_filter_from_parent_expression() {
+        let child = MacroExplorationWorkspace::new("current_source");
+        let parent_table = ExplorationTable {
+            columns: vec![ExplorationColumn::new("vout", vec![0.8, 0.9])],
+            row_count: 2,
+        };
+        let rules = vec![SubmacroConditionRule::new(
+            "xcs_macro",
+            "xcs.voutp",
+            SubmacroConditionSource::Expression {
+                expression: "vout + 0.1".to_string(),
+            },
+        )];
+
+        let filters =
+            derive_submacro_condition_filters("xcs_macro", &rules, &child, &parent_table).unwrap();
+
+        assert_eq!(
+            filters,
+            vec![ExplorationFilter::allowed_values(
+                FilterPhase::CandidatePreEvaluation,
+                "xcs.voutp",
+                vec![0.9, 1.0],
+            )]
+        );
+    }
+
+    #[test]
+    fn derives_fixed_range_filter() {
+        let child = MacroExplorationWorkspace::new("current_source");
+        let parent_table = ExplorationTable {
+            columns: Vec::new(),
+            row_count: 0,
+        };
+        let rules = vec![SubmacroConditionRule::new(
+            "xcs_macro",
+            "xcs.voutp",
+            SubmacroConditionSource::FixedRange {
+                min: Some("0.2".to_string()),
+                max: Some("1.0".to_string()),
+            },
+        )];
+
+        let filters =
+            derive_submacro_condition_filters("xcs_macro", &rules, &child, &parent_table).unwrap();
+
+        assert_eq!(
+            filters,
+            vec![ExplorationFilter::new(
+                FilterPhase::CandidatePreEvaluation,
+                "xcs.voutp",
+                RangeCondition::new(Some(0.2), Some(1.0)),
+            )]
         );
     }
 }

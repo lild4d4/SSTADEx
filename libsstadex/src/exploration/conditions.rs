@@ -58,6 +58,11 @@ pub enum ExplorationFilter {
         column: String,
         condition: RangeCondition,
     },
+    AllowedValues {
+        phase: FilterPhase,
+        column: String,
+        values: Vec<f64>,
+    },
     EqualColumns {
         phase: FilterPhase,
         columns: Vec<String>,
@@ -80,23 +85,34 @@ impl ExplorationFilter {
         }
     }
 
+    pub fn allowed_values(phase: FilterPhase, column: impl Into<String>, values: Vec<f64>) -> Self {
+        Self::AllowedValues {
+            phase,
+            column: column.into(),
+            values,
+        }
+    }
+
     pub fn phase(&self) -> FilterPhase {
         match self {
             Self::Range { phase, .. } => *phase,
+            Self::AllowedValues { phase, .. } => *phase,
             Self::EqualColumns { phase, .. } => *phase,
         }
     }
 
     pub fn column(&self) -> Option<&str> {
         match self {
-            Self::Range { column, .. } => Some(column),
+            Self::Range { column, .. } | Self::AllowedValues { column, .. } => Some(column),
             Self::EqualColumns { .. } => None,
         }
     }
 
     pub fn columns(&self) -> &[String] {
         match self {
-            Self::Range { column, .. } => std::slice::from_ref(column),
+            Self::Range { column, .. } | Self::AllowedValues { column, .. } => {
+                std::slice::from_ref(column)
+            }
             Self::EqualColumns { columns, .. } => columns,
         }
     }
@@ -104,6 +120,7 @@ impl ExplorationFilter {
     pub fn condition(&self) -> Option<RangeCondition> {
         match self {
             Self::Range { condition, .. } => Some(*condition),
+            Self::AllowedValues { .. } => None,
             Self::EqualColumns { .. } => None,
         }
     }
@@ -111,6 +128,7 @@ impl ExplorationFilter {
     pub fn accepts_value(&self, value: f64) -> bool {
         match self {
             Self::Range { condition, .. } => condition.contains_abs(value),
+            Self::AllowedValues { values, .. } => values.contains(&value),
             Self::EqualColumns { .. } => true,
         }
     }
@@ -226,7 +244,12 @@ pub fn filter_known_columns(
     for filter in filters
         .iter()
         .filter(|filter| filter.phase() == FilterPhase::AxisPreEvaluation)
-        .filter(|filter| matches!(filter, ExplorationFilter::Range { .. }))
+        .filter(|filter| {
+            matches!(
+                filter,
+                ExplorationFilter::Range { .. } | ExplorationFilter::AllowedValues { .. }
+            )
+        })
     {
         let column = columns
             .iter()
@@ -274,7 +297,7 @@ pub fn filter_equal_columns(
         .filter(|filter| filter.phase() == phase)
         .filter_map(|filter| match filter {
             ExplorationFilter::EqualColumns { columns, .. } => Some(columns),
-            ExplorationFilter::Range { .. } => None,
+            ExplorationFilter::Range { .. } | ExplorationFilter::AllowedValues { .. } => None,
         })
     {
         if filter.len() < 2 {
@@ -395,6 +418,20 @@ mod tests {
 
         assert!(filter.accepts_value(3.0));
         assert!(!filter.accepts_value(12.0));
+    }
+
+    #[test]
+    fn exploration_filter_evaluates_allowed_values() {
+        let filter = ExplorationFilter::allowed_values(
+            FilterPhase::CandidatePreEvaluation,
+            "vout",
+            vec![0.7, 0.8],
+        );
+
+        assert_eq!(filter.phase(), FilterPhase::CandidatePreEvaluation);
+        assert_eq!(filter.column(), Some("vout"));
+        assert!(filter.accepts_value(0.7));
+        assert!(!filter.accepts_value(0.9));
     }
 
     #[test]

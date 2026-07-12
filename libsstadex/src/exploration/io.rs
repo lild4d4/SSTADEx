@@ -481,6 +481,11 @@ enum RawExplorationFilter {
         column: String,
         condition: RawRangeCondition,
     },
+    AllowedValues {
+        phase: RawFilterPhase,
+        column: String,
+        values: Vec<f64>,
+    },
     EqualColumns {
         phase: RawFilterPhase,
         columns: Vec<String>,
@@ -495,6 +500,11 @@ impl RawExplorationFilter {
                 column,
                 condition,
             } => ExplorationFilter::new(phase.into_phase(), column, condition.into_condition()),
+            Self::AllowedValues {
+                phase,
+                column,
+                values,
+            } => ExplorationFilter::allowed_values(phase.into_phase(), column, values),
             Self::EqualColumns { phase, columns } => {
                 ExplorationFilter::equal_columns(phase.into_phase(), columns)
             }
@@ -511,6 +521,15 @@ impl RawExplorationFilter {
                 phase: RawFilterPhase::from_phase(*phase),
                 column: column.clone(),
                 condition: RawRangeCondition::from_condition(*condition),
+            },
+            ExplorationFilter::AllowedValues {
+                phase,
+                column,
+                values,
+            } => Self::AllowedValues {
+                phase: RawFilterPhase::from_phase(*phase),
+                column: column.clone(),
+                values: values.clone(),
             },
             ExplorationFilter::EqualColumns { phase, columns } => Self::EqualColumns {
                 phase: RawFilterPhase::from_phase(*phase),
