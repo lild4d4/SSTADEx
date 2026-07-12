@@ -16,7 +16,7 @@ use libsstadex::exploration::{
     TestbenchElement, TestbenchSpec, add_automatic_area_column, build_filtered_candidates,
     derive_submacro_condition_filters, prepare_macro_testbench_specs_with_mode,
     run_prepared_expression_flow_with_derived_columns, save_exploration_candidates,
-    save_exploration_specs, save_testbenches, submacro_results_to_compact_candidate_set,
+    save_exploration_specs, save_testbenches, submacro_results_to_candidate_set,
 };
 use libsstadex::macro_model::{
     MacroCatalog, MacroMetadata, MacroModel, MacroPort, MacroPortRole, MacroSmallSignalMode,
@@ -3953,12 +3953,24 @@ impl SstadexApp {
             self.output_results = format_exploration_table_output(&top_table);
             self.output_results_table = Some(top_table);
         }
+        let top_results_path = output_dir.join("top_results.csv");
+        if let Some(top_table) = results_by_macro.get(&top_name) {
+            if let Err(error) =
+                std::fs::write(&top_results_path, exploration_table_to_csv(top_table))
+            {
+                return format!(
+                    "Evaluate hierarchy completed but failed to write top results CSV '{}'\n\n{error}",
+                    top_results_path.display()
+                );
+            }
+        }
         self.output_artifacts = format!(
-            "Hierarchy evaluated\nTop macro: {}\nEvaluated macros: {}\nInherited filters: {}\nOutput dir: {}",
+            "Hierarchy evaluated\nTop macro: {}\nEvaluated macros: {}\nInherited filters: {}\nOutput dir: {}\nTop results CSV: {}",
             top_name,
             evaluated.join(", "),
             derived_filter_count,
-            output_dir.display()
+            output_dir.display(),
+            top_results_path.display()
         );
         self.save_active_macro_workspace();
 
@@ -4014,6 +4026,16 @@ impl SstadexApp {
                     format_hierarchy_candidates_output(&evaluation.candidate_input);
                 workspace.output_results = format_exploration_table_output(&evaluation.table);
                 workspace.output_results_table = Some(evaluation.table.clone());
+            }
+
+            let results_path = output_dir.join(&macro_name).join("results.csv");
+            if let Err(error) =
+                std::fs::write(&results_path, exploration_table_to_csv(&evaluation.table))
+            {
+                return Err(format!(
+                    "Evaluate hierarchy failed for '{macro_name}': failed to write results CSV '{}'\n\n{error}",
+                    results_path.display()
+                ));
             }
 
             results_by_macro.insert(macro_name.clone(), evaluation.table);
@@ -4144,14 +4166,20 @@ impl SstadexApp {
                 format!("submacro '{child_macro_name}' has not been evaluated yet")
             })?;
             let bindings = compact_output_bindings_for_workspace(child_workspace)?;
-            let candidate_set =
-                submacro_results_to_compact_candidate_set(&instance_name, &bindings, child_table)
-                    .map_err(|error| {
-                    format!(
-                        "failed to map results from submacro instance '{}' ({})\n\n{error:?}",
-                        instance_name, child_macro_name
-                    )
-                })?;
+            let interface_variables =
+                gui_interface_variables_to_core(&child_workspace.interface_variables)?;
+            let candidate_set = submacro_results_to_candidate_set(
+                &instance_name,
+                &bindings,
+                &interface_variables,
+                child_table,
+            )
+            .map_err(|error| {
+                format!(
+                    "failed to map results from submacro instance '{}' ({})\n\n{error:?}",
+                    instance_name, child_macro_name
+                )
+            })?;
             sets.push(candidate_set);
         }
 
@@ -8597,6 +8625,12 @@ mod tests {
             extra_body: String::new(),
             next_element_id: 1,
         });
+        child_workspace
+            .interface_variables
+            .push(GuiInterfaceVariableDocument {
+                name: "vout".to_string(),
+                source_column: "xcs.voutp".to_string(),
+            });
         app.macro_workspaces = vec![GuiMacroWorkspace::default(), child_workspace];
         let mut results_by_macro = HashMap::new();
         results_by_macro.insert(
@@ -8604,6 +8638,7 @@ mod tests {
             ExplorationTable {
                 columns: vec![
                     ExplorationColumn::new("bias_current", vec![1.0, 2.0]),
+                    ExplorationColumn::new("xcs.voutp", vec![0.8, 0.9]),
                     ExplorationColumn::new("xcs.width_m1", vec![3.0, 4.0]),
                     ExplorationColumn::new("xcs.length__m1", vec![0.15, 0.2]),
                     ExplorationColumn::new("gain", vec![10.0, 20.0]),
@@ -8620,6 +8655,8 @@ mod tests {
         assert_eq!(sets[0].name, "xcs_macro");
         assert_eq!(sets[0].points[0].get("isource__xcs_macro"), Some(1.0));
         assert_eq!(sets[0].points[1].get("isource__xcs_macro"), Some(2.0));
+        assert_eq!(sets[0].points[0].get("xcs_macro.vout"), Some(0.8));
+        assert_eq!(sets[0].points[1].get("xcs_macro.vout"), Some(0.9));
         assert_eq!(sets[0].points[0].get("xcs_macro.xcs.width_m1"), Some(3.0));
         assert_eq!(sets[0].points[1].get("xcs_macro.xcs.length__m1"), Some(0.2));
         assert_eq!(sets[0].points[0].get("xcs_macro.gain"), None);

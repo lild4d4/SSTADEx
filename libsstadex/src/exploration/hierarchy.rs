@@ -169,6 +169,15 @@ pub fn submacro_results_to_compact_candidate_set(
     bindings: &[CompactOutputBinding],
     table: &ExplorationTable,
 ) -> Result<CandidateSet, SubmacroCandidateError> {
+    submacro_results_to_candidate_set(instance, bindings, &[], table)
+}
+
+pub fn submacro_results_to_candidate_set(
+    instance: impl AsRef<str>,
+    bindings: &[CompactOutputBinding],
+    interface_variables: &[InterfaceVariable],
+    table: &ExplorationTable,
+) -> Result<CandidateSet, SubmacroCandidateError> {
     if bindings.is_empty() {
         return Err(SubmacroCandidateError::EmptyBindings);
     }
@@ -188,9 +197,36 @@ pub fn submacro_results_to_compact_candidate_set(
         ));
     }
 
+    columns.extend(submacro_interface_columns(
+        instance,
+        interface_variables,
+        table,
+    )?);
     columns.extend(submacro_sizing_columns(instance, table));
 
     Ok(candidate_set_from_columns(instance, &columns)?)
+}
+
+fn submacro_interface_columns(
+    instance: &str,
+    interface_variables: &[InterfaceVariable],
+    table: &ExplorationTable,
+) -> Result<Vec<ExplorationColumn>, SubmacroCandidateError> {
+    let mut columns = Vec::with_capacity(interface_variables.len());
+
+    for variable in interface_variables {
+        let source = table.column(&variable.source_column).ok_or_else(|| {
+            SubmacroCandidateError::MissingColumn {
+                column: variable.source_column.clone(),
+            }
+        })?;
+        columns.push(ExplorationColumn::new(
+            candidate_column_name(instance, &variable.name),
+            source.values.clone(),
+        ));
+    }
+
+    Ok(columns)
 }
 
 fn submacro_sizing_columns(instance: &str, table: &ExplorationTable) -> Vec<ExplorationColumn> {
@@ -431,6 +467,25 @@ mod tests {
 
         assert_eq!(candidate_set.points[0].values.len(), 1);
         assert_eq!(candidate_set.points[0].get("isource__xcs_macro"), Some(1.0));
+    }
+
+    #[test]
+    fn maps_submacro_interface_variables_to_public_instance_columns() {
+        let table = ExplorationTable {
+            columns: vec![
+                ExplorationColumn::new("bias_current", vec![1.0, 2.0]),
+                ExplorationColumn::new("xcs.voutp", vec![0.8, 0.9]),
+            ],
+            row_count: 2,
+        };
+        let bindings = vec![CompactOutputBinding::new("bias_current", "isource")];
+        let interfaces = vec![InterfaceVariable::new("vout", "xcs.voutp")];
+
+        let candidate_set =
+            submacro_results_to_candidate_set("xcs_macro", &bindings, &interfaces, &table).unwrap();
+
+        assert_eq!(candidate_set.points[0].get("xcs_macro.vout"), Some(0.8));
+        assert_eq!(candidate_set.points[1].get("xcs_macro.vout"), Some(0.9));
     }
 
     #[test]
