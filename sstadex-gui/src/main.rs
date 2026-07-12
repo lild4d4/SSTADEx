@@ -11,13 +11,15 @@ use libsstadex::circuit::{Circuit, Connection, Instance, PinRef, save_circuit};
 use libsstadex::exploration::{
     CandidateAxis, CandidatePoint, CandidateSet, CompactOutputBinding, DerivedColumnSpec,
     ExplorationCandidateInput, ExplorationFilter, ExplorationSpec, ExplorationTable,
-    InterfaceVariable, MacroExplorationWorkspace, PreparedSpec, PreparedSpecSource, RangeCondition,
-    SpecOutput, SpecParameter, SpecSource, SubmacroConditionRule, SubmacroConditionSource,
+    HierarchyDfsChild, HierarchyDfsError, HierarchyDfsEvaluationRequest, HierarchyDfsEvent,
+    HierarchyDfsNode, HierarchyDfsProject, InterfaceVariable, MacroExplorationWorkspace,
+    PreparedSpec, PreparedSpecSource, RangeCondition, ResolvedSubmacroConditions, SpecOutput,
+    SpecParameter, SpecSource, SubmacroConditionRule, SubmacroConditionSource,
     SubmacroPreBuildCondition, SubmacroPreBuildConstraint, TestbenchElement, TestbenchSpec,
     add_automatic_area_column, build_filtered_candidates, candidate_column_name,
-    prepare_macro_testbench_specs_with_mode, resolve_submacro_conditions,
+    prepare_macro_testbench_specs_with_mode, run_hierarchical_dfs,
     run_prepared_expression_flow_with_derived_columns, save_exploration_candidates,
-    save_exploration_specs, save_testbenches, submacro_results_to_candidate_set,
+    save_exploration_specs, save_testbenches,
 };
 use libsstadex::macro_model::{
     MacroCatalog, MacroMetadata, MacroModel, MacroPort, MacroPortRole, MacroSmallSignalMode,
@@ -110,6 +112,15 @@ struct GuiWorkspaceEvaluation {
 struct GuiInheritedConstraints {
     pre_build: Vec<SubmacroPreBuildConstraint>,
     filters: Vec<ExplorationFilter>,
+}
+
+impl From<ResolvedSubmacroConditions> for GuiInheritedConstraints {
+    fn from(constraints: ResolvedSubmacroConditions) -> Self {
+        Self {
+            pre_build: constraints.pre_build_constraints,
+            filters: constraints.filters,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -3907,10 +3918,6 @@ impl SstadexApp {
         };
 
         let top_name = top_document.name.clone();
-        let order = match self.hierarchy_evaluation_order(self.active_circuit) {
-            Ok(order) => order,
-            Err(error) => return format!("Cannot evaluate hierarchy: {error}"),
-        };
         let macro_models = match self.build_macro_models() {
             Ok(macro_models) => macro_models,
             Err(error) => return format!("Cannot evaluate hierarchy: {error}"),
@@ -3920,150 +3927,166 @@ impl SstadexApp {
         let output_dir = std::env::temp_dir()
             .join("sstadex-gui-mna")
             .join("hierarchy");
-        let inherited_constraints = HashMap::new();
-        let (mut results_by_macro, mut evaluated) = match self.evaluate_hierarchy_order(
-            &order,
-            &catalog,
-            &macro_catalog,
-            &macro_blocks,
-            &output_dir,
-            &inherited_constraints,
-        ) {
-            Ok(output) => output,
-            Err(error) => return error,
+        let project = match self.gui_hierarchy_dfs_project(&top_name, &catalog, &macro_blocks) {
+            Ok(project) => project,
+            Err(error) => return format!("Cannot evaluate hierarchy: {error}"),
         };
-        let derived_constraints = match self.derive_hierarchy_inherited_constraints(
-            &catalog,
-            &macro_blocks,
-            &results_by_macro,
-        ) {
-            Ok(constraints) => constraints,
-            Err(error) => {
-                return format!(
-                    "Evaluate hierarchy failed while deriving inherited constraints: {error}"
-                );
-            }
-        };
-        let derived_filter_count = derived_constraints
-            .values()
-            .map(|constraints| constraints.filters.len())
-            .sum::<usize>();
-        let derived_pre_build_count = derived_constraints
-            .values()
-            .map(|constraints| constraints.pre_build.len())
-            .sum::<usize>();
-        if derived_filter_count + derived_pre_build_count > 0 {
-            match self.evaluate_hierarchy_order(
-                &order,
+        let run = match run_hierarchical_dfs(&project, |request| {
+            self.evaluate_hierarchy_request(
+                request,
                 &catalog,
                 &macro_catalog,
                 &macro_blocks,
                 &output_dir,
-                &derived_constraints,
-            ) {
-                Ok(output) => {
-                    results_by_macro = output.0;
-                    evaluated = output.1;
-                }
-                Err(error) => return error,
-            }
-        }
-
-        if let Some(top_table) = results_by_macro.get(&top_name).cloned() {
-            self.output_results = format_exploration_table_output(&top_table);
-            self.output_results_table = Some(top_table);
-        }
-        let top_results_path = output_dir.join("top_results.csv");
-        if let Some(top_table) = results_by_macro.get(&top_name) {
-            if let Err(error) =
-                std::fs::write(&top_results_path, exploration_table_to_csv(top_table))
-            {
+            )
+        }) {
+            Ok(run) => run,
+            Err(error) => {
                 return format!(
-                    "Evaluate hierarchy completed but failed to write top results CSV '{}'\n\n{error}",
-                    top_results_path.display()
+                    "Evaluate hierarchy failed\n\n{}",
+                    format_hierarchy_dfs_error(&error)
                 );
             }
+        };
+
+        self.output_results = format_exploration_table_output(&run.top_table);
+        self.output_results_table = Some(run.top_table.clone());
+        let top_results_path = output_dir.join("top_results.csv");
+        if let Err(error) =
+            std::fs::write(&top_results_path, exploration_table_to_csv(&run.top_table))
+        {
+            return format!(
+                "Evaluate hierarchy completed but failed to write top results CSV '{}'\n\n{error}",
+                top_results_path.display()
+            );
         }
         self.output_artifacts = format!(
-            "Hierarchy evaluated\nTop macro: {}\nEvaluated macros: {}\nInherited pre-build constraints: {}\nInherited filters: {}\nOutput dir: {}\nTop results CSV: {}",
+            "Hierarchy evaluated with DFS\nTop macro: {}\nEvaluated macros: {}\nOutput dir: {}\nTop results CSV: {}\n\nTrace:\n{}",
             top_name,
-            evaluated.join(", "),
-            derived_pre_build_count,
-            derived_filter_count,
+            run.results_by_macro
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", "),
             output_dir.display(),
-            top_results_path.display()
+            top_results_path.display(),
+            format_hierarchy_dfs_events(&run.events).join("\n")
         );
         self.save_active_macro_workspace();
 
         format!(
-            "Evaluated hierarchy for '{}'\n\nMacros: {}\nOrder: {}",
+            "Evaluated hierarchy DFS for '{}'\n\nMacros: {}\nTrace steps: {}",
             top_name,
-            evaluated.len(),
-            evaluated.join(" -> ")
+            run.results_by_macro.len(),
+            run.events.len()
         )
     }
 
-    fn evaluate_hierarchy_order(
+    fn evaluate_hierarchy_request(
         &mut self,
-        order: &[usize],
+        request: HierarchyDfsEvaluationRequest,
         catalog: &PrimitiveCatalog,
         macro_catalog: &MacroCatalog,
         macro_blocks: &[GuiDutMacroView],
         output_dir: &std::path::Path,
-        inherited_constraints: &HashMap<usize, GuiInheritedConstraints>,
-    ) -> Result<(HashMap<String, ExplorationTable>, Vec<String>), String> {
-        let mut results_by_macro: HashMap<String, ExplorationTable> = HashMap::new();
-        let mut evaluated = Vec::new();
-
-        for macro_index in order {
-            let macro_name = self.circuits[*macro_index].name.clone();
-            let child_sets = self
-                .compact_candidate_sets_for_children(*macro_index, &results_by_macro)
-                .map_err(|error| {
-                    format!("Evaluate hierarchy failed for '{macro_name}': {error}")
-                })?;
-            let prepared_dir = output_dir.join(&macro_name).join("prepared_specs");
-            let evaluation = self
-                .evaluate_workspace_index(
-                    *macro_index,
-                    catalog,
-                    macro_catalog,
-                    macro_blocks,
-                    &prepared_dir,
-                    child_sets,
-                    inherited_constraints
-                        .get(macro_index)
-                        .cloned()
-                        .unwrap_or_default(),
+    ) -> Result<ExplorationTable, String> {
+        let macro_index = self
+            .circuit_index_by_name(&request.macro_name)
+            .ok_or_else(|| format!("missing macro document '{}'", request.macro_name))?;
+        let prepared_dir = output_dir
+            .join(&request.macro_name)
+            .join(&request.event)
+            .join("prepared_specs");
+        let evaluation = self
+            .evaluate_workspace_index(
+                macro_index,
+                catalog,
+                macro_catalog,
+                macro_blocks,
+                &prepared_dir,
+                request.child_candidate_sets,
+                request.inherited_constraints.into(),
+            )
+            .map_err(|error| {
+                format!(
+                    "Evaluate hierarchy failed for '{}' at '{}': {error}",
+                    request.macro_name, request.event
                 )
-                .map_err(|error| {
-                    format!("Evaluate hierarchy failed for '{macro_name}': {error}")
-                })?;
+            })?;
 
-            if let Some(workspace) = self.macro_workspaces.get_mut(*macro_index) {
-                workspace.output_prepared_specs =
-                    format_prepared_specs_output(&evaluation.prepared_specs);
-                workspace.output_candidates =
-                    format_hierarchy_candidates_output(&evaluation.candidate_input);
-                workspace.output_results = format_exploration_table_output(&evaluation.table);
-                workspace.output_results_table = Some(evaluation.table.clone());
-            }
-
-            let results_path = output_dir.join(&macro_name).join("results.csv");
-            if let Err(error) =
-                std::fs::write(&results_path, exploration_table_to_csv(&evaluation.table))
-            {
-                return Err(format!(
-                    "Evaluate hierarchy failed for '{macro_name}': failed to write results CSV '{}'\n\n{error}",
-                    results_path.display()
-                ));
-            }
-
-            results_by_macro.insert(macro_name.clone(), evaluation.table);
-            evaluated.push(macro_name);
+        if let Some(workspace) = self.macro_workspaces.get_mut(macro_index) {
+            workspace.output_prepared_specs =
+                format_prepared_specs_output(&evaluation.prepared_specs);
+            workspace.output_candidates =
+                format_hierarchy_candidates_output(&evaluation.candidate_input);
+            workspace.output_results = format_exploration_table_output(&evaluation.table);
+            workspace.output_results_table = Some(evaluation.table.clone());
         }
 
-        Ok((results_by_macro, evaluated))
+        self.write_hierarchy_event_csv(
+            &request.macro_name,
+            &request.event,
+            &evaluation.table,
+            output_dir,
+        )?;
+        Ok(evaluation.table)
+    }
+
+    fn write_hierarchy_event_csv(
+        &self,
+        macro_name: &str,
+        event: &str,
+        table: &ExplorationTable,
+        output_dir: &std::path::Path,
+    ) -> Result<(), String> {
+        let path = output_dir.join(macro_name).join(format!("{event}.csv"));
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| {
+                format!(
+                    "failed to create hierarchy output directory '{}'\n\n{error}",
+                    parent.display()
+                )
+            })?;
+        }
+        std::fs::write(&path, exploration_table_to_csv(table)).map_err(|error| {
+            format!(
+                "failed to write hierarchy CSV '{}'\n\n{error}",
+                path.display()
+            )
+        })
+    }
+
+    fn gui_hierarchy_dfs_project(
+        &self,
+        top_macro: &str,
+        catalog: &PrimitiveCatalog,
+        macro_blocks: &[GuiDutMacroView],
+    ) -> Result<HierarchyDfsProject, String> {
+        let mut nodes = Vec::with_capacity(self.circuits.len());
+
+        for (index, document) in self.circuits.iter().enumerate() {
+            let workspace = self
+                .macro_workspaces
+                .get(index)
+                .ok_or_else(|| format!("missing workspace for '{}'", document.name))?;
+            let mut node = HierarchyDfsNode::new(
+                document.name.clone(),
+                gui_hierarchy_workspace(&document.name, workspace)?,
+            );
+            node.children = self
+                .direct_macro_instances(index)?
+                .into_iter()
+                .map(|(instance_name, macro_name)| {
+                    HierarchyDfsChild::new(instance_name, macro_name)
+                })
+                .collect();
+            node.compact_outputs = compact_output_bindings_for_workspace(workspace)?;
+            node.pre_build_columns =
+                self.pre_build_port_voltage_columns_for_macro(index, catalog, macro_blocks)?;
+            nodes.push(node);
+        }
+
+        Ok(HierarchyDfsProject::new(top_macro, nodes))
     }
 
     fn evaluate_workspace_index(
@@ -4135,46 +4158,7 @@ impl SstadexApp {
         })
     }
 
-    fn hierarchy_evaluation_order(&self, top_index: usize) -> Result<Vec<usize>, String> {
-        let mut visiting = HashSet::new();
-        let mut visited = HashSet::new();
-        let mut order = Vec::new();
-        self.push_hierarchy_evaluation_order(top_index, &mut visiting, &mut visited, &mut order)?;
-        Ok(order)
-    }
-
-    fn push_hierarchy_evaluation_order(
-        &self,
-        macro_index: usize,
-        visiting: &mut HashSet<usize>,
-        visited: &mut HashSet<usize>,
-        order: &mut Vec<usize>,
-    ) -> Result<(), String> {
-        if visited.contains(&macro_index) {
-            return Ok(());
-        }
-        if !visiting.insert(macro_index) {
-            let name = self
-                .circuits
-                .get(macro_index)
-                .map(|document| document.name.as_str())
-                .unwrap_or("<missing>");
-            return Err(format!("macro hierarchy contains a cycle at '{name}'"));
-        }
-
-        for (_, child_macro_name) in self.direct_macro_instances(macro_index)? {
-            let child_index = self
-                .circuit_index_by_name(&child_macro_name)
-                .ok_or_else(|| format!("submacro '{child_macro_name}' is not imported locally"))?;
-            self.push_hierarchy_evaluation_order(child_index, visiting, visited, order)?;
-        }
-
-        visiting.remove(&macro_index);
-        visited.insert(macro_index);
-        order.push(macro_index);
-        Ok(())
-    }
-
+    #[cfg(test)]
     fn compact_candidate_sets_for_children(
         &self,
         macro_index: usize,
@@ -4186,95 +4170,48 @@ impl SstadexApp {
             let child_index = self
                 .circuit_index_by_name(&child_macro_name)
                 .ok_or_else(|| format!("submacro '{child_macro_name}' is not imported locally"))?;
-            let child_workspace = self
-                .macro_workspaces
-                .get(child_index)
-                .ok_or_else(|| format!("missing workspace for submacro '{child_macro_name}'"))?;
             let child_table = results_by_macro.get(&child_macro_name).ok_or_else(|| {
                 format!("submacro '{child_macro_name}' has not been evaluated yet")
             })?;
-            let bindings = compact_output_bindings_for_workspace(child_workspace)?;
-            let interface_variables =
-                gui_interface_variables_to_core(&child_workspace.interface_variables)?;
-            let candidate_set = submacro_results_to_candidate_set(
+            let candidate_set = self.compact_candidate_set_for_child_instance(
                 &instance_name,
-                &bindings,
-                &interface_variables,
+                &child_macro_name,
+                child_index,
                 child_table,
-            )
-            .map_err(|error| {
-                format!(
-                    "failed to map results from submacro instance '{}' ({})\n\n{error:?}",
-                    instance_name, child_macro_name
-                )
-            })?;
+            )?;
             sets.push(candidate_set);
         }
 
         Ok(sets)
     }
 
-    fn derive_hierarchy_inherited_constraints(
+    #[cfg(test)]
+    fn compact_candidate_set_for_child_instance(
         &self,
-        catalog: &PrimitiveCatalog,
-        macro_blocks: &[GuiDutMacroView],
-        results_by_macro: &HashMap<String, ExplorationTable>,
-    ) -> Result<HashMap<usize, GuiInheritedConstraints>, String> {
-        let mut inherited_constraints: HashMap<usize, GuiInheritedConstraints> = HashMap::new();
-
-        for (parent_index, parent_document) in self.circuits.iter().enumerate() {
-            let Some(parent_workspace) = self.macro_workspaces.get(parent_index) else {
-                continue;
-            };
-            if parent_workspace.submacro_condition_rules.is_empty() {
-                continue;
-            }
-
-            let parent_hierarchy_workspace =
-                gui_hierarchy_workspace(&parent_document.name, parent_workspace)?;
-            let Some(parent_table) = results_by_macro.get(&parent_document.name) else {
-                continue;
-            };
-
-            for (instance_name, child_macro_name) in self.direct_macro_instances(parent_index)? {
-                let child_index =
-                    self.circuit_index_by_name(&child_macro_name)
-                        .ok_or_else(|| {
-                            format!("submacro '{child_macro_name}' is not imported locally")
-                        })?;
-                let child_workspace = self.macro_workspaces.get(child_index).ok_or_else(|| {
-                    format!("missing workspace for submacro '{child_macro_name}'")
-                })?;
-                let child_hierarchy_workspace =
-                    gui_hierarchy_workspace(&child_macro_name, child_workspace)?;
-                let pre_build_columns = self.pre_build_port_voltage_columns_for_macro(
-                    child_index,
-                    catalog,
-                    macro_blocks,
-                )?;
-                let resolved = resolve_submacro_conditions(
-                    &instance_name,
-                    &parent_hierarchy_workspace.submacro_condition_rules,
-                    &child_hierarchy_workspace,
-                    parent_table,
-                    &pre_build_columns,
-                )
-                .map_err(|error| {
-                    format!(
-                        "failed to derive constraints for submacro instance '{}' ({})\n\n{error:?}",
-                        instance_name, child_macro_name
-                    )
-                })?;
-
-                if !resolved.is_empty() {
-                    let entry = inherited_constraints.entry(child_index).or_default();
-                    entry.pre_build.extend(resolved.pre_build_constraints);
-                    entry.filters.extend(resolved.filters);
-                }
-            }
-        }
-
-        Ok(inherited_constraints)
+        instance_name: &str,
+        child_macro_name: &str,
+        child_index: usize,
+        child_table: &ExplorationTable,
+    ) -> Result<CandidateSet, String> {
+        let child_workspace = self
+            .macro_workspaces
+            .get(child_index)
+            .ok_or_else(|| format!("missing workspace for submacro '{child_macro_name}'"))?;
+        let bindings = compact_output_bindings_for_workspace(child_workspace)?;
+        let interface_variables =
+            gui_interface_variables_to_core(&child_workspace.interface_variables)?;
+        libsstadex::exploration::submacro_results_to_candidate_set(
+            instance_name,
+            &bindings,
+            &interface_variables,
+            child_table,
+        )
+        .map_err(|error| {
+            format!(
+                "failed to map results from submacro instance '{}' ({})\n\n{error:?}",
+                instance_name, child_macro_name
+            )
+        })
     }
 
     fn pre_build_port_voltage_columns_for_macro(
@@ -6704,6 +6641,71 @@ fn format_hierarchy_candidates_output(candidate_input: &ExplorationCandidateInpu
         candidate_input.sets.len(),
         candidate_input.filters.len()
     )
+}
+
+fn format_hierarchy_dfs_events(events: &[HierarchyDfsEvent]) -> Vec<String> {
+    events
+        .iter()
+        .map(|event| match event {
+            HierarchyDfsEvent::Enter {
+                macro_name,
+                level,
+                pre_build_constraints,
+                filters,
+            } => format!(
+                "{}enter {macro_name} pre_build={pre_build_constraints} filters={filters}",
+                "  ".repeat(*level)
+            ),
+            HierarchyDfsEvent::Evaluate {
+                macro_name,
+                event,
+                rows,
+            } => format!("evaluate {macro_name}.{event} rows={rows}"),
+            HierarchyDfsEvent::Descend {
+                parent_macro,
+                instance_name,
+                child_macro,
+                level,
+                pre_build_constraints,
+                filters,
+            } => format!(
+                "{}descend {parent_macro}.{instance_name} -> {child_macro} pre_build={pre_build_constraints} filters={filters}",
+                "  ".repeat(*level)
+            ),
+            HierarchyDfsEvent::RefreshParent {
+                macro_name,
+                instance_name,
+                rows,
+            } => format!("refresh {macro_name} after {instance_name} rows={rows}"),
+            HierarchyDfsEvent::Leave {
+                macro_name,
+                level,
+                rows,
+            } => format!("{}leave {macro_name} rows={rows}", "  ".repeat(*level)),
+        })
+        .collect()
+}
+
+fn format_hierarchy_dfs_error(error: &HierarchyDfsError) -> String {
+    match error {
+        HierarchyDfsError::MissingNode { macro_name } => {
+            format!("missing hierarchy node '{macro_name}'")
+        }
+        HierarchyDfsError::Cycle { macro_name } => {
+            format!("macro hierarchy contains a cycle at '{macro_name}'")
+        }
+        HierarchyDfsError::Condition(error) => {
+            format!("failed to derive hierarchy constraints\n\n{error:?}")
+        }
+        HierarchyDfsError::Candidate(error) => {
+            format!("failed to map child results to parent candidate set\n\n{error:?}")
+        }
+        HierarchyDfsError::Evaluation {
+            macro_name,
+            event,
+            message,
+        } => format!("failed to evaluate '{macro_name}' at '{event}'\n\n{message}"),
+    }
 }
 
 fn gui_spec_to_exploration_spec(

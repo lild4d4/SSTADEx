@@ -99,6 +99,130 @@ pub enum SubmacroPreBuildCondition {
     Range(RangeCondition),
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct HierarchyDfsProject {
+    pub top_macro: String,
+    pub nodes: HashMap<String, HierarchyDfsNode>,
+}
+
+impl HierarchyDfsProject {
+    pub fn new(top_macro: impl Into<String>, nodes: Vec<HierarchyDfsNode>) -> Self {
+        Self {
+            top_macro: top_macro.into(),
+            nodes: nodes
+                .into_iter()
+                .map(|node| (node.macro_name.clone(), node))
+                .collect(),
+        }
+    }
+
+    pub fn node(&self, macro_name: &str) -> Option<&HierarchyDfsNode> {
+        self.nodes.get(macro_name)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct HierarchyDfsNode {
+    pub macro_name: String,
+    pub workspace: MacroExplorationWorkspace,
+    pub children: Vec<HierarchyDfsChild>,
+    pub compact_outputs: Vec<CompactOutputBinding>,
+    pub pre_build_columns: Vec<String>,
+}
+
+impl HierarchyDfsNode {
+    pub fn new(macro_name: impl Into<String>, workspace: MacroExplorationWorkspace) -> Self {
+        let macro_name = macro_name.into();
+        Self {
+            macro_name,
+            workspace,
+            children: Vec::new(),
+            compact_outputs: Vec::new(),
+            pre_build_columns: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HierarchyDfsChild {
+    pub instance_name: String,
+    pub macro_name: String,
+}
+
+impl HierarchyDfsChild {
+    pub fn new(instance_name: impl Into<String>, macro_name: impl Into<String>) -> Self {
+        Self {
+            instance_name: instance_name.into(),
+            macro_name: macro_name.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct HierarchyDfsEvaluationRequest {
+    pub macro_name: String,
+    pub event: String,
+    pub child_candidate_sets: Vec<CandidateSet>,
+    pub inherited_constraints: ResolvedSubmacroConditions,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct HierarchyDfsRun {
+    pub top_table: ExplorationTable,
+    pub results_by_macro: HashMap<String, ExplorationTable>,
+    pub events: Vec<HierarchyDfsEvent>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HierarchyDfsEvent {
+    Enter {
+        macro_name: String,
+        level: usize,
+        pre_build_constraints: usize,
+        filters: usize,
+    },
+    Evaluate {
+        macro_name: String,
+        event: String,
+        rows: usize,
+    },
+    Descend {
+        parent_macro: String,
+        instance_name: String,
+        child_macro: String,
+        level: usize,
+        pre_build_constraints: usize,
+        filters: usize,
+    },
+    RefreshParent {
+        macro_name: String,
+        instance_name: String,
+        rows: usize,
+    },
+    Leave {
+        macro_name: String,
+        level: usize,
+        rows: usize,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HierarchyDfsError {
+    MissingNode {
+        macro_name: String,
+    },
+    Cycle {
+        macro_name: String,
+    },
+    Condition(SubmacroConditionError),
+    Candidate(SubmacroCandidateError),
+    Evaluation {
+        macro_name: String,
+        event: String,
+        message: String,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExplorationOutput {
     pub name: String,
@@ -190,6 +314,226 @@ impl From<super::CandidateEvaluationError> for SubmacroConditionError {
 impl From<super::CandidateSetBuildError> for SubmacroCandidateError {
     fn from(error: super::CandidateSetBuildError) -> Self {
         Self::CandidateSetBuild(error)
+    }
+}
+
+pub fn run_hierarchical_dfs<F>(
+    project: &HierarchyDfsProject,
+    mut evaluate: F,
+) -> Result<HierarchyDfsRun, HierarchyDfsError>
+where
+    F: FnMut(HierarchyDfsEvaluationRequest) -> Result<ExplorationTable, String>,
+{
+    let mut state = HierarchyDfsState::default();
+    let top_table = run_hierarchical_dfs_node(
+        project,
+        &project.top_macro,
+        ResolvedSubmacroConditions::default(),
+        Vec::new(),
+        0,
+        &mut evaluate,
+        &mut state,
+    )?;
+
+    Ok(HierarchyDfsRun {
+        top_table,
+        results_by_macro: state.results_by_macro,
+        events: state.events,
+    })
+}
+
+#[derive(Default)]
+struct HierarchyDfsState {
+    results_by_macro: HashMap<String, ExplorationTable>,
+    events: Vec<HierarchyDfsEvent>,
+    visiting: HashSet<String>,
+}
+
+fn run_hierarchical_dfs_node<F>(
+    project: &HierarchyDfsProject,
+    macro_name: &str,
+    inherited_constraints: ResolvedSubmacroConditions,
+    mut child_candidate_sets: Vec<CandidateSet>,
+    level: usize,
+    evaluate: &mut F,
+    state: &mut HierarchyDfsState,
+) -> Result<ExplorationTable, HierarchyDfsError>
+where
+    F: FnMut(HierarchyDfsEvaluationRequest) -> Result<ExplorationTable, String>,
+{
+    if !state.visiting.insert(macro_name.to_string()) {
+        return Err(HierarchyDfsError::Cycle {
+            macro_name: macro_name.to_string(),
+        });
+    }
+    let node = project
+        .node(macro_name)
+        .ok_or_else(|| HierarchyDfsError::MissingNode {
+            macro_name: macro_name.to_string(),
+        })?;
+    state.events.push(HierarchyDfsEvent::Enter {
+        macro_name: macro_name.to_string(),
+        level,
+        pre_build_constraints: inherited_constraints.pre_build_constraints.len(),
+        filters: inherited_constraints.filters.len(),
+    });
+
+    let mut current_table = evaluate_hierarchy_dfs_event(
+        macro_name,
+        "initial",
+        child_candidate_sets.clone(),
+        inherited_constraints.clone(),
+        evaluate,
+        state,
+    )?;
+
+    if node.children.is_empty() {
+        current_table = evaluate_hierarchy_dfs_event(
+            macro_name,
+            "final",
+            child_candidate_sets,
+            inherited_constraints,
+            evaluate,
+            state,
+        )?;
+        state.events.push(HierarchyDfsEvent::Leave {
+            macro_name: macro_name.to_string(),
+            level,
+            rows: current_table.row_count,
+        });
+        state
+            .results_by_macro
+            .insert(macro_name.to_string(), current_table.clone());
+        state.visiting.remove(macro_name);
+        return Ok(current_table);
+    }
+
+    for child in &node.children {
+        let child_node =
+            project
+                .node(&child.macro_name)
+                .ok_or_else(|| HierarchyDfsError::MissingNode {
+                    macro_name: child.macro_name.clone(),
+                })?;
+        let child_constraints = resolve_submacro_conditions(
+            &child.instance_name,
+            &node.workspace.submacro_condition_rules,
+            &child_node.workspace,
+            &current_table,
+            &child_node.pre_build_columns,
+        )
+        .map_err(HierarchyDfsError::Condition)?;
+        state.events.push(HierarchyDfsEvent::Descend {
+            parent_macro: macro_name.to_string(),
+            instance_name: child.instance_name.clone(),
+            child_macro: child.macro_name.clone(),
+            level,
+            pre_build_constraints: child_constraints.pre_build_constraints.len(),
+            filters: child_constraints.filters.len(),
+        });
+
+        let child_table = run_hierarchical_dfs_node(
+            project,
+            &child.macro_name,
+            child_constraints,
+            Vec::new(),
+            level + 1,
+            evaluate,
+            state,
+        )?;
+        let child_set = submacro_results_to_candidate_set(
+            &child.instance_name,
+            &child_node.compact_outputs,
+            &child_node.workspace.interface_variables,
+            &child_table,
+        )
+        .map_err(HierarchyDfsError::Candidate)?;
+        child_candidate_sets.push(child_set);
+
+        let event = format!(
+            "after_child_{}",
+            sanitize_hierarchy_event_name(&child.instance_name)
+        );
+        current_table = evaluate_hierarchy_dfs_event(
+            macro_name,
+            &event,
+            child_candidate_sets.clone(),
+            inherited_constraints.clone(),
+            evaluate,
+            state,
+        )?;
+        state.events.push(HierarchyDfsEvent::RefreshParent {
+            macro_name: macro_name.to_string(),
+            instance_name: child.instance_name.clone(),
+            rows: current_table.row_count,
+        });
+    }
+
+    current_table = evaluate_hierarchy_dfs_event(
+        macro_name,
+        "final",
+        child_candidate_sets,
+        inherited_constraints,
+        evaluate,
+        state,
+    )?;
+    state.events.push(HierarchyDfsEvent::Leave {
+        macro_name: macro_name.to_string(),
+        level,
+        rows: current_table.row_count,
+    });
+    state
+        .results_by_macro
+        .insert(macro_name.to_string(), current_table.clone());
+    state.visiting.remove(macro_name);
+    Ok(current_table)
+}
+
+fn evaluate_hierarchy_dfs_event<F>(
+    macro_name: &str,
+    event: &str,
+    child_candidate_sets: Vec<CandidateSet>,
+    inherited_constraints: ResolvedSubmacroConditions,
+    evaluate: &mut F,
+    state: &mut HierarchyDfsState,
+) -> Result<ExplorationTable, HierarchyDfsError>
+where
+    F: FnMut(HierarchyDfsEvaluationRequest) -> Result<ExplorationTable, String>,
+{
+    let table = evaluate(HierarchyDfsEvaluationRequest {
+        macro_name: macro_name.to_string(),
+        event: event.to_string(),
+        child_candidate_sets,
+        inherited_constraints,
+    })
+    .map_err(|message| HierarchyDfsError::Evaluation {
+        macro_name: macro_name.to_string(),
+        event: event.to_string(),
+        message,
+    })?;
+    state.events.push(HierarchyDfsEvent::Evaluate {
+        macro_name: macro_name.to_string(),
+        event: event.to_string(),
+        rows: table.row_count,
+    });
+    Ok(table)
+}
+
+pub fn sanitize_hierarchy_event_name(name: &str) -> String {
+    let sanitized = name
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    if sanitized.is_empty() {
+        "event".to_string()
+    } else {
+        sanitized
     }
 }
 
@@ -749,6 +1093,149 @@ mod tests {
                 "xcs.voutp",
                 RangeCondition::new(Some(0.2), Some(1.0)),
             )]
+        );
+    }
+
+    #[test]
+    fn dfs_runner_descends_child_and_refreshes_parent() {
+        let mut top_workspace = MacroExplorationWorkspace::new("ota");
+        top_workspace
+            .submacro_condition_rules
+            .push(SubmacroConditionRule::new(
+                "xcs_macro",
+                "vout",
+                SubmacroConditionSource::AllowedValuesFromParent {
+                    column: "parent_vout".to_string(),
+                },
+            ));
+        let mut child_workspace = MacroExplorationWorkspace::new("current_source");
+        child_workspace
+            .interface_variables
+            .push(InterfaceVariable::new("vout", "xcs.voutp"));
+
+        let mut top = HierarchyDfsNode::new("ota", top_workspace);
+        top.children
+            .push(HierarchyDfsChild::new("xcs_macro", "current_source"));
+        let mut child = HierarchyDfsNode::new("current_source", child_workspace);
+        child
+            .compact_outputs
+            .push(CompactOutputBinding::new("bias_current", "isource"));
+        child.pre_build_columns.push("xcs.voutp".to_string());
+
+        let project = HierarchyDfsProject::new("ota", vec![top, child]);
+        let mut requests = Vec::new();
+        let run = run_hierarchical_dfs(&project, |request| {
+            requests.push((
+                request.macro_name.clone(),
+                request.event.clone(),
+                request.child_candidate_sets.len(),
+                request.inherited_constraints.pre_build_constraints.len(),
+            ));
+            match (request.macro_name.as_str(), request.event.as_str()) {
+                ("ota", _) => Ok(ExplorationTable {
+                    columns: vec![ExplorationColumn::new("parent_vout", vec![0.6])],
+                    row_count: 1,
+                }),
+                ("current_source", _) => Ok(ExplorationTable {
+                    columns: vec![
+                        ExplorationColumn::new("bias_current", vec![1.0]),
+                        ExplorationColumn::new("xcs.voutp", vec![0.6]),
+                    ],
+                    row_count: 1,
+                }),
+                _ => Err("unexpected request".to_string()),
+            }
+        })
+        .unwrap();
+
+        assert_eq!(run.top_table.row_count, 1);
+        assert!(run.results_by_macro.contains_key("ota"));
+        assert!(run.results_by_macro.contains_key("current_source"));
+        assert!(requests.contains(&("current_source".to_string(), "initial".to_string(), 0, 1,)));
+        assert!(
+            requests.contains(&("ota".to_string(), "after_child_xcs_macro".to_string(), 1, 0,))
+        );
+        assert!(run.events.iter().any(|event| matches!(
+            event,
+            HierarchyDfsEvent::RefreshParent {
+                macro_name,
+                instance_name,
+                rows: 1,
+            } if macro_name == "ota" && instance_name == "xcs_macro"
+        )));
+    }
+
+    #[test]
+    fn dfs_runner_visits_second_child_after_first_refresh() {
+        let top_workspace = MacroExplorationWorkspace::new("top");
+        let first_workspace = MacroExplorationWorkspace::new("first");
+        let second_workspace = MacroExplorationWorkspace::new("second");
+
+        let mut top = HierarchyDfsNode::new("top", top_workspace);
+        top.children.push(HierarchyDfsChild::new("x1", "first"));
+        top.children.push(HierarchyDfsChild::new("x2", "second"));
+        let mut first = HierarchyDfsNode::new("first", first_workspace);
+        first
+            .compact_outputs
+            .push(CompactOutputBinding::new("bias_current", "isource"));
+        let mut second = HierarchyDfsNode::new("second", second_workspace);
+        second
+            .compact_outputs
+            .push(CompactOutputBinding::new("bias_current", "isource"));
+
+        let project = HierarchyDfsProject::new("top", vec![top, first, second]);
+        let mut top_candidate_counts = Vec::new();
+        run_hierarchical_dfs(&project, |request| {
+            if request.macro_name == "top" {
+                top_candidate_counts
+                    .push((request.event.clone(), request.child_candidate_sets.len()));
+            }
+            if request.macro_name == "first" || request.macro_name == "second" {
+                Ok(ExplorationTable {
+                    columns: vec![ExplorationColumn::new("bias_current", vec![1.0])],
+                    row_count: 1,
+                })
+            } else {
+                Ok(ExplorationTable {
+                    columns: vec![ExplorationColumn::new("parent_vout", vec![0.6])],
+                    row_count: 1,
+                })
+            }
+        })
+        .unwrap();
+
+        assert_eq!(
+            top_candidate_counts,
+            vec![
+                ("initial".to_string(), 0),
+                ("after_child_x1".to_string(), 1),
+                ("after_child_x2".to_string(), 2),
+                ("final".to_string(), 2),
+            ]
+        );
+    }
+
+    #[test]
+    fn dfs_runner_reports_cycles() {
+        let mut top = HierarchyDfsNode::new("top", MacroExplorationWorkspace::new("top"));
+        top.children.push(HierarchyDfsChild::new("xchild", "child"));
+        let mut child = HierarchyDfsNode::new("child", MacroExplorationWorkspace::new("child"));
+        child.children.push(HierarchyDfsChild::new("xtop", "top"));
+        let project = HierarchyDfsProject::new("top", vec![top, child]);
+
+        let error = run_hierarchical_dfs(&project, |_| {
+            Ok(ExplorationTable {
+                columns: vec![ExplorationColumn::new("value", vec![1.0])],
+                row_count: 1,
+            })
+        })
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            HierarchyDfsError::Cycle {
+                macro_name: "top".to_string(),
+            }
         );
     }
 }
