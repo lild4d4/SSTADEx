@@ -10,9 +10,11 @@ use libsstadex::catalog::{PrimitiveCatalog, load_primitive_catalog};
 use libsstadex::circuit::{Circuit, Connection, Instance, PinRef, save_circuit};
 use libsstadex::exploration::{
     CandidateAxis, CandidatePoint, CandidateSet, CompactOutputBinding, DerivedColumnSpec,
-    ExplorationCandidateInput, ExplorationSpec, ExplorationTable, PreparedSpec, PreparedSpecSource,
-    RangeCondition, SpecOutput, SpecParameter, SpecSource, TestbenchElement, TestbenchSpec,
-    add_automatic_area_column, build_filtered_candidates, prepare_macro_testbench_specs_with_mode,
+    ExplorationCandidateInput, ExplorationFilter, ExplorationSpec, ExplorationTable,
+    InterfaceVariable, MacroExplorationWorkspace, PreparedSpec, PreparedSpecSource, RangeCondition,
+    SpecOutput, SpecParameter, SpecSource, SubmacroConditionRule, SubmacroConditionSource,
+    TestbenchElement, TestbenchSpec, add_automatic_area_column, build_filtered_candidates,
+    derive_submacro_condition_filters, prepare_macro_testbench_specs_with_mode,
     run_prepared_expression_flow_with_derived_columns, save_exploration_candidates,
     save_exploration_specs, save_testbenches, submacro_results_to_compact_candidate_set,
 };
@@ -64,6 +66,8 @@ struct SstadexApp {
     selected_spec: Option<usize>,
     renaming_spec: Option<usize>,
     derived_columns: Vec<GuiDerivedColumnDocument>,
+    interface_variables: Vec<GuiInterfaceVariableDocument>,
+    submacro_condition_rules: Vec<GuiSubmacroConditionRuleDocument>,
     candidates: GuiCandidateDocument,
     project_path: String,
     output_log: String,
@@ -86,6 +90,8 @@ struct GuiMacroWorkspace {
     specs: Vec<GuiSpecDocument>,
     selected_spec: Option<usize>,
     derived_columns: Vec<GuiDerivedColumnDocument>,
+    interface_variables: Vec<GuiInterfaceVariableDocument>,
+    submacro_condition_rules: Vec<GuiSubmacroConditionRuleDocument>,
     candidates: GuiCandidateDocument,
     output_prepared_specs: String,
     output_candidates: String,
@@ -337,6 +343,51 @@ struct GuiDerivedColumnDocument {
 }
 
 #[derive(Clone)]
+struct GuiInterfaceVariableDocument {
+    name: String,
+    source_column: String,
+}
+
+#[derive(Clone)]
+struct GuiSubmacroConditionRuleDocument {
+    instance: String,
+    target_column: String,
+    source_kind: GuiSubmacroConditionSourceKind,
+    source_column: String,
+    min: String,
+    max: String,
+    expression: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GuiSubmacroConditionSourceKind {
+    AllowedValuesFromParent,
+    RangeFromParent,
+    FixedRange,
+    Expression,
+}
+
+impl GuiSubmacroConditionSourceKind {
+    fn all() -> [Self; 4] {
+        [
+            Self::AllowedValuesFromParent,
+            Self::RangeFromParent,
+            Self::FixedRange,
+            Self::Expression,
+        ]
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::AllowedValuesFromParent => "allowed values",
+            Self::RangeFromParent => "range from parent",
+            Self::FixedRange => "fixed range",
+            Self::Expression => "expression",
+        }
+    }
+}
+
+#[derive(Clone)]
 struct GuiCandidateDocument {
     axes: Vec<GuiCandidateAxis>,
     net_voltage_constraints: Vec<GuiNetVoltageConstraint>,
@@ -440,6 +491,10 @@ struct GuiProject {
     #[serde(default)]
     derived_columns: Vec<GuiProjectDerivedColumn>,
     #[serde(default)]
+    interface_variables: Vec<GuiProjectInterfaceVariable>,
+    #[serde(default)]
+    submacro_condition_rules: Vec<GuiProjectSubmacroConditionRule>,
+    #[serde(default)]
     candidates: GuiProjectCandidateDocument,
 }
 
@@ -455,6 +510,10 @@ struct GuiProjectMacroWorkspace {
     specs: Vec<GuiProjectSpec>,
     #[serde(default)]
     derived_columns: Vec<GuiProjectDerivedColumn>,
+    #[serde(default)]
+    interface_variables: Vec<GuiProjectInterfaceVariable>,
+    #[serde(default)]
+    submacro_condition_rules: Vec<GuiProjectSubmacroConditionRule>,
     #[serde(default)]
     candidates: GuiProjectCandidateDocument,
 }
@@ -494,6 +553,38 @@ struct GuiProjectSpecParameter {
 struct GuiProjectDerivedColumn {
     name: String,
     expression: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct GuiProjectInterfaceVariable {
+    name: String,
+    source_column: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct GuiProjectSubmacroConditionRule {
+    instance: String,
+    target_column: String,
+    #[serde(default)]
+    source_kind: GuiProjectSubmacroConditionSourceKind,
+    #[serde(default)]
+    source_column: String,
+    #[serde(default)]
+    min: String,
+    #[serde(default)]
+    max: String,
+    #[serde(default)]
+    expression: String,
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+enum GuiProjectSubmacroConditionSourceKind {
+    #[default]
+    AllowedValuesFromParent,
+    RangeFromParent,
+    FixedRange,
+    Expression,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -777,6 +868,8 @@ impl Default for SstadexApp {
             selected_spec: None,
             renaming_spec: None,
             derived_columns: Vec::new(),
+            interface_variables: Vec::new(),
+            submacro_condition_rules: Vec::new(),
             candidates: GuiCandidateDocument::default(),
             project_path: default_project_path().display().to_string(),
             output_log: "Logs, netlists, and MNA results will appear here".to_string(),
@@ -802,6 +895,8 @@ impl Default for GuiMacroWorkspace {
             specs: Vec::new(),
             selected_spec: None,
             derived_columns: Vec::new(),
+            interface_variables: Vec::new(),
+            submacro_condition_rules: Vec::new(),
             candidates: GuiCandidateDocument::default(),
             output_prepared_specs: "Prepared exploration specs will appear here".to_string(),
             output_candidates: "Generated candidates will appear here".to_string(),
@@ -1432,6 +1527,15 @@ impl SstadexApp {
             })
             .unwrap_or_default();
         let build_instances = self.gui_primitive_build_instances();
+        let macro_instance_names = self
+            .direct_macro_instances(self.active_circuit)
+            .map(|instances| {
+                instances
+                    .into_iter()
+                    .map(|(instance, _)| instance)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
 
         ui.horizontal(|ui| {
             if ui.button("+ axis").clicked() {
@@ -1473,6 +1577,24 @@ impl SstadexApp {
                     name: String::new(),
                     expression: String::new(),
                 });
+            }
+            if ui.button("+ interface").clicked() {
+                self.interface_variables.push(GuiInterfaceVariableDocument {
+                    name: String::new(),
+                    source_column: String::new(),
+                });
+            }
+            if ui.button("+ submacro rule").clicked() {
+                self.submacro_condition_rules
+                    .push(GuiSubmacroConditionRuleDocument {
+                        instance: macro_instance_names.first().cloned().unwrap_or_default(),
+                        target_column: String::new(),
+                        source_kind: GuiSubmacroConditionSourceKind::AllowedValuesFromParent,
+                        source_column: String::new(),
+                        min: String::new(),
+                        max: String::new(),
+                        expression: String::new(),
+                    });
             }
             if ui.button("Generate candidates").clicked() {
                 self.output_log = self.generate_gui_candidates();
@@ -1554,6 +1676,97 @@ impl SstadexApp {
         }
         if let Some(index) = remove_derived {
             self.derived_columns.remove(index);
+        }
+
+        ui.separator();
+        ui.label("Interface variables");
+        let mut remove_interface = None;
+        for (index, variable) in self.interface_variables.iter_mut().enumerate() {
+            ui.horizontal(|ui| {
+                ui.label(format!("Variable {}", index + 1));
+                ui.add_sized(
+                    egui::vec2(140.0, 20.0),
+                    egui::TextEdit::singleline(&mut variable.name).hint_text("vout"),
+                );
+                ui.label("=");
+                ui.add_sized(
+                    egui::vec2(320.0, 20.0),
+                    egui::TextEdit::singleline(&mut variable.source_column).hint_text("xcs.voutp"),
+                );
+                if ui.button("Delete").clicked() {
+                    remove_interface = Some(index);
+                }
+            });
+        }
+        if let Some(index) = remove_interface {
+            self.interface_variables.remove(index);
+        }
+
+        ui.separator();
+        ui.label("Submacro condition rules");
+        let mut remove_rule = None;
+        for (index, rule) in self.submacro_condition_rules.iter_mut().enumerate() {
+            ui.horizontal(|ui| {
+                ui.label(format!("Rule {}", index + 1));
+                egui::ComboBox::from_id_salt(format!("submacro_rule_instance_{index}"))
+                    .selected_text(display_optional_name(&rule.instance))
+                    .show_ui(ui, |ui| {
+                        for instance in &macro_instance_names {
+                            ui.selectable_value(&mut rule.instance, instance.clone(), instance);
+                        }
+                    });
+                ui.add_sized(
+                    egui::vec2(120.0, 20.0),
+                    egui::TextEdit::singleline(&mut rule.target_column).hint_text("target"),
+                );
+                egui::ComboBox::from_id_salt(format!("submacro_rule_kind_{index}"))
+                    .selected_text(rule.source_kind.label())
+                    .show_ui(ui, |ui| {
+                        for kind in GuiSubmacroConditionSourceKind::all() {
+                            ui.selectable_value(&mut rule.source_kind, kind, kind.label());
+                        }
+                    });
+                if ui.button("Delete").clicked() {
+                    remove_rule = Some(index);
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.add_space(48.0);
+                match rule.source_kind {
+                    GuiSubmacroConditionSourceKind::AllowedValuesFromParent
+                    | GuiSubmacroConditionSourceKind::RangeFromParent => {
+                        ui.label("Parent column:");
+                        ui.add_sized(
+                            egui::vec2(260.0, 20.0),
+                            egui::TextEdit::singleline(&mut rule.source_column)
+                                .hint_text("parent_vout"),
+                        );
+                    }
+                    GuiSubmacroConditionSourceKind::FixedRange => {
+                        ui.label("Min:");
+                        ui.add_sized(
+                            egui::vec2(120.0, 20.0),
+                            egui::TextEdit::singleline(&mut rule.min),
+                        );
+                        ui.label("Max:");
+                        ui.add_sized(
+                            egui::vec2(120.0, 20.0),
+                            egui::TextEdit::singleline(&mut rule.max),
+                        );
+                    }
+                    GuiSubmacroConditionSourceKind::Expression => {
+                        ui.label("Expression:");
+                        ui.add_sized(
+                            egui::vec2(320.0, 20.0),
+                            egui::TextEdit::singleline(&mut rule.expression)
+                                .hint_text("parent_vout + 0.1"),
+                        );
+                    }
+                }
+            });
+        }
+        if let Some(index) = remove_rule {
+            self.submacro_condition_rules.remove(index);
         }
 
         ui.separator();
@@ -2117,6 +2330,8 @@ impl SstadexApp {
         workspace.specs = self.specs.clone();
         workspace.selected_spec = self.selected_spec;
         workspace.derived_columns = self.derived_columns.clone();
+        workspace.interface_variables = self.interface_variables.clone();
+        workspace.submacro_condition_rules = self.submacro_condition_rules.clone();
         workspace.candidates = self.candidates.clone();
         workspace.output_prepared_specs = self.output_prepared_specs.clone();
         workspace.output_candidates = self.output_candidates.clone();
@@ -2139,6 +2354,8 @@ impl SstadexApp {
             .selected_spec
             .filter(|index| *index < self.specs.len());
         self.derived_columns = workspace.derived_columns;
+        self.interface_variables = workspace.interface_variables;
+        self.submacro_condition_rules = workspace.submacro_condition_rules;
         self.candidates = workspace.candidates;
         self.output_prepared_specs = workspace.output_prepared_specs;
         self.output_candidates = workspace.output_candidates;
@@ -3093,6 +3310,16 @@ impl SstadexApp {
                 .iter()
                 .map(GuiProjectDerivedColumn::from_derived_column_document)
                 .collect(),
+            interface_variables: self
+                .interface_variables
+                .iter()
+                .map(GuiProjectInterfaceVariable::from_interface_variable_document)
+                .collect(),
+            submacro_condition_rules: self
+                .submacro_condition_rules
+                .iter()
+                .map(GuiProjectSubmacroConditionRule::from_rule_document)
+                .collect(),
             candidates: GuiProjectCandidateDocument::from_candidate_document(&self.candidates),
         }
     }
@@ -3136,6 +3363,16 @@ impl SstadexApp {
                     .derived_columns
                     .into_iter()
                     .map(GuiProjectDerivedColumn::into_derived_column_document)
+                    .collect();
+                workspace.interface_variables = project
+                    .interface_variables
+                    .into_iter()
+                    .map(GuiProjectInterfaceVariable::into_interface_variable_document)
+                    .collect();
+                workspace.submacro_condition_rules = project
+                    .submacro_condition_rules
+                    .into_iter()
+                    .map(GuiProjectSubmacroConditionRule::into_rule_document)
                     .collect();
                 workspace.candidates = project.candidates.into_candidate_document();
             }
@@ -3675,44 +3912,40 @@ impl SstadexApp {
         let output_dir = std::env::temp_dir()
             .join("sstadex-gui-mna")
             .join("hierarchy");
-        let mut results_by_macro: HashMap<String, ExplorationTable> = HashMap::new();
-        let mut evaluated = Vec::new();
-
-        for macro_index in order {
-            let macro_name = self.circuits[macro_index].name.clone();
-            let child_sets =
-                match self.compact_candidate_sets_for_children(macro_index, &results_by_macro) {
-                    Ok(child_sets) => child_sets,
-                    Err(error) => {
-                        return format!("Evaluate hierarchy failed for '{macro_name}': {error}");
-                    }
-                };
-            let prepared_dir = output_dir.join(&macro_name).join("prepared_specs");
-            let evaluation = match self.evaluate_workspace_index(
-                macro_index,
+        let inherited_filters = HashMap::new();
+        let (mut results_by_macro, mut evaluated) = match self.evaluate_hierarchy_order(
+            &order,
+            &catalog,
+            &macro_catalog,
+            &macro_blocks,
+            &output_dir,
+            &inherited_filters,
+        ) {
+            Ok(output) => output,
+            Err(error) => return error,
+        };
+        let derived_filters = match self.derive_hierarchy_inherited_filters(&results_by_macro) {
+            Ok(filters) => filters,
+            Err(error) => {
+                return format!("Evaluate hierarchy failed while deriving filters: {error}");
+            }
+        };
+        let derived_filter_count = derived_filters.values().map(Vec::len).sum::<usize>();
+        if derived_filter_count > 0 {
+            match self.evaluate_hierarchy_order(
+                &order,
                 &catalog,
                 &macro_catalog,
                 &macro_blocks,
-                &prepared_dir,
-                child_sets,
+                &output_dir,
+                &derived_filters,
             ) {
-                Ok(evaluation) => evaluation,
-                Err(error) => {
-                    return format!("Evaluate hierarchy failed for '{macro_name}': {error}");
+                Ok(output) => {
+                    results_by_macro = output.0;
+                    evaluated = output.1;
                 }
-            };
-
-            if let Some(workspace) = self.macro_workspaces.get_mut(macro_index) {
-                workspace.output_prepared_specs =
-                    format_prepared_specs_output(&evaluation.prepared_specs);
-                workspace.output_candidates =
-                    format_hierarchy_candidates_output(&evaluation.candidate_input);
-                workspace.output_results = format_exploration_table_output(&evaluation.table);
-                workspace.output_results_table = Some(evaluation.table.clone());
+                Err(error) => return error,
             }
-
-            results_by_macro.insert(macro_name.clone(), evaluation.table);
-            evaluated.push(macro_name);
         }
 
         if let Some(top_table) = results_by_macro.get(&top_name).cloned() {
@@ -3720,9 +3953,10 @@ impl SstadexApp {
             self.output_results_table = Some(top_table);
         }
         self.output_artifacts = format!(
-            "Hierarchy evaluated\nTop macro: {}\nEvaluated macros: {}\nOutput dir: {}",
+            "Hierarchy evaluated\nTop macro: {}\nEvaluated macros: {}\nInherited filters: {}\nOutput dir: {}",
             top_name,
             evaluated.join(", "),
+            derived_filter_count,
             output_dir.display()
         );
         self.save_active_macro_workspace();
@@ -3735,6 +3969,59 @@ impl SstadexApp {
         )
     }
 
+    fn evaluate_hierarchy_order(
+        &mut self,
+        order: &[usize],
+        catalog: &PrimitiveCatalog,
+        macro_catalog: &MacroCatalog,
+        macro_blocks: &[GuiDutMacroView],
+        output_dir: &std::path::Path,
+        inherited_filters: &HashMap<usize, Vec<ExplorationFilter>>,
+    ) -> Result<(HashMap<String, ExplorationTable>, Vec<String>), String> {
+        let mut results_by_macro: HashMap<String, ExplorationTable> = HashMap::new();
+        let mut evaluated = Vec::new();
+
+        for macro_index in order {
+            let macro_name = self.circuits[*macro_index].name.clone();
+            let child_sets = self
+                .compact_candidate_sets_for_children(*macro_index, &results_by_macro)
+                .map_err(|error| {
+                    format!("Evaluate hierarchy failed for '{macro_name}': {error}")
+                })?;
+            let prepared_dir = output_dir.join(&macro_name).join("prepared_specs");
+            let evaluation = self
+                .evaluate_workspace_index(
+                    *macro_index,
+                    catalog,
+                    macro_catalog,
+                    macro_blocks,
+                    &prepared_dir,
+                    child_sets,
+                    inherited_filters
+                        .get(macro_index)
+                        .cloned()
+                        .unwrap_or_default(),
+                )
+                .map_err(|error| {
+                    format!("Evaluate hierarchy failed for '{macro_name}': {error}")
+                })?;
+
+            if let Some(workspace) = self.macro_workspaces.get_mut(*macro_index) {
+                workspace.output_prepared_specs =
+                    format_prepared_specs_output(&evaluation.prepared_specs);
+                workspace.output_candidates =
+                    format_hierarchy_candidates_output(&evaluation.candidate_input);
+                workspace.output_results = format_exploration_table_output(&evaluation.table);
+                workspace.output_results_table = Some(evaluation.table.clone());
+            }
+
+            results_by_macro.insert(macro_name.clone(), evaluation.table);
+            evaluated.push(macro_name);
+        }
+
+        Ok((results_by_macro, evaluated))
+    }
+
     fn evaluate_workspace_index(
         &self,
         macro_index: usize,
@@ -3743,6 +4030,7 @@ impl SstadexApp {
         macro_blocks: &[GuiDutMacroView],
         prepared_dir: &std::path::Path,
         extra_candidate_sets: Vec<CandidateSet>,
+        extra_candidate_filters: Vec<ExplorationFilter>,
     ) -> Result<GuiWorkspaceEvaluation, String> {
         let document = self
             .circuits
@@ -3766,6 +4054,7 @@ impl SstadexApp {
         let mut candidate_input =
             gui_candidate_input(&workspace.candidates, document, catalog, macro_blocks)?;
         candidate_input.sets.extend(extra_candidate_sets);
+        candidate_input.filters.extend(extra_candidate_filters);
         let gui_mode = gui_specs_small_signal_mode(&workspace.specs, &workspace.testbenches)?;
         let mode = macro_small_signal_mode(gui_mode);
         let prepared_specs = prepare_macro_testbench_specs_with_mode(
@@ -3866,6 +4155,60 @@ impl SstadexApp {
         }
 
         Ok(sets)
+    }
+
+    fn derive_hierarchy_inherited_filters(
+        &self,
+        results_by_macro: &HashMap<String, ExplorationTable>,
+    ) -> Result<HashMap<usize, Vec<ExplorationFilter>>, String> {
+        let mut inherited_filters: HashMap<usize, Vec<ExplorationFilter>> = HashMap::new();
+
+        for (parent_index, parent_document) in self.circuits.iter().enumerate() {
+            let Some(parent_workspace) = self.macro_workspaces.get(parent_index) else {
+                continue;
+            };
+            if parent_workspace.submacro_condition_rules.is_empty() {
+                continue;
+            }
+
+            let parent_hierarchy_workspace =
+                gui_hierarchy_workspace(&parent_document.name, parent_workspace)?;
+            let Some(parent_table) = results_by_macro.get(&parent_document.name) else {
+                continue;
+            };
+
+            for (instance_name, child_macro_name) in self.direct_macro_instances(parent_index)? {
+                let child_index =
+                    self.circuit_index_by_name(&child_macro_name)
+                        .ok_or_else(|| {
+                            format!("submacro '{child_macro_name}' is not imported locally")
+                        })?;
+                let child_workspace = self.macro_workspaces.get(child_index).ok_or_else(|| {
+                    format!("missing workspace for submacro '{child_macro_name}'")
+                })?;
+                let child_hierarchy_workspace =
+                    gui_hierarchy_workspace(&child_macro_name, child_workspace)?;
+                let filters = derive_submacro_condition_filters(
+                    &instance_name,
+                    &parent_hierarchy_workspace.submacro_condition_rules,
+                    &child_hierarchy_workspace,
+                    parent_table,
+                )
+                .map_err(|error| {
+                    format!(
+                        "failed to derive filters for submacro instance '{}' ({})\n\n{error:?}",
+                        instance_name, child_macro_name
+                    )
+                })?;
+
+                inherited_filters
+                    .entry(child_index)
+                    .or_default()
+                    .extend(filters);
+            }
+        }
+
+        Ok(inherited_filters)
     }
 
     fn direct_macro_instances(&self, macro_index: usize) -> Result<Vec<(String, String)>, String> {
@@ -4726,6 +5069,16 @@ impl GuiProjectMacroWorkspace {
                 .iter()
                 .map(GuiProjectDerivedColumn::from_derived_column_document)
                 .collect(),
+            interface_variables: workspace
+                .interface_variables
+                .iter()
+                .map(GuiProjectInterfaceVariable::from_interface_variable_document)
+                .collect(),
+            submacro_condition_rules: workspace
+                .submacro_condition_rules
+                .iter()
+                .map(GuiProjectSubmacroConditionRule::from_rule_document)
+                .collect(),
             candidates: GuiProjectCandidateDocument::from_candidate_document(&workspace.candidates),
         }
     }
@@ -4746,6 +5099,16 @@ impl GuiProjectMacroWorkspace {
             .into_iter()
             .map(GuiProjectDerivedColumn::into_derived_column_document)
             .collect::<Vec<_>>();
+        let interface_variables = self
+            .interface_variables
+            .into_iter()
+            .map(GuiProjectInterfaceVariable::into_interface_variable_document)
+            .collect::<Vec<_>>();
+        let submacro_condition_rules = self
+            .submacro_condition_rules
+            .into_iter()
+            .map(GuiProjectSubmacroConditionRule::into_rule_document)
+            .collect::<Vec<_>>();
 
         GuiMacroWorkspace {
             selected_testbench: self
@@ -4755,6 +5118,8 @@ impl GuiProjectMacroWorkspace {
             selected_spec: self.selected_spec.filter(|index| *index < specs.len()),
             specs,
             derived_columns,
+            interface_variables,
+            submacro_condition_rules,
             candidates: self.candidates.into_candidate_document(),
             ..GuiMacroWorkspace::default()
         }
@@ -4895,6 +5260,74 @@ impl GuiProjectDerivedColumn {
         GuiDerivedColumnDocument {
             name: self.name,
             expression: self.expression,
+        }
+    }
+}
+
+impl GuiProjectInterfaceVariable {
+    fn from_interface_variable_document(variable: &GuiInterfaceVariableDocument) -> Self {
+        Self {
+            name: variable.name.clone(),
+            source_column: variable.source_column.clone(),
+        }
+    }
+
+    fn into_interface_variable_document(self) -> GuiInterfaceVariableDocument {
+        GuiInterfaceVariableDocument {
+            name: self.name,
+            source_column: self.source_column,
+        }
+    }
+}
+
+impl GuiProjectSubmacroConditionRule {
+    fn from_rule_document(rule: &GuiSubmacroConditionRuleDocument) -> Self {
+        Self {
+            instance: rule.instance.clone(),
+            target_column: rule.target_column.clone(),
+            source_kind: GuiProjectSubmacroConditionSourceKind::from_gui_source_kind(
+                rule.source_kind,
+            ),
+            source_column: rule.source_column.clone(),
+            min: rule.min.clone(),
+            max: rule.max.clone(),
+            expression: rule.expression.clone(),
+        }
+    }
+
+    fn into_rule_document(self) -> GuiSubmacroConditionRuleDocument {
+        GuiSubmacroConditionRuleDocument {
+            instance: self.instance,
+            target_column: self.target_column,
+            source_kind: self.source_kind.into_gui_source_kind(),
+            source_column: self.source_column,
+            min: self.min,
+            max: self.max,
+            expression: self.expression,
+        }
+    }
+}
+
+impl GuiProjectSubmacroConditionSourceKind {
+    fn from_gui_source_kind(kind: GuiSubmacroConditionSourceKind) -> Self {
+        match kind {
+            GuiSubmacroConditionSourceKind::AllowedValuesFromParent => {
+                Self::AllowedValuesFromParent
+            }
+            GuiSubmacroConditionSourceKind::RangeFromParent => Self::RangeFromParent,
+            GuiSubmacroConditionSourceKind::FixedRange => Self::FixedRange,
+            GuiSubmacroConditionSourceKind::Expression => Self::Expression,
+        }
+    }
+
+    fn into_gui_source_kind(self) -> GuiSubmacroConditionSourceKind {
+        match self {
+            Self::AllowedValuesFromParent => {
+                GuiSubmacroConditionSourceKind::AllowedValuesFromParent
+            }
+            Self::RangeFromParent => GuiSubmacroConditionSourceKind::RangeFromParent,
+            Self::FixedRange => GuiSubmacroConditionSourceKind::FixedRange,
+            Self::Expression => GuiSubmacroConditionSourceKind::Expression,
         }
     }
 }
@@ -5496,6 +5929,69 @@ fn gui_derived_columns_to_specs(
                 required_text(&column.name, &context, "name")?,
                 required_text(&column.expression, &context, "expression")?,
             ))
+        })
+        .collect()
+}
+
+fn gui_hierarchy_workspace(
+    macro_name: &str,
+    workspace: &GuiMacroWorkspace,
+) -> Result<MacroExplorationWorkspace, String> {
+    let mut hierarchy_workspace = MacroExplorationWorkspace::new(macro_name);
+    hierarchy_workspace.interface_variables =
+        gui_interface_variables_to_core(&workspace.interface_variables)?;
+    hierarchy_workspace.submacro_condition_rules =
+        gui_submacro_condition_rules_to_core(&workspace.submacro_condition_rules)?;
+    Ok(hierarchy_workspace)
+}
+
+fn gui_interface_variables_to_core(
+    variables: &[GuiInterfaceVariableDocument],
+) -> Result<Vec<InterfaceVariable>, String> {
+    variables
+        .iter()
+        .enumerate()
+        .map(|(index, variable)| {
+            let context = format!("interface variable {}", index + 1);
+            Ok(InterfaceVariable::new(
+                required_text(&variable.name, &context, "name")?,
+                required_text(&variable.source_column, &context, "source column")?,
+            ))
+        })
+        .collect()
+}
+
+fn gui_submacro_condition_rules_to_core(
+    rules: &[GuiSubmacroConditionRuleDocument],
+) -> Result<Vec<SubmacroConditionRule>, String> {
+    rules
+        .iter()
+        .enumerate()
+        .map(|(index, rule)| {
+            let context = format!("submacro condition rule {}", index + 1);
+            let instance = required_text(&rule.instance, &context, "instance")?;
+            let target_column = required_text(&rule.target_column, &context, "target column")?;
+            let source = match rule.source_kind {
+                GuiSubmacroConditionSourceKind::AllowedValuesFromParent => {
+                    SubmacroConditionSource::AllowedValuesFromParent {
+                        column: required_text(&rule.source_column, &context, "parent column")?,
+                    }
+                }
+                GuiSubmacroConditionSourceKind::RangeFromParent => {
+                    SubmacroConditionSource::RangeFromParent {
+                        column: required_text(&rule.source_column, &context, "parent column")?,
+                    }
+                }
+                GuiSubmacroConditionSourceKind::FixedRange => SubmacroConditionSource::FixedRange {
+                    min: optional_text(&rule.min),
+                    max: optional_text(&rule.max),
+                },
+                GuiSubmacroConditionSourceKind::Expression => SubmacroConditionSource::Expression {
+                    expression: required_text(&rule.expression, &context, "expression")?,
+                },
+            };
+
+            Ok(SubmacroConditionRule::new(instance, target_column, source))
         })
         .collect()
 }
@@ -6332,6 +6828,11 @@ fn required_text(value: &str, owner: &str, field: &str) -> Result<String, String
     }
 
     Ok(value.to_string())
+}
+
+fn optional_text(value: &str) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_string())
 }
 
 fn optional_f64(value: &str, owner: &str, field: &str) -> Result<Option<f64>, String> {
@@ -7953,6 +8454,73 @@ mod tests {
         assert_eq!(converted.len(), 1);
         assert_eq!(converted[0].name, "gain_db");
         assert_eq!(converted[0].expression, "20 * log10(abs(gain))");
+    }
+
+    #[test]
+    fn project_hierarchy_metadata_roundtrips() {
+        let variable = GuiInterfaceVariableDocument {
+            name: "vout".to_string(),
+            source_column: "xcs.voutp".to_string(),
+        };
+        let rule = GuiSubmacroConditionRuleDocument {
+            instance: "xcs_macro".to_string(),
+            target_column: "vout".to_string(),
+            source_kind: GuiSubmacroConditionSourceKind::AllowedValuesFromParent,
+            source_column: "parent_vout".to_string(),
+            min: String::new(),
+            max: String::new(),
+            expression: String::new(),
+        };
+
+        let loaded_variable =
+            GuiProjectInterfaceVariable::from_interface_variable_document(&variable)
+                .into_interface_variable_document();
+        let loaded_rule =
+            GuiProjectSubmacroConditionRule::from_rule_document(&rule).into_rule_document();
+
+        assert_eq!(loaded_variable.name, "vout");
+        assert_eq!(loaded_variable.source_column, "xcs.voutp");
+        assert_eq!(loaded_rule.instance, "xcs_macro");
+        assert_eq!(loaded_rule.target_column, "vout");
+        assert_eq!(
+            loaded_rule.source_kind,
+            GuiSubmacroConditionSourceKind::AllowedValuesFromParent
+        );
+        assert_eq!(loaded_rule.source_column, "parent_vout");
+    }
+
+    #[test]
+    fn gui_hierarchy_workspace_converts_metadata_to_core() {
+        let mut workspace = GuiMacroWorkspace::default();
+        workspace
+            .interface_variables
+            .push(GuiInterfaceVariableDocument {
+                name: "vout".to_string(),
+                source_column: "xcs.voutp".to_string(),
+            });
+        workspace
+            .submacro_condition_rules
+            .push(GuiSubmacroConditionRuleDocument {
+                instance: "xcs_macro".to_string(),
+                target_column: "vout".to_string(),
+                source_kind: GuiSubmacroConditionSourceKind::FixedRange,
+                source_column: String::new(),
+                min: "0.2".to_string(),
+                max: "1.0".to_string(),
+                expression: String::new(),
+            });
+
+        let converted = gui_hierarchy_workspace("current_source", &workspace).unwrap();
+
+        assert_eq!(converted.macro_name, "current_source");
+        assert_eq!(converted.interface_variables[0].name, "vout");
+        assert_eq!(converted.interface_variables[0].source_column, "xcs.voutp");
+        assert_eq!(converted.submacro_condition_rules[0].instance, "xcs_macro");
+        assert_eq!(converted.submacro_condition_rules[0].target_column, "vout");
+        assert!(matches!(
+            converted.submacro_condition_rules[0].source,
+            SubmacroConditionSource::FixedRange { .. }
+        ));
     }
 
     #[test]
