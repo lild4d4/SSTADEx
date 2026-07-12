@@ -13,8 +13,9 @@ use libsstadex::exploration::{
     ExplorationCandidateInput, ExplorationFilter, ExplorationSpec, ExplorationTable,
     InterfaceVariable, MacroExplorationWorkspace, PreparedSpec, PreparedSpecSource, RangeCondition,
     SpecOutput, SpecParameter, SpecSource, SubmacroConditionRule, SubmacroConditionSource,
-    TestbenchElement, TestbenchSpec, add_automatic_area_column, build_filtered_candidates,
-    derive_submacro_condition_filters, prepare_macro_testbench_specs_with_mode,
+    SubmacroPreBuildCondition, SubmacroPreBuildConstraint, TestbenchElement, TestbenchSpec,
+    add_automatic_area_column, build_filtered_candidates, candidate_column_name,
+    prepare_macro_testbench_specs_with_mode, resolve_submacro_conditions,
     run_prepared_expression_flow_with_derived_columns, save_exploration_candidates,
     save_exploration_specs, save_testbenches, submacro_results_to_candidate_set,
 };
@@ -103,6 +104,12 @@ struct GuiWorkspaceEvaluation {
     prepared_specs: Vec<PreparedSpec>,
     candidate_input: ExplorationCandidateInput,
     table: ExplorationTable,
+}
+
+#[derive(Clone, Default)]
+struct GuiInheritedConstraints {
+    pre_build: Vec<SubmacroPreBuildConstraint>,
+    filters: Vec<ExplorationFilter>,
 }
 
 #[derive(Clone)]
@@ -3022,7 +3029,7 @@ impl SstadexApp {
         };
         let macro_blocks = self.available_macro_block_views();
         let candidates =
-            match gui_candidate_input(&self.candidates, document, catalog, &macro_blocks) {
+            match gui_candidate_input(&self.candidates, document, catalog, &macro_blocks, &[]) {
                 Ok(candidates) => candidates,
                 Err(error) => return format!("Cannot save flow inputs: {error}"),
             };
@@ -3675,7 +3682,7 @@ impl SstadexApp {
 
         let macro_blocks = self.available_macro_block_views();
         let candidate_input =
-            match gui_candidate_input(&self.candidates, document, catalog, &macro_blocks) {
+            match gui_candidate_input(&self.candidates, document, catalog, &macro_blocks, &[]) {
                 Ok(candidate_input) => candidate_input,
                 Err(error) => return format!("Cannot generate candidates: {error}"),
             };
@@ -3760,7 +3767,7 @@ impl SstadexApp {
         };
         let macro_blocks = self.available_macro_block_views();
         let candidate_input =
-            match gui_candidate_input(&self.candidates, document, catalog, &macro_blocks) {
+            match gui_candidate_input(&self.candidates, document, catalog, &macro_blocks, &[]) {
                 Ok(candidate_input) => candidate_input,
                 Err(error) => return format!("Cannot evaluate specs: {error}"),
             };
@@ -3913,33 +3920,46 @@ impl SstadexApp {
         let output_dir = std::env::temp_dir()
             .join("sstadex-gui-mna")
             .join("hierarchy");
-        let inherited_filters = HashMap::new();
+        let inherited_constraints = HashMap::new();
         let (mut results_by_macro, mut evaluated) = match self.evaluate_hierarchy_order(
             &order,
             &catalog,
             &macro_catalog,
             &macro_blocks,
             &output_dir,
-            &inherited_filters,
+            &inherited_constraints,
         ) {
             Ok(output) => output,
             Err(error) => return error,
         };
-        let derived_filters = match self.derive_hierarchy_inherited_filters(&results_by_macro) {
-            Ok(filters) => filters,
+        let derived_constraints = match self.derive_hierarchy_inherited_constraints(
+            &catalog,
+            &macro_blocks,
+            &results_by_macro,
+        ) {
+            Ok(constraints) => constraints,
             Err(error) => {
-                return format!("Evaluate hierarchy failed while deriving filters: {error}");
+                return format!(
+                    "Evaluate hierarchy failed while deriving inherited constraints: {error}"
+                );
             }
         };
-        let derived_filter_count = derived_filters.values().map(Vec::len).sum::<usize>();
-        if derived_filter_count > 0 {
+        let derived_filter_count = derived_constraints
+            .values()
+            .map(|constraints| constraints.filters.len())
+            .sum::<usize>();
+        let derived_pre_build_count = derived_constraints
+            .values()
+            .map(|constraints| constraints.pre_build.len())
+            .sum::<usize>();
+        if derived_filter_count + derived_pre_build_count > 0 {
             match self.evaluate_hierarchy_order(
                 &order,
                 &catalog,
                 &macro_catalog,
                 &macro_blocks,
                 &output_dir,
-                &derived_filters,
+                &derived_constraints,
             ) {
                 Ok(output) => {
                     results_by_macro = output.0;
@@ -3965,9 +3985,10 @@ impl SstadexApp {
             }
         }
         self.output_artifacts = format!(
-            "Hierarchy evaluated\nTop macro: {}\nEvaluated macros: {}\nInherited filters: {}\nOutput dir: {}\nTop results CSV: {}",
+            "Hierarchy evaluated\nTop macro: {}\nEvaluated macros: {}\nInherited pre-build constraints: {}\nInherited filters: {}\nOutput dir: {}\nTop results CSV: {}",
             top_name,
             evaluated.join(", "),
+            derived_pre_build_count,
             derived_filter_count,
             output_dir.display(),
             top_results_path.display()
@@ -3989,7 +4010,7 @@ impl SstadexApp {
         macro_catalog: &MacroCatalog,
         macro_blocks: &[GuiDutMacroView],
         output_dir: &std::path::Path,
-        inherited_filters: &HashMap<usize, Vec<ExplorationFilter>>,
+        inherited_constraints: &HashMap<usize, GuiInheritedConstraints>,
     ) -> Result<(HashMap<String, ExplorationTable>, Vec<String>), String> {
         let mut results_by_macro: HashMap<String, ExplorationTable> = HashMap::new();
         let mut evaluated = Vec::new();
@@ -4010,7 +4031,7 @@ impl SstadexApp {
                     macro_blocks,
                     &prepared_dir,
                     child_sets,
-                    inherited_filters
+                    inherited_constraints
                         .get(macro_index)
                         .cloned()
                         .unwrap_or_default(),
@@ -4053,7 +4074,7 @@ impl SstadexApp {
         macro_blocks: &[GuiDutMacroView],
         prepared_dir: &std::path::Path,
         extra_candidate_sets: Vec<CandidateSet>,
-        extra_candidate_filters: Vec<ExplorationFilter>,
+        inherited_constraints: GuiInheritedConstraints,
     ) -> Result<GuiWorkspaceEvaluation, String> {
         let document = self
             .circuits
@@ -4074,10 +4095,17 @@ impl SstadexApp {
         let testbenches = gui_testbenches_to_specs(&workspace.testbenches, &self.circuits)?;
         let specs = gui_specs_to_exploration_specs(&workspace.specs, &testbenches)?;
         let derived_columns = gui_derived_columns_to_specs(&workspace.derived_columns)?;
-        let mut candidate_input =
-            gui_candidate_input(&workspace.candidates, document, catalog, macro_blocks)?;
+        let mut candidate_input = gui_candidate_input(
+            &workspace.candidates,
+            document,
+            catalog,
+            macro_blocks,
+            &inherited_constraints.pre_build,
+        )?;
         candidate_input.sets.extend(extra_candidate_sets);
-        candidate_input.filters.extend(extra_candidate_filters);
+        candidate_input
+            .filters
+            .extend(inherited_constraints.filters);
         let gui_mode = gui_specs_small_signal_mode(&workspace.specs, &workspace.testbenches)?;
         let mode = macro_small_signal_mode(gui_mode);
         let prepared_specs = prepare_macro_testbench_specs_with_mode(
@@ -4186,11 +4214,13 @@ impl SstadexApp {
         Ok(sets)
     }
 
-    fn derive_hierarchy_inherited_filters(
+    fn derive_hierarchy_inherited_constraints(
         &self,
+        catalog: &PrimitiveCatalog,
+        macro_blocks: &[GuiDutMacroView],
         results_by_macro: &HashMap<String, ExplorationTable>,
-    ) -> Result<HashMap<usize, Vec<ExplorationFilter>>, String> {
-        let mut inherited_filters: HashMap<usize, Vec<ExplorationFilter>> = HashMap::new();
+    ) -> Result<HashMap<usize, GuiInheritedConstraints>, String> {
+        let mut inherited_constraints: HashMap<usize, GuiInheritedConstraints> = HashMap::new();
 
         for (parent_index, parent_document) in self.circuits.iter().enumerate() {
             let Some(parent_workspace) = self.macro_workspaces.get(parent_index) else {
@@ -4217,27 +4247,70 @@ impl SstadexApp {
                 })?;
                 let child_hierarchy_workspace =
                     gui_hierarchy_workspace(&child_macro_name, child_workspace)?;
-                let filters = derive_submacro_condition_filters(
+                let pre_build_columns = self.pre_build_port_voltage_columns_for_macro(
+                    child_index,
+                    catalog,
+                    macro_blocks,
+                )?;
+                let resolved = resolve_submacro_conditions(
                     &instance_name,
                     &parent_hierarchy_workspace.submacro_condition_rules,
                     &child_hierarchy_workspace,
                     parent_table,
+                    &pre_build_columns,
                 )
                 .map_err(|error| {
                     format!(
-                        "failed to derive filters for submacro instance '{}' ({})\n\n{error:?}",
+                        "failed to derive constraints for submacro instance '{}' ({})\n\n{error:?}",
                         instance_name, child_macro_name
                     )
                 })?;
 
-                inherited_filters
-                    .entry(child_index)
-                    .or_default()
-                    .extend(filters);
+                if !resolved.is_empty() {
+                    let entry = inherited_constraints.entry(child_index).or_default();
+                    entry.pre_build.extend(resolved.pre_build_constraints);
+                    entry.filters.extend(resolved.filters);
+                }
             }
         }
 
-        Ok(inherited_filters)
+        Ok(inherited_constraints)
+    }
+
+    fn pre_build_port_voltage_columns_for_macro(
+        &self,
+        macro_index: usize,
+        catalog: &PrimitiveCatalog,
+        _macro_blocks: &[GuiDutMacroView],
+    ) -> Result<Vec<String>, String> {
+        let document = self
+            .circuits
+            .get(macro_index)
+            .ok_or_else(|| format!("missing macro document at index {}", macro_index + 1))?;
+        let mut columns = Vec::new();
+
+        for instance in &document.canvas_instances {
+            let Some(primitive_name) = instance.block.primitive_name() else {
+                continue;
+            };
+            let Some(primitive) = catalog.get(primitive_name) else {
+                continue;
+            };
+            let Some(build) = &primitive.build else {
+                continue;
+            };
+            let instance_name = exported_instance_name(instance);
+            for input in &build.inputs {
+                if input.source.as_deref() == Some("port_voltage") {
+                    columns.push(candidate_column_name(
+                        &instance_name,
+                        &input.name.to_lowercase(),
+                    ));
+                }
+            }
+        }
+
+        Ok(columns)
     }
 
     fn direct_macro_instances(&self, macro_index: usize) -> Result<Vec<(String, String)>, String> {
@@ -6030,6 +6103,7 @@ fn gui_candidate_input(
     document: &GuiCircuitDocument,
     catalog: &PrimitiveCatalog,
     macro_blocks: &[GuiDutMacroView],
+    pre_build_constraints: &[SubmacroPreBuildConstraint],
 ) -> Result<ExplorationCandidateInput, String> {
     let axes = candidates
         .axes
@@ -6037,7 +6111,13 @@ fn gui_candidate_input(
         .enumerate()
         .map(|(index, axis)| gui_candidate_axis(axis, index + 1))
         .collect::<Result<Vec<_>, _>>()?;
-    let sets = gui_primitive_candidate_sets(candidates, document, catalog, macro_blocks)?;
+    let sets = gui_primitive_candidate_sets(
+        candidates,
+        document,
+        catalog,
+        macro_blocks,
+        pre_build_constraints,
+    )?;
 
     Ok(ExplorationCandidateInput {
         axes,
@@ -6051,6 +6131,7 @@ fn gui_primitive_candidate_sets(
     document: &GuiCircuitDocument,
     catalog: &PrimitiveCatalog,
     macro_blocks: &[GuiDutMacroView],
+    pre_build_constraints: &[SubmacroPreBuildConstraint],
 ) -> Result<Vec<CandidateSet>, String> {
     let build_instances = document
         .canvas_instances
@@ -6087,6 +6168,7 @@ fn gui_primitive_candidate_sets(
             &net_index,
             &voltage_constraints,
             &global_parameters,
+            pre_build_constraints,
         )?;
         let instance_name = exported_instance_name(instance);
         let set = engine
@@ -6110,6 +6192,7 @@ fn gui_primitive_build_input(
     net_index: &CanvasNetIndex,
     voltage_constraints: &HashMap<String, PrimitiveBuildValue>,
     global_parameters: &HashMap<String, PrimitiveBuildValue>,
+    pre_build_constraints: &[SubmacroPreBuildConstraint],
 ) -> Result<PrimitiveBuildInput, String> {
     let Some(build) = &primitive.build else {
         return Err(format!("primitive '{}' has no build spec", primitive.name));
@@ -6152,7 +6235,18 @@ fn gui_primitive_build_input(
                     input.name
                 )
             })?;
-            values.insert(input.name.clone(), value.clone());
+            let candidate_column = candidate_column_name(
+                &exported_instance_name(instance),
+                &input.name.to_lowercase(),
+            );
+            values.insert(
+                input.name.clone(),
+                apply_pre_build_constraints_to_value(
+                    value.clone(),
+                    &candidate_column,
+                    pre_build_constraints,
+                )?,
+            );
             continue;
         }
 
@@ -6257,6 +6351,46 @@ fn primitive_build_value_from_text(
 ) -> Result<PrimitiveBuildValue, String> {
     let values = parse_candidate_values(input, context)?;
     if default_kind == PrimitiveBuildInputKind::Scalar && values.len() == 1 {
+        Ok(PrimitiveBuildValue::Scalar(values[0]))
+    } else {
+        Ok(PrimitiveBuildValue::Vector(values))
+    }
+}
+
+fn apply_pre_build_constraints_to_value(
+    value: PrimitiveBuildValue,
+    target_column: &str,
+    constraints: &[SubmacroPreBuildConstraint],
+) -> Result<PrimitiveBuildValue, String> {
+    let mut values = match value {
+        PrimitiveBuildValue::Scalar(value) => vec![value],
+        PrimitiveBuildValue::Vector(values) => values,
+    };
+
+    for constraint in constraints
+        .iter()
+        .filter(|constraint| constraint.target_column == target_column)
+    {
+        let before = values.len();
+        match &constraint.condition {
+            SubmacroPreBuildCondition::AllowedValues(allowed) => {
+                values.retain(|value| allowed.contains(value));
+            }
+            SubmacroPreBuildCondition::Range(range) => {
+                values.retain(|value| {
+                    range.min.map_or(true, |min| *value >= min)
+                        && range.max.map_or(true, |max| *value <= max)
+                });
+            }
+        }
+        if values.is_empty() {
+            return Err(format!(
+                "pre-build constraint for '{target_column}' removed all {before} available values"
+            ));
+        }
+    }
+
+    if values.len() == 1 {
         Ok(PrimitiveBuildValue::Scalar(values[0]))
     } else {
         Ok(PrimitiveBuildValue::Vector(values))
@@ -8324,6 +8458,7 @@ mod tests {
             &net_index,
             &voltage_constraints,
             &global_parameters,
+            &[],
         )
         .unwrap();
 
@@ -8386,12 +8521,68 @@ mod tests {
             &net_index,
             &voltage_constraints,
             &global_parameters,
+            &[],
         )
         .unwrap();
 
         assert_eq!(
             input.values.get("current"),
             Some(&PrimitiveBuildValue::Scalar(250e-6))
+        );
+    }
+
+    #[test]
+    fn primitive_build_input_applies_pre_build_port_voltage_constraint() {
+        let primitive = primitive_manifest_with_build();
+        let instance = CanvasInstance {
+            id: 1,
+            instance_name: "xcs".to_string(),
+            block: GuiBlockRef::Primitive {
+                name: primitive.name.clone(),
+            },
+            position: egui::pos2(0.0, 0.0),
+            orientation: GuiOrientation::R0,
+        };
+        let document = GuiCircuitDocument {
+            name: "macro".to_string(),
+            subckt_name: "macro".to_string(),
+            small_signal: None,
+            ports: Vec::new(),
+            canvas_instances: vec![instance.clone()],
+            label_pins: Vec::new(),
+            macro_ports: Vec::new(),
+            connections: Vec::new(),
+            next_instance_id: 2,
+            next_label_pin_id: 1,
+            next_macro_port_id: 1,
+        };
+        let catalog = catalog_with_primitive(primitive.clone());
+        let net_index = CanvasNetIndex::from_document(&document, &catalog, &[]);
+        let voltage_constraints = HashMap::from([(
+            "xcs.VIN".to_string(),
+            PrimitiveBuildValue::Vector(vec![0.5, 0.6, 0.7]),
+        )]);
+        let global_parameters =
+            HashMap::from([("current".to_string(), PrimitiveBuildValue::Scalar(100e-6))]);
+        let pre_build_constraints = vec![SubmacroPreBuildConstraint::allowed_values(
+            "xcs.vin",
+            vec![0.6],
+        )];
+
+        let input = gui_primitive_build_input(
+            &GuiCandidateDocument::default(),
+            &instance,
+            &primitive,
+            &net_index,
+            &voltage_constraints,
+            &global_parameters,
+            &pre_build_constraints,
+        )
+        .unwrap();
+
+        assert_eq!(
+            input.values.get("VIN"),
+            Some(&PrimitiveBuildValue::Scalar(0.6))
         );
     }
 

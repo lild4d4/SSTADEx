@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::{
     CandidateAxis, CandidatePoint, CandidateSet, CompactOutputBinding, ExplorationColumn,
@@ -57,6 +57,46 @@ pub struct HierarchicalCandidateInput {
     pub axes: Vec<CandidateAxis>,
     pub sets: Vec<CandidateSet>,
     pub filters: Vec<ExplorationFilter>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ResolvedSubmacroConditions {
+    pub pre_build_constraints: Vec<SubmacroPreBuildConstraint>,
+    pub filters: Vec<ExplorationFilter>,
+}
+
+impl ResolvedSubmacroConditions {
+    pub fn is_empty(&self) -> bool {
+        self.pre_build_constraints.is_empty() && self.filters.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SubmacroPreBuildConstraint {
+    pub target_column: String,
+    pub condition: SubmacroPreBuildCondition,
+}
+
+impl SubmacroPreBuildConstraint {
+    pub fn allowed_values(target_column: impl Into<String>, values: Vec<f64>) -> Self {
+        Self {
+            target_column: target_column.into(),
+            condition: SubmacroPreBuildCondition::AllowedValues(values),
+        }
+    }
+
+    pub fn range(target_column: impl Into<String>, range: RangeCondition) -> Self {
+        Self {
+            target_column: target_column.into(),
+            condition: SubmacroPreBuildCondition::Range(range),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SubmacroPreBuildCondition {
+    AllowedValues(Vec<f64>),
+    Range(RangeCondition),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -257,48 +297,100 @@ pub fn derive_submacro_condition_filters(
     child_workspace: &MacroExplorationWorkspace,
     parent_table: &ExplorationTable,
 ) -> Result<Vec<ExplorationFilter>, SubmacroConditionError> {
+    Ok(resolve_submacro_conditions(instance, rules, child_workspace, parent_table, &[])?.filters)
+}
+
+pub fn resolve_submacro_conditions(
+    instance: impl AsRef<str>,
+    rules: &[SubmacroConditionRule],
+    child_workspace: &MacroExplorationWorkspace,
+    parent_table: &ExplorationTable,
+    pre_build_columns: &[String],
+) -> Result<ResolvedSubmacroConditions, SubmacroConditionError> {
     let instance = instance.as_ref();
-    let mut filters = Vec::new();
+    let pre_build_columns = pre_build_columns
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
+    let mut resolved = ResolvedSubmacroConditions::default();
 
     for rule in rules.iter().filter(|rule| rule.instance == instance) {
         let target_column = child_interface_source_column(child_workspace, &rule.target_column);
+        let pre_build = pre_build_columns.contains(target_column);
 
         match &rule.source {
             SubmacroConditionSource::AllowedValuesFromParent { column } => {
                 let source = required_parent_column(parent_table, column)?;
-                filters.push(ExplorationFilter::allowed_values(
-                    FilterPhase::CandidatePreEvaluation,
+                let values = unique_values(&source.values);
+                push_resolved_condition(
+                    &mut resolved,
+                    pre_build,
                     target_column,
-                    unique_values(&source.values),
-                ));
+                    SubmacroPreBuildCondition::AllowedValues(values),
+                );
             }
             SubmacroConditionSource::RangeFromParent { column } => {
                 let source = required_parent_column(parent_table, column)?;
-                filters.push(ExplorationFilter::new(
-                    FilterPhase::CandidatePreEvaluation,
+                push_resolved_condition(
+                    &mut resolved,
+                    pre_build,
                     target_column,
-                    range_from_values(&source.values),
-                ));
+                    SubmacroPreBuildCondition::Range(range_from_values(&source.values)),
+                );
             }
             SubmacroConditionSource::FixedRange { min, max } => {
-                filters.push(ExplorationFilter::new(
-                    FilterPhase::CandidatePreEvaluation,
+                push_resolved_condition(
+                    &mut resolved,
+                    pre_build,
                     target_column,
-                    RangeCondition::new(parse_optional_f64(min)?, parse_optional_f64(max)?),
-                ));
+                    SubmacroPreBuildCondition::Range(RangeCondition::new(
+                        parse_optional_f64(min)?,
+                        parse_optional_f64(max)?,
+                    )),
+                );
             }
             SubmacroConditionSource::Expression { expression } => {
                 let values = evaluate_parent_expression(parent_table, expression)?;
-                filters.push(ExplorationFilter::allowed_values(
-                    FilterPhase::CandidatePreEvaluation,
+                push_resolved_condition(
+                    &mut resolved,
+                    pre_build,
                     target_column,
-                    unique_values(&values),
-                ));
+                    SubmacroPreBuildCondition::AllowedValues(unique_values(&values)),
+                );
             }
         }
     }
 
-    Ok(filters)
+    Ok(resolved)
+}
+
+fn push_resolved_condition(
+    resolved: &mut ResolvedSubmacroConditions,
+    pre_build: bool,
+    target_column: &str,
+    condition: SubmacroPreBuildCondition,
+) {
+    if pre_build {
+        resolved
+            .pre_build_constraints
+            .push(SubmacroPreBuildConstraint {
+                target_column: target_column.to_string(),
+                condition,
+            });
+        return;
+    }
+
+    let filter = match condition {
+        SubmacroPreBuildCondition::AllowedValues(values) => ExplorationFilter::allowed_values(
+            FilterPhase::CandidatePreEvaluation,
+            target_column,
+            values,
+        ),
+        SubmacroPreBuildCondition::Range(range) => {
+            ExplorationFilter::new(FilterPhase::CandidatePreEvaluation, target_column, range)
+        }
+    };
+    resolved.filters.push(filter);
 }
 
 fn child_interface_source_column<'a>(
@@ -534,6 +626,43 @@ mod tests {
                 FilterPhase::CandidatePreEvaluation,
                 "xcs.voutp",
                 vec![0.8, 0.9],
+            )]
+        );
+    }
+
+    #[test]
+    fn resolves_allowed_values_as_pre_build_constraint_for_port_voltage_interface() {
+        let mut child = MacroExplorationWorkspace::new("current_source");
+        child
+            .interface_variables
+            .push(InterfaceVariable::new("vout", "xcs.voutp"));
+        let parent_table = ExplorationTable {
+            columns: vec![ExplorationColumn::new("parent_vout", vec![0.6, 0.6])],
+            row_count: 2,
+        };
+        let rules = vec![SubmacroConditionRule::new(
+            "xcs_macro",
+            "vout",
+            SubmacroConditionSource::AllowedValuesFromParent {
+                column: "parent_vout".to_string(),
+            },
+        )];
+
+        let resolved = resolve_submacro_conditions(
+            "xcs_macro",
+            &rules,
+            &child,
+            &parent_table,
+            &[String::from("xcs.voutp")],
+        )
+        .unwrap();
+
+        assert_eq!(resolved.filters, Vec::new());
+        assert_eq!(
+            resolved.pre_build_constraints,
+            vec![SubmacroPreBuildConstraint::allowed_values(
+                "xcs.voutp",
+                vec![0.6],
             )]
         );
     }

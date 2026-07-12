@@ -34,10 +34,11 @@ pub use flow::{
 };
 pub use hierarchy::{
     ExplorationOutput, HierarchicalCandidateInput, HierarchicalExplorationProject,
-    InterfaceVariable, MacroExplorationWorkspace, SubmacroCandidateError, SubmacroConditionError,
-    SubmacroConditionRule, SubmacroConditionSource, compact_parameter_column_name,
-    derive_submacro_condition_filters, submacro_results_to_candidate_set,
-    submacro_results_to_compact_candidate_set,
+    InterfaceVariable, MacroExplorationWorkspace, ResolvedSubmacroConditions,
+    SubmacroCandidateError, SubmacroConditionError, SubmacroConditionRule, SubmacroConditionSource,
+    SubmacroPreBuildCondition, SubmacroPreBuildConstraint, compact_parameter_column_name,
+    derive_submacro_condition_filters, resolve_submacro_conditions,
+    submacro_results_to_candidate_set, submacro_results_to_compact_candidate_set,
 };
 pub use io::{
     ExplorationCandidateInput, ExplorationIoError, load_exploration_candidates,
