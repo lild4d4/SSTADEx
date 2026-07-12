@@ -3261,10 +3261,11 @@ impl SstadexApp {
             }
         };
 
-        if !(4..=9).contains(&project.version) {
+        if !(4..=10).contains(&project.version) {
             return format!(
-                "Cannot open project: unsupported GUI project version {}",
-                project.version
+                "Cannot open project: unsupported GUI project version {} in '{}'\n\nSupported versions: 4..=10",
+                project.version,
+                project_path.display()
             );
         }
 
@@ -8487,6 +8488,32 @@ mod tests {
             GuiSubmacroConditionSourceKind::AllowedValuesFromParent
         );
         assert_eq!(loaded_rule.source_column, "parent_vout");
+    }
+
+    #[test]
+    fn opens_current_saved_project_version() {
+        let app = SstadexApp::default();
+        let path = std::env::temp_dir().join(format!(
+            "sstadex_gui_open_project_version_{}.json",
+            std::process::id()
+        ));
+        std::fs::write(
+            &path,
+            serde_json::to_string_pretty(&app.gui_project()).unwrap(),
+        )
+        .unwrap();
+
+        let mut loaded = SstadexApp {
+            project_path: path.display().to_string(),
+            ..SstadexApp::default()
+        };
+        let message = loaded.open_gui_project();
+
+        let _ = std::fs::remove_file(path);
+        assert!(
+            message.starts_with("Opened macro project"),
+            "unexpected open message: {message}"
+        );
     }
 
     #[test]
